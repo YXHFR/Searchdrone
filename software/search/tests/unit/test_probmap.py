@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pytest
@@ -15,7 +17,16 @@ from sd_schemas.search import SubjectCategory
 from sd_search.probmap.bayes import HeadingPrior, MapState, OperatorArea, RingTerrainMap
 from sd_search.probmap.build import MapBuilder, MapCandidate, MapInputs
 from sd_search.probmap.grid import Grid, grid_around
-from sd_search.probmap.pod import DETECTORS, Still, pass_pod, still_pod
+from sd_search.probmap.pod import (
+    DETECTORS,
+    PERSON_WIDTH_M,
+    SAME_MOMENT_S,
+    Camera,
+    Still,
+    pass_pod,
+    same_moment_groups,
+    still_pod,
+)
 from sd_search.probmap.rings import ring_mass, rings_for
 from sd_search.probmap.sectors import PlanSector, sector_scores, spacing_m
 from sd_search.probmap.terrain import NoTerrain, SimTerrainSource
@@ -389,7 +400,7 @@ def test_sector_order_and_the_situation_line() -> None:
     order = suggest_sector_order(built.sectors)
     assert [s.psr for s in order] == sorted((s.psr for s in order), reverse=True)
     line = situation_line(built.sectors)
-    assert line.startswith("Sektorer (POA kvar / täckt / medel-POD / PSR): ")
+    assert line.startswith("Sektorer (POA kvar / täckt / medel-POD / PSR / min@stråk m): ")
     assert " A " in f" {line} " and " B " in f" {line} "
 
 
@@ -426,3 +437,96 @@ def test_the_prior_is_quick_and_an_update_quicker() -> None:
     t = time.perf_counter()
     MODEL.update_negative(state, pod)
     assert time.perf_counter() - t < 0.05
+
+
+def test_a_tele_still_counts_as_searched_ground() -> None:
+    """The owner's decision (2026-11-02): a still from the tele camera (Raspberry Pi HQ
+    Camera, 20-degree lens) counts as searched ground like a main still, over its own
+    narrower footprint and with the detail its pixels give there."""
+    g = grid(500)
+    canopy = NoTerrain().canopy(g)
+    alt_m = 40.0
+    main, tele = Camera(width_px=1280, hfov_deg=66.0), Camera(width_px=1128, hfov_deg=20.0)
+
+    def look(foot: Camera, px: Camera, seq: int) -> Still:
+        """A still over ``foot``'s footprint with ``px``'s detail, straight down."""
+        half = foot.ground_width_m(alt_m) / 2
+        corners = square(0, 0, half)
+        return plane(g, Still(f"s{seq}", seq, "p1", corners, px.px_per_m(alt_m), True))
+
+    cell = g.cell_of(0, 0)
+    assert cell is not None
+
+    def at_cell(s: Still) -> float:
+        got = still_pod(g, s, canopy, DET)
+        assert got is not None
+        win, p = got
+        return float(p[cell[0] - win[0].start, cell[1] - win[1].start])
+
+    tele_still = look(tele, tele, 1)
+    tele_p = at_cell(tele_still)
+    assert tele_p > 0  # searched ground
+    # Over the same (tele) footprint, the tele camera's detail counts, not the main one's.
+    blurred_p = at_cell(look(tele, main, 2))
+    detail = DET.p_det(PERSON_WIDTH_M * tele.px_per_m(alt_m))
+    assert detail == pytest.approx(0.889, abs=0.001)  # a person about 40 px across
+    assert tele_p / blurred_p == pytest.approx(
+        detail / DET.p_det(PERSON_WIDTH_M * main.px_per_m(alt_m))
+    )
+    pod = pass_pod(g, [tele_still], canopy, DET)
+    assert pod[cell] == pytest.approx(tele_p)
+    far = g.cell_of(100, 0)  # outside the tele footprint (about 14 m wide at 40 m)
+    assert far is not None and pod[far] == 0.0
+
+
+def test_a_main_and_a_tele_still_of_one_moment_are_one_look() -> None:
+    """The main and the tele camera take a still of the same ground at the same moment:
+    one look, each camera with its own p (both inside the tele footprint, the main
+    camera alone outside it), not two independent looks at the tele camera's p."""
+    g = grid(500)
+    canopy = NoTerrain().canopy(g)
+    alt_m = 60.0
+    main_cam, tele_cam = Camera(width_px=1280, hfov_deg=66.0), Camera(1128, 20.0)
+    t0 = datetime(2026, 11, 2, 12, 0, 0, tzinfo=UTC)
+
+    def shot(cam: Camera, seq: int, when: datetime | None) -> Still:
+        corners = square(0, 0, cam.ground_width_m(alt_m) / 2)
+        s = Still(f"s{seq}", seq, "p1", corners, cam.px_per_m(alt_m), True, when)
+        return replace(plane(g, s), captured_utc=when)
+
+    main = shot(main_cam, 1, t0)
+    tele = shot(tele_cam, 2, t0 + timedelta(seconds=0.1))  # polled right after the main
+    assert [[s.still_id for s in grp] for grp in same_moment_groups([tele, main])] == [["s1", "s2"]]
+
+    def p_at(s: Still, cell: tuple[int, int]) -> float:
+        got = still_pod(g, s, canopy, DET)
+        assert got is not None
+        (rows, cols), p = got
+        j, i = cell
+        if not (rows.start <= j < rows.stop and cols.start <= i < cols.stop):
+            return 0.0
+        return float(p[j - rows.start, i - cols.start])
+
+    inside, outside = g.cell_of(0, 0), g.cell_of(30, 0)
+    assert inside is not None and outside is not None
+    pm, pt = p_at(main, inside), p_at(tele, inside)
+    assert pm > 0 and pt > 0  # both cameras see this cell (the tele one a part of it)
+    assert tele.px_per_m > 2.5 * main.px_per_m  # with much more detail where it looks
+    pod = pass_pod(g, [main, tele], canopy, DET)
+    assert pod[inside] == pytest.approx(1 - (1 - pm) * (1 - pt))
+    assert p_at(tele, outside) == 0.0
+    assert pod[outside] == pytest.approx(p_at(main, outside))  # the main camera alone
+    # Not two independent looks at the better camera's p, as before.
+    assert pod[inside] < 1 - (1 - max(pm, pt)) ** 2
+    # Stills of two moments (or of unknown time) stay two looks.
+    later = replace(tele, captured_utc=t0 + timedelta(seconds=SAME_MOMENT_S + 0.2))
+    for other in (later, replace(tele, captured_utc=None)):
+        two = pass_pod(g, [main, other], canopy, DET)
+        assert two[inside] == pytest.approx(1 - (1 - max(pm, pt)) ** 2)
+    # Two main stills of one moment never pair: one camera, the same detail.
+    assert len(same_moment_groups([main, replace(main, still_id="s3")])) == 2
+    # A tele still near two main stills pairs with the closer one in time, and the
+    # other main still stays a look of its own.
+    closer = replace(main, still_id="s4", captured_utc=t0 + timedelta(seconds=0.15))
+    groups = same_moment_groups([main, tele, closer])
+    assert sorted([s.still_id for s in grp] for grp in groups) == [["s1"], ["s4", "s2"]]

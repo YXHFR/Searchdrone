@@ -34,12 +34,14 @@ The detector interface, the class register and the detector sources.
   picture (`tile_grid`: 640 px tiles, 15 % overlap, 45 tiles for 4608×2592), moves its
   boxes back to the picture, joins a box cut by a tile edge with its other half in the
   next tile and removes doubles (per-class NMS). An optional `skip_mask` leaves tiles out
-  (for example the sky).
+  (for example the sky). With `upscale=2` each tile covers half as many picture pixels
+  per side and is enlarged 2x before the engine sees it, so small people reach the model
+  twice as large (170 tiles for 4608×2592 instead of 45).
 - `OnnxDetector` and `load_model` (`sd_detect.onnx`): run a YOLOX or DAMO-YOLO ONNX file
   with ONNX Runtime on the CPU (letterboxed BGR input, decoding, score floor, NMS),
   after checking its size and SHA-256 against the manifest (`sd.detector-model/v1`).
   The manifest names the file, family, input size, classes, licence and what the model
-  was trained on. ONNX Runtime is imported only when a model is chosen. `check_model`
+  was trained on, and `upscale`, how many times its tiles are enlarged (1 when missing). ONNX Runtime is imported only when a model is chosen. `check_model`
   makes the same file checks without ONNX Runtime, for a caller that must refuse to
   start on a bad model (the simulator's `detector=model`).
 

@@ -289,7 +289,9 @@ class CandidateAssessment(SdModel):
         return value
 
 
-DecisionKind = Literal["confirm", "reject", "inspect", "unsure", "reopen"]
+# "inspect" starts a closer look; "resume" ("Fortsätt söka nu") ends the wait after one
+# and sends the drone back to the search.
+DecisionKind = Literal["confirm", "reject", "inspect", "unsure", "reopen", "resume"]
 
 
 class CandidateDecision(SdModel):
@@ -361,7 +363,15 @@ SEARCH_OBSERVATIONS_MAX: Final = 200
 
 
 class SearchDetection(SdModel):
-    """A stored detection of a target class, as the search service reads it."""
+    """A stored detection of a target class, as the search service reads it.
+
+    ``command_id`` is the order its still was taken during and ``still_px_per_m`` the
+    still's detail (the tele camera's is about three times the main camera's at one
+    height). A still of a closer look (``inspect_detection``) also names the candidate
+    the look is at and that candidate's position and uncertainty when the order went out,
+    so the search service can join the look's pictures of its target to it
+    (``sd_search.fusion``).
+    """
 
     detection_id: Id
     seq: int = Field(ge=1)  # the feed's cursor (after_seq)
@@ -376,6 +386,12 @@ class SearchDetection(SdModel):
     crop_box: BBox | None = None  # the crop's square in the still; None for older rows
     has_crop: bool
     captured_utc: AwareDatetime
+    command_id: Id | None = None
+    still_px_per_m: float | None = Field(default=None, gt=0)
+    inspect_candidate_id: Id | None = None
+    inspect_lat: float | None = Field(default=None, ge=-90, le=90)
+    inspect_lon: float | None = Field(default=None, ge=-180, le=180)
+    inspect_sigma95_m: float | None = Field(default=None, ge=0, le=1000)
 
 
 class SearchObservation(SdModel):

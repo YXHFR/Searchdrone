@@ -16,6 +16,7 @@ The AI has no route here: it can propose a charter, never approve one.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +24,8 @@ from sd_ground.logging import get_logger
 from sd_ground.mav import fence as mav_fence
 from sd_ground.services import charters as charter_rules
 from sd_ground.services import fence as fence_rules
+from sd_ground.services import floor_packs
+from sd_ground.services import inspections as inspections_service
 from sd_ground.services.missions import FlowError
 from sd_mav.mission import MissionError
 from sd_mav.vehicle import ControlNotAllowedError, ForbiddenMavlinkError, Vehicle
@@ -234,7 +237,28 @@ async def _decide_charter(
     active_row = await flow.active_charter_row(mission)
     active = None if active_row is None else active_row.body
     mode = charter_rules.resolve_autonomy(active, req.autonomy_mode)
-    charter = row.body.model_copy(update={"autonomy_mode": mode})
+    # The operation mode: the pilot's pick on the card, else the one in force (unset:
+    # live). Overflight is the ground's stamp from it and the permit.
+    op = req.operation_mode or (None if active is None else active.operation_mode)
+    op = op or row.body.operation_mode
+    # The height-floor map pack: the pilot's pick on the card, checked whole against the
+    # hash the list showed (refused otherwise, never left out), else the one in force.
+    if req.floor_pack is not None:
+        pack, pack_sha = await asyncio.to_thread(floor_packs.choose, flow, req.floor_pack)
+    elif active is not None:
+        pack, pack_sha = active.floor_pack_id, active.floor_pack_sha256
+    else:
+        pack, pack_sha = row.body.floor_pack_id, row.body.floor_pack_sha256
+    charter = row.body.model_copy(
+        update={
+            "autonomy_mode": mode,
+            "operation_mode": op,
+            "overflight_allowed": op is not None
+            and inspections_service.overflight_allowed(flow, op),
+            "floor_pack_id": pack,
+            "floor_pack_sha256": pack_sha,
+        }
+    )
     # A waiting proposal is always against the active version: a newer approval (also
     # an autonomy change) supersedes every waiting proposal.
     errors = _check(flow, charter, mission, active, None if active is None else active.version)

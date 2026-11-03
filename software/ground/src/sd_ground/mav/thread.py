@@ -42,6 +42,7 @@ from sd_ground.mav import fence as mav_fence
 from sd_ground.mav.companion_watchdog import CompanionWatchdog, WatchInput
 from sd_ground.mav.gcs import OverrideAction, OverrideResult, guard_override, run_override
 from sd_ground.mav.gnss_watch import GnssWatch, alarm, text_alarm
+from sd_ground.mav.mission_end_watch import MissionEndWatch
 from sd_ground.services.latches import (
     BATTERY_LOW_SV,
     ENERGY_HOME_SV,
@@ -49,7 +50,14 @@ from sd_ground.services.latches import (
     BatteryReason,
     Latches,
 )
-from sd_ground.services.wind import WIND_PARAMS, FcParams, WindStage, WindWatch, fc_params
+from sd_ground.services.wind import (
+    WIND_PARAMS,
+    BatteryDrain,
+    FcParams,
+    WindStage,
+    WindWatch,
+    fc_params,
+)
 from sd_ground.sources import PartState
 from sd_mav.chain import mode_shown, rc_switch_moved, set_mode_with_fallback
 from sd_mav.failsafe_signals import text_signal
@@ -278,7 +286,7 @@ class GroundMav:
         latches: Latches,
         on_report: Callable[[ActionReport], None],
         on_event: EventSink,
-        system_action: Callable[[str, LatchAction], object],
+        system_action: Callable[[str, LatchAction, BatteryReason | None], object],
         rtl_pct: Callable[[], float] = lambda: DEFAULT_LIMITS.battery_rtl_pct,
     ) -> None:
         self.vehicle = vehicle
@@ -294,6 +302,7 @@ class GroundMav:
         self._rtl_pct = rtl_pct
         self.watchdog = CompanionWatchdog(clock.monotonic_ms())
         self.gnss = GnssWatch(self._on_event)
+        self.mission_end = MissionEndWatch(self._on_event)
         self._lock = threading.Lock()
         self._snap: MavSnapshot | None = None
         self._tracks = _Tracks()
@@ -578,6 +587,9 @@ class GroundMav:
         self._battery(snap)
         if snap.connected:
             self.gnss.tick(snap.telemetry, snap.now_mono_ms, in_flight=snap.in_flight)
+            self.mission_end.tick(
+                snap.telemetry, snap.fc_mode, snap.now_mono_ms, in_flight=snap.in_flight
+            )
         await self._send_sticks()
 
     def _landed(self) -> None:
@@ -591,6 +603,7 @@ class GroundMav:
             self._pending = None
         self._battery_low_since = None
         self.gnss.reset()
+        self.mission_end.reset()
         latch = self.latches.landed(self.vehicle_id)
         self._on_event(
             "vehicle.landed", "info", {"latch": latch.action if latch is not None else None}
@@ -616,10 +629,10 @@ class GroundMav:
             self._on_event("alarm.ONBOARD_SILENT", "critical", {"phase": self.watchdog.phase})
         if action == "watchdog_stop":
             self._on_event("vehicle.onboard_silent", "warning", {})
-            self._system_action(self.vehicle_id, action)
+            self._system_action(self.vehicle_id, action, None)
         elif action == "watchdog_rtl":
             self._on_event("vehicle.onboard_silent_rtl", "critical", {})
-            self._system_action(self.vehicle_id, action)
+            self._system_action(self.vehicle_id, action, None)
 
     def energy_short(self, short: bool) -> None:
         """The wind check's ``ENERGY_HOME`` (``sd_ground.services.wind``): the battery
@@ -677,8 +690,8 @@ class GroundMav:
                 reason=reason,
             )
         )
-        self.latches.set_battery_reason(self.vehicle_id, reason)
-        self._system_action(self.vehicle_id, "battery_rtl")
+        # The reason is set with the latch, in one step (no path to the drone: neither).
+        self._system_action(self.vehicle_id, "battery_rtl", reason)
 
 
 async def _run[T](work: Callable[[Vehicle], Awaitable[T]], vehicle: Vehicle) -> T:
@@ -778,6 +791,19 @@ class ThreadSafeMav:
         with self._wind_lock:
             wind = self._wind_check
         return to_telemetry(snap, self.core.clock.utc_now(), wind)
+
+    def battery_drain(self, vehicle_id: str) -> BatteryDrain | None:
+        """The wind check's mean current and capacity for the AI's minutes to the home
+        limit (``sd_ground.services.situation``). Reads only."""
+        snap = self.snapshot()
+        if snap is None or snap.vehicle_id != vehicle_id or not snap.connected:
+            return None
+        with self._wind_lock:
+            if (snap.connected, snap.telemetry.fc_link_epoch) != self._wind_link:
+                # A new connection or a reboot that ``update_wind`` has not taken yet: the
+                # window still holds the last connection's samples.
+                return None
+            return self.wind.drain(snap.now_mono_ms)
 
     def update_wind(self, vehicle_id: str) -> None:
         """The wind check's step, from the telemetry loop (never the MAVLink thread): take

@@ -26,6 +26,7 @@ __all__ = [
     "MIN_BATTERY_RTL_PCT",
     "LimitCaps",
     "SafetyLimits",
+    "home_limit_pct",
 ]
 
 # Standard values for a new mission (owner decision: 120 m, 15 m/s, 500 m, home at 15 %).
@@ -88,3 +89,10 @@ class LimitCaps(SdModel):
         if not self.allows(SafetyLimits()):
             raise ValueError("the cap must allow the standard limits")
         return self
+
+
+def home_limit_pct(limit_pct: float, charter_pct: float | None) -> float:
+    """The battery level the drone flies home at: the charter's, never below the mission
+    limit. The gate's ``Facts.rtl_pct`` (``sd_safety.rules``) applies the same rule; the
+    ground's minutes to the home limit and the brain's LÄGE line use this one."""
+    return limit_pct if charter_pct is None else max(charter_pct, limit_pct)

@@ -25,3 +25,14 @@ def test_the_model_card_credits_every_measured_set() -> None:
     for name, licence in (("HERIDAL", "CC BY 3.0"), ("KIOS", "CC BY 4.0"), ("WiSARD", "MIT")):
         line = next(x for x in card.splitlines() if x.startswith(f"| {name}"))
         assert licence in line
+
+
+def test_the_model_card_credits_every_training_only_set() -> None:
+    card = (ROOT / "software" / "detector" / "MODEL_CARD.md").read_text(encoding="utf-8")
+    for name, licence, who in (
+        ("KIOS Aerial Dataset for Car and Person Detection", "CC BY 4.0", "21216709"),
+        ("SeaDronesSee", "CC0 1.0", "Varga"),
+        ("UIT-Drone4", "CC BY 4.0", "14862652"),
+    ):
+        line = next(x for x in card.splitlines() if x.startswith(f"| {name}"))
+        assert licence in line and who in line

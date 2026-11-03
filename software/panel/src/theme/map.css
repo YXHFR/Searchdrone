@@ -312,46 +312,6 @@
   align-items: center;
   gap: 6px;
 }
-.picker {
-  position: relative;
-}
-.picker-btn {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-  width: 100%;
-  text-align: left;
-}
-.picker-list {
-  position: absolute;
-  left: 0;
-  top: calc(100% + 2px);
-  z-index: 2;
-  min-width: 100%;
-  max-height: 240px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  padding: var(--sp-1);
-  background: var(--c-panel);
-  border: 1px solid var(--c-line-strong);
-  border-radius: var(--r);
-}
-.picker-list button {
-  font: inherit;
-  min-height: var(--hit);
-  padding: var(--sp-1) var(--sp-2);
-  text-align: left;
-  background: none;
-  border: 0;
-  color: inherit;
-  border-radius: var(--r-1);
-}
-.picker-list button[aria-selected="true"] {
-  font-weight: 600;
-  background: var(--c-panel-3);
-}
 /* The drawing bar is the view's foot: its choice list opens upwards, over the map. */
 .map-draw .picker-list {
   top: auto;

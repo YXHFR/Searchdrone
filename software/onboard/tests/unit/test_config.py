@@ -94,6 +94,51 @@ def test_perception_needs_a_still_folder(root: Path, env: dict[str, str]) -> Non
     assert off is None
 
 
+def test_the_tele_camera_is_off_unless_asked_for(root: Path, env: dict[str, str]) -> None:
+    tele = load(root, env).config.perception.tele
+    assert not tele.enabled
+    # The owner's tele camera: Raspberry Pi HQ Camera (IMX477) with a 20-degree M12 lens.
+    assert (tele.width_px, tele.height_px, tele.hfov_deg) == (4056, 3040, 20.0)
+
+
+def test_the_tele_camera_needs_perception_and_its_own_folder(
+    root: Path, env: dict[str, str]
+) -> None:
+    tele = {"SD_ONBOARD__PERCEPTION__TELE__ENABLED": "true"}
+    assert any("perception.tele" in e for e in check(load(root, {**env, **tele})))
+    on = {
+        **tele,
+        "SD_ONBOARD__PERCEPTION__ENABLED": "true",
+        "SD_ONBOARD__PERCEPTION__STILL_DIR": "${SD_DATA_DIR}/stills",
+    }
+    assert any("still_dir" in e for e in check(load(root, {**env, **on})))
+    same = {**on, "SD_ONBOARD__PERCEPTION__TELE__STILL_DIR": "${SD_DATA_DIR}/stills"}
+    assert any("egen still_dir" in e for e in check(load(root, {**env, **same})))
+    # The same folder written two ways is still the same folder.
+    for main_dir, tele_dir in (("stills", "./stills"), ("stills", "x/../stills/")):
+        spelled = {
+            **on,
+            "SD_ONBOARD__PERCEPTION__STILL_DIR": main_dir,
+            "SD_ONBOARD__PERCEPTION__TELE__STILL_DIR": tele_dir,
+        }
+        assert any("egen still_dir" in e for e in check(load(root, {**env, **spelled})))
+    good = {
+        **on,
+        "SD_ONBOARD__PERCEPTION__TELE__STILL_DIR": "${SD_DATA_DIR}/tele",
+        "SD_ONBOARD__PERCEPTION__TELE__WIDTH_PX": "1128",
+        "SD_ONBOARD__PERCEPTION__TELE__HEIGHT_PX": "846",
+        "SD_ONBOARD__PERCEPTION__TELE__HFOV_DEG": "20",
+    }
+    loaded = load(root, {**env, **good})
+    assert check(loaded) == []
+    link = SimpleNamespace(perception=lambda _r: None)
+    made = app._perception(loaded, SimpleNamespace(), link, SimpleNamespace())  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+    assert made is not None and made.cameras == ["main", "tele"]
+    (feed,) = made.extra
+    assert (feed.camera.width_px, feed.camera.height_px, feed.camera.hfov_deg) == (1128, 846, 20.0)
+    assert made.camera.hfov_deg == 66.0  # the main camera is as before
+
+
 def test_a_wrong_detector_model_never_stops_the_start(
     root: Path, env: dict[str, str], tmp_path: Path
 ) -> None:
@@ -269,3 +314,86 @@ def test_rc_param_problems() -> None:
     assert len(found) == 2
     assert len(_rc_param_problems({"ARMING_SKIPCHK": 0, "FS_THR_ENABLE": 2})) == 1  # continue
     assert len(_rc_param_problems({})) == 2  # unset counts as unsafe
+
+
+# --- the downward laser ([rangefinder]) ----------------------------------------------------
+
+PARAMS_DIR = REPO / "simulation/sitl/params"
+LASER_FILES = {
+    "tf02_pro": PARAMS_DIR / "searchdrone-rangefinder-tf02.parm",
+    "grf250": PARAMS_DIR / "searchdrone-rangefinder-grf250.parm",
+}
+
+
+def test_no_laser_is_the_default_with_or_without_the_section(
+    root: Path, env: dict[str, str]
+) -> None:
+    assert tomllib.loads(EXAMPLE.read_text())["rangefinder"]["model"] == "none"
+    assert not load(root, env).config.rangefinder.fitted
+    example = root / "config" / "onboard.example.toml"
+    text = example.read_text()
+    example.write_text(text[: text.index("[rangefinder]")])  # no section at all
+    loaded = load(root, env)
+    assert not loaded.config.rangefinder.fitted and check(loaded) == []
+
+
+def test_a_laser_needs_a_tested_range_and_its_parameter_file(
+    root: Path, env: dict[str, str]
+) -> None:
+    laser = {**env, "SD_ONBOARD__RANGEFINDER__MODEL": "tf02_pro"}
+    errors = check(load(root, laser))
+    assert any("min_tested_m < max_tested_m" in e for e in errors)
+    assert any("RNGFND1_TYPE" in e for e in errors)  # the safety file alone has no laser
+    assert any("WP_RFND_USE" in e for e in errors)
+    tf02 = LASER_FILES["tf02_pro"]
+    shutil.copy(tf02, root / "simulation/sitl/params")
+    files = f"simulation/sitl/params/{PARM.name},simulation/sitl/params/{tf02.name}"
+    good = {
+        **laser,
+        "SD_ONBOARD__RANGEFINDER__MIN_TESTED_M": "0.1",
+        "SD_ONBOARD__RANGEFINDER__MAX_TESTED_M": "13",
+        "SD_ONBOARD__EXPECTED_PARAM_FILES": files,
+    }
+    loaded = load(root, good)
+    assert check(loaded) == []
+    assert (loaded.config.rangefinder.min_tested_m, loaded.config.rangefinder.max_tested_m) == (
+        0.1,
+        13.0,
+    )
+    wrong = {**good, "SD_ONBOARD__RANGEFINDER__MODEL": "grf250"}  # the TF02 file
+    assert any("RNGFND1_TYPE" in e for e in check(load(root, wrong)))
+
+
+@pytest.mark.parametrize("model", ["tf02_pro", "grf250"])
+def test_the_laser_files_keep_the_flight_controller_off_the_laser(model: str) -> None:
+    from sd_onboard.config import RangefinderConfig, rangefinder_param_problems
+    from sd_onboard.io.params import effective_params
+
+    path = LASER_FILES[model]
+    own = effective_params([path])
+    assert own["WP_RFND_USE"] == 0 and own["SURFTRAK_MODE"] == 0
+    assert own["EK3_RNG_USE_HGT"] == -1  # the EKF keeps its height from the barometer
+    assert own["RNGFND1_ORIENT"] == 25
+    assert not set(own) & set(effective_params([PARM]))  # changes nothing in the safety file
+    known = set((PARAMS_DIR / "known_params_Copter-4.7.1.txt").read_text().split())
+    assert set(own) <= known
+    cfg = RangefinderConfig(model=model, min_tested_m=1.0, max_tested_m=10.0)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+    assert rangefinder_param_problems(cfg, effective_params([PARM, path])) == []
+    if model == "grf250":
+        assert own["RNGFND1_GRF_RET"] == 1  # first return: the treetop, not a gap
+
+
+def test_rangefinder_param_problems() -> None:
+    from sd_onboard.config import RangefinderConfig, rangefinder_param_problems
+
+    good = {"RNGFND1_TYPE": 27.0, "RNGFND1_ORIENT": 25.0, "WP_RFND_USE": 0.0, "SURFTRAK_MODE": 0.0}
+    tf02 = RangefinderConfig(model="tf02_pro", max_tested_m=13.0)
+    assert rangefinder_param_problems(tf02, good) == []
+    assert rangefinder_param_problems(RangefinderConfig(), {}) == []  # no laser, no rule
+    other = RangefinderConfig(model="other", max_tested_m=40.0)
+    assert rangefinder_param_problems(other, {**good, "RNGFND1_TYPE": 10.0}) == []  # MAVLink
+    assert len(rangefinder_param_problems(other, {**good, "RNGFND1_TYPE": 0.0})) == 1
+    assert len(rangefinder_param_problems(tf02, {})) == 4  # unset counts as unsafe
+    for name, bad in (("RNGFND1_ORIENT", 0.0), ("WP_RFND_USE", 1.0), ("SURFTRAK_MODE", 1.0)):
+        (found,) = rangefinder_param_problems(tf02, {**good, name: bad})
+        assert name in found

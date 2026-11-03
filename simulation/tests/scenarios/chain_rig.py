@@ -23,6 +23,12 @@ operator confirms the missing person (or rejects everyone in SK03) and asks the 
 home. It checks the scenario invariants (``Scenario.check_invariants``) and the search
 invariants (E1, E2, E8 in ``sd_sim.search_invariants``), and writes
 ``search_metrics.json`` and ``search_report.md`` in the run's folder.
+
+The flight fails at once when the onboard computer stops steering: one of its tasks
+ends (the executor, SD-link, perception), or the flight controller flies the search
+mission's built-in end on its own (the ground's ``MISSION_FALLBACK`` alarm). The
+executor's log lines and state are then in the run's ``logs/``
+(``sd_sim.onboard_watch``).
 """
 
 from __future__ import annotations
@@ -71,6 +77,7 @@ from sd_search.profile import GroundProfileSource
 from sd_sim import world as sim_world
 from sd_sim.detector_choice import ORACLE, DetectorChoice
 from sd_sim.eval_search import RunMetrics, write_run
+from sd_sim.onboard_watch import EXECUTOR_LOG, EXECUTOR_STATE, guarded
 from sd_sim.operator import ScriptedOperator
 from sd_sim.oracle_detector import OracleDetector, OraclePerception, SyntheticStillSource
 from sd_sim.perf.stats import percentile
@@ -195,7 +202,7 @@ class SearchRun:
             east, north = self.plane.xy(*where)
             t = self.world.nearest(east, north, TRUTH_M)
             if t is not None:
-                return Truth(person=t.person, target=t.target)
+                return Truth(person=t.person, target=t.target, thing=t.thing_id)
         return Truth(person=False, target=False)
 
 
@@ -261,6 +268,26 @@ async def _watch(run: SearchRun, stop: asyncio.Event) -> None:
             )
             run.candidates.look({str(r[0]): int(r[1]) for r in got})
         await asyncio.sleep(WATCH_S)
+
+
+def _onboard_quiet(run: SearchRun) -> str | None:
+    """Why the onboard computer no longer steers the flight, or None: one of its tasks
+    ended (the executor, SD-link, perception), or the flight controller flies the search
+    mission's built-in end (hover, then straight home in AUTO), which only happens when
+    the executor did not take over at the last search point (the ground's alarm
+    ``MISSION_FALLBACK``). The executor's log and state are in the run's ``logs/``."""
+    onboard = run.onboard
+    why = onboard.failure()
+    if why is None and run.sc.r.core.mission_end.alarm_active:
+        t = run.sc.tel
+        why = (
+            "the flight controller flies the mission's built-in end (hover, then home in "
+            f"AUTO; item {t.mission_seq_current} of {t.mission_total}): the onboard "
+            f"computer stopped steering; executor {onboard.ex.state}, held by "
+            f"{onboard.ex.held_by}, order {getattr(onboard.ex.active, 'skill', None)}"
+        )
+        onboard.record.snapshot(f"mission fallback: {why}", onboard.ex, onboard.tasks)
+    return None if why is None else f"{why} (see logs/{EXECUTOR_LOG} and {EXECUTOR_STATE})"
 
 
 def _lifted(sc: Scenario) -> float | None:
@@ -563,7 +590,8 @@ async def search_run(
         watch = asyncio.ensure_future(_watch(run, stop))
         reviewing = asyncio.ensure_future(operator.run(stop))
         flying = None if fly is None else asyncio.ensure_future(fly(run))
-        try:
+
+        async def flight() -> None:
             if world.target is not None:
                 with contextlib.suppress(AssertionError):
                     await sc.until(
@@ -596,6 +624,9 @@ async def search_run(
             await sc.until(lambda: not sc.tel.armed, LANDED_LIMIT_S, "landed")
             _landed_home(sc)
             # The last cards the operator has not reached yet are left as they are.
+
+        try:
+            await guarded(flight(), lambda: _onboard_quiet(run))
         finally:
             stop.set()
             for task in (watch, reviewing, flying):

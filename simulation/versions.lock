@@ -20,3 +20,4 @@ pnpm_version = "10.34.6"           # also in package.json "packageManager"
 typos_version = "1.50.3"          # also the crate-ci/typos rev in .pre-commit-config.yaml
 zizmor_version = "1.30.1"
 nvidia_container_toolkit_version = "1.20.1-1"   # NVIDIA Container Toolkit (apt), GPU for llama-server in Docker
+git_cliff_version = "2.14.2"     # git-cliff on PyPI: the release changelog (cliff.toml)

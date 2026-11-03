@@ -1,4 +1,5 @@
-"""``sd-brain run | eval | scores | bank | perf-cloud | print-prompt | config-check``."""
+"""``sd-brain run | eval | eval-profiles | eval-safety | scores | bank | perf-cloud |
+print-prompt | config-check``."""
 
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from sd_brain.ai_config import ai_config_hash
-from sd_brain.config import BrainConfig, ConfigError, load_config
+from sd_brain.config import BrainConfig, ConfigError, LlmConfig, load_config
 from sd_brain.secrets import (
     SecretError,
     Secrets,
@@ -111,7 +112,7 @@ async def _eval(args: argparse.Namespace, paths: list[Path], cfg: BrainConfig) -
     import httpx
 
     from sd_brain.evals.runner import run_scenario, summarize
-    from sd_brain.runtime.base import Sampling
+    from sd_brain.runtime.base import llm_sampling
     from sd_brain.runtime.cloud import CloudModelRuntime
 
     runs: list[list[Any]] = []
@@ -139,7 +140,8 @@ async def _eval(args: argparse.Namespace, paths: list[Path], cfg: BrainConfig) -
                     runtime_factory=factory,
                     golden_dir=Path(args.golden) if args.golden else None,
                     backend="replay" if args.backend == "replay" else "llm",
-                    sampling=Sampling(temperature=0.2, top_p=0.8, max_tokens=512, seed=seed),
+                    sampling=llm_sampling(cfg.llm).model_copy(update={"seed": seed}),
+                    llm=cfg.llm,
                 )
                 results.append(r)
                 _out(f"{r.id}: {'ok' if r.ok else 'FEL'} {'; '.join(r.failures)[:300]}")
@@ -158,7 +160,7 @@ def _cloud_key() -> str:
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
-    from sd_brain.runtime.base import Sampling
+    from sd_brain.runtime.base import llm_sampling
     from sd_schemas.skills import SKILL_REGISTRY
 
     if args.action == "grade":
@@ -175,10 +177,10 @@ def cmd_eval(args: argparse.Namespace) -> int:
         from sd_brain.simeval.golden import load_fixture
 
         sims = [load_fixture(p) for p in sorted((Path(args.golden) / "sim").glob("SIM-*.json"))]
-        report.update(asyncio.run(_replay_sim(sims, report["failures"])))
+        report.update(asyncio.run(_replay_sim(sims, report["failures"], cfg.llm)))
         report["passed"] = bool(report["passed"] and not report["sim_failed"])
     if args.backend == "cloud":
-        h = ai_config_hash(SKILL_REGISTRY, Sampling(), cloud=cfg.cloud)
+        h = ai_config_hash(SKILL_REGISTRY, llm_sampling(cfg.llm), cloud=cfg.cloud)
         report.update(
             backend="cloud",
             ai_config_hash=h,
@@ -201,13 +203,13 @@ def cmd_eval(args: argparse.Namespace) -> int:
 
 
 async def _replay_sim(
-    fixtures: list[dict[str, Any]], failures: dict[str, list[str]]
+    fixtures: list[dict[str, Any]], failures: dict[str, list[str]], llm: LlmConfig
 ) -> dict[str, Any]:
     """Fly the simulator replay fixtures again (``tests/golden/sim``)."""
     from sd_brain.simeval.golden import replay_golden
 
     for fx in fixtures:
-        bad = await replay_golden(fx)
+        bad = await replay_golden(fx, llm=llm)
         _out(f"{fx['id']}: {'ok' if not bad else 'FEL'} {'; '.join(bad)[:300]}")
         if bad:
             failures[str(fx["id"])] = bad
@@ -268,6 +270,97 @@ async def _eval_profiles_cloud(cfg: BrainConfig, key: str, cases: list[dict[str,
     return report, recorder
 
 
+def cmd_eval_safety(args: argparse.Namespace) -> int:
+    """The safety exam: dangerous orders and hostile text in the data (scores only)."""
+    from sd_brain.evals.safety import load_cases, load_safety_golden, replay_for, run_safety
+
+    defaults, cases = load_cases(Path(args.cases))
+    if args.only:
+        cases = [c for c in cases if c["id"] in args.only.split(",")]
+    golden_path = Path(args.golden)
+    if args.backend == "replay":
+        if args.record:
+            _err("--record gäller bara --backend cloud; inget spelas in från replay")
+        report = asyncio.run(
+            run_safety(cases, replay_for(load_safety_golden(golden_path)), defaults)
+        )
+        # the replayed answers are hand-written, so 100 % here says nothing about a model
+        report.update(backend="replay", golden="hand-written")
+    else:
+        cfg = _eval_config(args)
+        report, rows = asyncio.run(_eval_safety_cloud(args, cfg, _cloud_key(), cases, defaults))
+        # the report first: a paid run always leaves one, even when the recording is refused
+        out_dir = Path(args.report_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+        path = out_dir / f"eval-safety-{stamp}.json"
+        path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        _out(f"Rapport: {path}")
+        _out(json.dumps(report, ensure_ascii=False, indent=1))
+        if args.record:
+            if not report["passed"] or args.only:
+                _err("inspelningen sparas bara från en komplett godkänd körning (utan --only)")
+                return 1
+            from sd_brain.simeval.golden import SECRET_ENV, refuse_secrets
+
+            refuse_secrets([r["reply"] for r in rows], {**os.environ, **brain_env(keys=SECRET_ENV)})
+            lines = [json.dumps(r, ensure_ascii=False, sort_keys=True) for r in rows]
+            golden_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            _out(f"Golden: {golden_path}")
+        return 0 if report["passed"] else 1
+    _out(json.dumps(report, ensure_ascii=False, indent=1))
+    # the written answers must pass every case
+    return 0 if report["passed"] and not report["failures"] else 1
+
+
+async def _eval_safety_cloud(
+    args: argparse.Namespace,
+    cfg: BrainConfig,
+    key: str,
+    cases: list[dict[str, Any]],
+    defaults: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """The exam against the cloud model, under the daily cost cap: before each case the
+    ledger must have room for it, else the rest is left out (``stopped: "budget"``)."""
+    import httpx
+
+    from sd_brain.evals.safety import run_safety
+    from sd_brain.runtime.cloud import CloudModelRuntime
+    from sd_brain.simeval.budget import CostLedger, MeteredRuntime
+
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s %(message)s")
+    install_log_masking(Secrets(brain_token="", cloud_api_key=key))
+    ledger = CostLedger(Path(args.ledger), cap_sek=args.cap_sek)
+    rows: list[dict[str, Any]] = []
+
+    def keep(result: Any, probe: Any) -> None:
+        rows.extend(probe.rows)
+        _out(f"{result.id}: {'ok' if result.ok else 'FEL'} {'; '.join(result.unsafe)[:200]}")
+
+    async with httpx.AsyncClient() as client:
+        meter = MeteredRuntime(
+            CloudModelRuntime(cfg.cloud, key, client), ledger, run_cap_sek=args.max_cost_sek
+        )
+        report = await run_safety(
+            cases,
+            lambda _: meter,
+            defaults,
+            can_continue=meter.can_afford,
+            on_case=keep,
+            llm=cfg.llm,
+        )
+    report.update(
+        backend="cloud",
+        model=cfg.cloud.model,
+        cost_sek=round(meter.cost_sek, 4),
+        cost_measured=meter.unmeasured_calls == 0,
+        spent_today_sek=round(ledger.spent_sek(), 4),
+        cap_sek=args.cap_sek,
+        git_sha=_git_sha(Path.cwd()),
+    )
+    return report, rows
+
+
 def cmd_eval_grade(args: argparse.Namespace) -> int:
     """Grade one simulator-farm round; writes ``grade.json`` in the round folder."""
     from sd_brain.simeval.farm import RoundError, grade_round
@@ -287,7 +380,7 @@ def cmd_eval_grade(args: argparse.Namespace) -> int:
 async def _eval_sim(args: argparse.Namespace, cfg: BrainConfig) -> list[Any]:
     import httpx
 
-    from sd_brain.runtime.base import Sampling
+    from sd_brain.runtime.base import llm_sampling
     from sd_brain.runtime.cloud import CloudModelRuntime
     from sd_brain.simeval.bank import bank_from_env, bank_name, example_record, worth_keeping
     from sd_brain.simeval.budget import CostLedger, MeteredRuntime
@@ -300,7 +393,7 @@ async def _eval_sim(args: argparse.Namespace, cfg: BrainConfig) -> list[Any]:
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s %(message)s")
     install_log_masking(Secrets(brain_token="", cloud_api_key=key))
     ledger = CostLedger(Path(args.ledger), cap_sek=args.cap_sek)
-    sampling = Sampling(temperature=0.2, top_p=0.8, max_tokens=512)
+    sampling = llm_sampling(cfg.llm)  # what flies, so the drill meets the same limits
     h = ai_config_hash(SKILL_REGISTRY, sampling, cloud=cfg.cloud)
     bank = bank_from_env(os.environ, Path(args.bank_dir)) if args.bank_dir else None
     seed = args.seed if args.seed is not None else int(dt.datetime.now(dt.UTC).timestamp())
@@ -313,7 +406,7 @@ async def _eval_sim(args: argparse.Namespace, cfg: BrainConfig) -> list[Any]:
             meter = MeteredRuntime(cloud, ledger, run_cap_sek=args.max_cost_sek)
         for i in range(args.flights):
             scenario = make_scenario(seed + i)
-            decider = make_decision_maker(meter, cfg.behaviour, sampling=sampling)
+            decider = make_decision_maker(meter, cfg.behaviour, llm=cfg.llm)
             before = meter.cost_sek if meter is not None else 0.0
             res = await fly(
                 scenario,
@@ -434,6 +527,7 @@ def cmd_perf_cloud(args: argparse.Namespace) -> int:
     import httpx
 
     from sd_brain.perf import measure_cloud, skip_line
+    from sd_brain.runtime.base import llm_sampling
 
     cfg = _eval_config(args)
     key = optional_secret("SD_CLOUD_API_KEY", brain_env().get("SD_CLOUD_API_KEY"))
@@ -445,7 +539,9 @@ def cmd_perf_cloud(args: argparse.Namespace) -> int:
 
     async def go() -> dict[str, Any]:
         async with httpx.AsyncClient() as client:
-            return await measure_cloud(cfg.cloud, key, client, runs=args.runs)
+            return await measure_cloud(
+                cfg.cloud, key, client, runs=args.runs, sampling=llm_sampling(cfg.llm)
+            )
 
     report = asyncio.run(go())
     out_dir = Path(args.report_dir)
@@ -550,6 +646,17 @@ def parser() -> argparse.ArgumentParser:
     ep.add_argument("--config", default="config/brain.toml")
     ep.add_argument("--only", default="")
     ep.add_argument("--record", action="store_true", help="cloud: write golden.jsonl")
+    es = sub.add_parser("eval-safety")
+    es.add_argument("--backend", choices=["replay", "cloud"], default="replay")
+    es.add_argument("--cases", default="software/brain/src/sd_brain/evals/safety/cases.yaml")
+    es.add_argument("--golden", default="software/brain/tests/eval/safety/golden.jsonl")
+    es.add_argument("--config", default="config/brain.toml")
+    es.add_argument("--only", default="")
+    es.add_argument("--record", action="store_true", help="cloud: write golden.jsonl")
+    es.add_argument("--report-dir", default="data/reports")
+    es.add_argument("--max-cost-sek", type=float, default=3.0, help="cloud: cap for this run")
+    es.add_argument("--cap-sek", type=float, default=30.0)
+    es.add_argument("--ledger", default="data/brain-eval/cost-ledger.json")
     pc = sub.add_parser("perf-cloud")
     pc.add_argument("--runs", type=int, default=10)
     pc.add_argument("--report-dir", default="data/reports")
@@ -564,6 +671,7 @@ def main(argv: list[str] | None = None) -> int:
         "config-check": cmd_config_check,
         "eval": cmd_eval,
         "eval-profiles": cmd_eval_profiles,
+        "eval-safety": cmd_eval_safety,
         "perf-cloud": cmd_perf_cloud,
         "scores": cmd_scores,
         "bank": cmd_bank,

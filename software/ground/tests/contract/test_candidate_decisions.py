@@ -30,7 +30,7 @@ from flow_rig import BRAIN, SEARCH, VID, H, Rig, rig  # pyright: ignore[reportMi
 
 from sd_ground.app import create_panel_app, panel_asgi
 from sd_ground.auth import AuthMode
-from sd_ground.services.candidates import CANDIDATE_TRANSITIONS, PILOT_ONLY
+from sd_ground.services.candidates import CANDIDATE_TRANSITIONS, PILOT_ONLY, SYSTEM_TRANSITIONS
 from sd_schemas.base import LatLon, new_id
 from sd_schemas.link import BBox, CropData, DetectorInfo, GeoDetectionMsg, PerceptionReport, Pose
 from sd_schemas.search import CandidateState
@@ -209,16 +209,27 @@ async def view(c: httpx.AsyncClient, det: str) -> str:
 def test_candidate_transitions_table() -> None:
     """Every state a person can act on, and nothing that only the search service does."""
     s = CandidateState
-    assert set(CANDIDATE_TRANSITIONS) == {"confirm", "reject", "inspect", "unsure", "reopen"}
+    assert set(CANDIDATE_TRANSITIONS) == {
+        "confirm",
+        "reject",
+        "inspect",
+        "unsure",
+        "resume",
+        "reopen",
+    }
     for d in ("confirm", "reject"):
         assert set(CANDIDATE_TRANSITIONS[d]) == {s.READY, s.ASSESSING, s.INSPECTING}
     assert CANDIDATE_TRANSITIONS["inspect"] == {s.READY: s.INSPECTING, s.ASSESSING: s.INSPECTING}
     assert CANDIDATE_TRANSITIONS["reopen"] == {s.REJECTED: s.READY, s.CONFIRMED: s.READY}
-    assert set(CANDIDATE_TRANSITIONS["unsure"].values()) == {None}
+    # "Osäker" is a note, except that it ends a look's wait; "Fortsätt söka nu" only that.
+    unsure = CANDIDATE_TRANSITIONS["unsure"]
+    assert unsure == {s.NEW: None, s.READY: None, s.ASSESSING: None, s.INSPECTING: s.READY}
+    assert CANDIDATE_TRANSITIONS["resume"] == {s.INSPECTING: s.READY}
+    assert SYSTEM_TRANSITIONS == {s.INSPECTING: s.READY}
     for table in CANDIDATE_TRANSITIONS.values():
         assert s.MERGED not in table and s.MERGED not in table.values()
         assert s.NEW not in table.values()
-    assert frozenset({"inspect", "reopen"}) == PILOT_ONLY
+    assert frozenset({"inspect", "resume", "reopen"}) == PILOT_ONLY
 
 
 async def test_candidate_transitions(r: Rig) -> None:
@@ -255,9 +266,14 @@ async def test_candidate_transitions(r: Rig) -> None:
         # The rev the person saw must be in force.
         stale = await decide(pilot, cid, "reject", rev=1)
         assert stale.status_code == 409 and stale.json()["code"] == "SUPERSEDED"
-        # Inspect is the drone's closer look: not built yet, and nothing is written.
+        # Inspect is the drone's closer look, through the gate: on the ground it is
+        # refused with the gate's codes, and nothing is written.
         res = await decide(pilot, cid, "inspect")
-        assert res.status_code == 501 and res.json()["code"] == "NOT_BUILT"
+        assert res.status_code == 409 and res.json()["code"] == "INSPECT_REFUSED", res.text
+        assert res.json()["errors"], res.text
+        # "Fortsätt söka nu" is only for a look.
+        res = await decide(pilot, cid, "resume")
+        assert res.status_code == 409 and res.json()["code"] == "TRANSITION_NOT_ALLOWED"
 
         d = (await pilot.get(f"/api/v1/candidates/{cid}")).json()
         assert [x["decision"] for x in d["decisions"]] == [
@@ -274,7 +290,10 @@ async def test_candidate_transitions(r: Rig) -> None:
         await view(pilot, new_det)
         res = await decide(pilot, new_cid, "confirm")
         assert res.status_code == 409 and res.json()["code"] == "TRANSITION_NOT_ALLOWED"
-        assert (await decide(pilot, new_cid, "unsure")).status_code == 200
+        # "unsure" is a note: the candidate stays where it is (here new), it never moves.
+        res = await decide(pilot, new_cid, "unsure")
+        assert res.status_code == 200, res.text
+        assert res.json()["card"]["state"] == "new"
 
     async with r.flow.repo.engine.connect() as conn:
         found = (

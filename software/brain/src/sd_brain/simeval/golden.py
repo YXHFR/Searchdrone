@@ -21,7 +21,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from sd_brain.config import BehaviourConfig
+from sd_brain.config import BehaviourConfig, LlmConfig
 from sd_brain.runtime.base import ModelError, ModelReply, Sampling
 from sd_brain.runtime.replay import load_golden_rows
 from sd_brain.secrets import BRAIN_KEYS
@@ -141,14 +141,15 @@ def load_fixture(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-async def replay_golden(fx: Mapping[str, Any]) -> list[str]:
-    """Fly one fixture again; the list of what differs from the recording (empty: ok)."""
+async def replay_golden(fx: Mapping[str, Any], *, llm: LlmConfig | None = None) -> list[str]:
+    """Fly one fixture again; the list of what differs from the recording (empty: ok).
+    ``llm``: the flight's ``[llm]`` (its defaults without one)."""
     if fx.get("schema") != GOLDEN_SCHEMA:
         return [f"okänt schema {fx.get('schema')!r}"]
     rows = [{"step": 0, "call": i, "reply": r} for i, r in enumerate(fx["replies"])]
     runtime = _StrictReplay(load_golden_rows(rows))
     behaviour = BehaviourConfig()
-    decider = DecisionMaker(cloud_commander(runtime, behaviour), None)
+    decider = DecisionMaker(cloud_commander(runtime, behaviour, llm=llm), None)
     res = await fly(
         make_scenario(int(fx["seed"])),
         decider,

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from bench.common import BenchError
-from bench.datasets import Dataset, licence_problems, load_register
+from bench.datasets import Archive, Dataset, licence_problems, load_register
 
 
 def _row(**kw: object) -> Dataset:
@@ -53,17 +53,85 @@ def test_kios_is_open_credited_and_pinned_with_its_labels() -> None:
     assert kios.labels_size_bytes and kios.labels_sha256 and len(kios.labels_sha256) == 64
 
 
+def test_the_training_only_sets_are_open_credited_and_pinned() -> None:
+    """The owner's decision of 2026-11-01: KIOS car/person and SeaDronesSee are trained
+    on, never measured on, so the locked test part stays HERIDAL and KIOS."""
+    register = load_register()
+    kcp, sds = register["kios_carperson"], register["seadronessee"]
+    assert (kcp.licence, sds.licence) == ("CC-BY-4.0", "CC0-1.0")
+    for ds in (kcp, sds):
+        assert ds.use == ("train",) and ds.licence_confirmed and ds.publish_weights
+        assert ds.sha256 and len(ds.sha256) == 64
+    assert "Vasileiadis" in kcp.attribution and "21216709" in kcp.attribution
+    assert "Varga" in sds.attribution and "CC0" in sds.attribution
+    for url in (kcp.url, kcp.labels_url, *(a.url for a in kcp.more_archives)):
+        assert url and url.startswith("https://zenodo.org/api/records/21216709/")
+    assert len(kcp.more_archives) == 2
+    assert all(len(a.sha256) == 64 for a in kcp.more_archives)
+    assert sds.is_share and sds.url and sds.url.startswith("https://cloud.cs.uni-tuebingen.de/")
+    assert "images/test" not in sds.share_folders  # the authors keep its labels
+
+
+def test_uit_drone4_is_trained_on_only_with_its_riders_ignored() -> None:
+    """The owner's decision of 2026-11-03: more real aerial data with a clean licence.
+    UIT-Drone4 is CC BY 4.0 on Zenodo, trained on only (never measured on)."""
+    from bench.layouts import LAYOUTS
+
+    ds = load_register()["uit_drone4"]
+    assert ds.licence == "CC-BY-4.0" and ds.licence_confirmed and ds.publish_weights
+    assert ds.use == ("train",) and not ds.local_only
+    assert "14862652" in ds.attribution and "Vietnam National University" in ds.attribution
+    for url in (ds.url, ds.labels_url):
+        assert url and url.startswith("https://zenodo.org/api/records/14862652/")
+    assert ds.labels_sha256 and len(ds.labels_sha256) == 64
+    assert LAYOUTS[ds.layout].ignore is not None  # the motorcycles hold riders
+
+
+def test_px_per_m_is_read_and_checked(tmp_path: Path) -> None:
+    row = (
+        '[[dataset]]\nname = "x"\ntitle = "x"\nlicence = "CC0-1.0"\nattribution = "x"\n'
+        'layout = "simfarm"\nlocal_path = "build/x"\nuse = ["measure"]\n'
+        "publish_weights = true\nlocal_only = true\n"
+    )
+    path = tmp_path / "datasets.toml"
+    path.write_text(row + "px_per_m = 71.0\n", encoding="utf-8")
+    assert load_register(path)["x"].px_per_m == 71.0
+    path.write_text(row, encoding="utf-8")
+    assert load_register(path)["x"].px_per_m is None
+    path.write_text(row + "px_per_m = 0.0\n", encoding="utf-8")
+    with pytest.raises(BenchError, match="px_per_m"):
+        load_register(path)
+
+
 def test_sim_farm_is_only_for_pre_training() -> None:
     simfarm = load_register()["simfarm"]
     assert simfarm.use == ("pretrain",)
     assert simfarm.local_only
+    # the photo farm is trained on, never measured on, and never leaves the computer
+    stills = load_register()["simstills"]
+    assert stills.use == ("train",)
+    assert stills.local_only
+    assert stills.local_path == "build/simfarm/stills"
 
 
 @pytest.mark.parametrize(
     ("row", "why"),
     [
-        (_row(licence="GPL-3.0-only"), "not allowed"),
         (_row(licence="proprietary"), "not allowed"),
+        (_row(licence="LicenseRef-none"), "not allowed"),
+        (_row(licence="GPL-3.0-only", local_only=True, publish_results=False), "GPL"),
+        (_row(licence="NONE", use=("measure",), publish_results=False), "GPL"),
+        (_row(licence="NONE", use=("measure",), local_only=True), "GPL"),
+        (
+            _row(
+                licence="GPL-3.0-or-later",
+                use=("measure",),
+                local_only=True,
+                publish_weights=True,
+                publish_results=False,
+            ),
+            "GPL",
+        ),
         (_row(licence="CC-BY-NC-4.0"), "non-commercial"),
         (_row(licence="CC-BY-NC-SA-4.0", use=("measure",), local_only=False), "non-commercial"),
         (
@@ -76,6 +144,14 @@ def test_sim_farm_is_only_for_pre_training() -> None:
         (_row(attribution=" "), "attribution"),
         (_row(labels_url="http://example.org/l.zip", labels_size_bytes=1), "labels_url"),
         (_row(labels_url="https://example.org/l.zip"), "labels_url"),
+        (_row(more_archives=(Archive("http://example.org/2.zip", 1, "0" * 64),)), "more_archives"),
+        (_row(more_archives=(Archive("https://example.org/2.zip", 0, "0" * 64),)), "more_archives"),
+        (_row(share_folders=("images",), share_files=1), "share"),  # url is not a folder
+        (_row(url="https://example.org/s/", share_folders=("images",)), "share"),
+        (
+            _row(url="https://example.org/s/", share_folders=("../images",), share_files=1),
+            "plain relative path",
+        ),
     ],
 )
 def test_licence_rule_refuses(row: Dataset, why: str) -> None:
@@ -87,6 +163,15 @@ def test_non_commercial_set_may_be_measured_locally() -> None:
     assert licence_problems(row) == []
 
 
+@pytest.mark.parametrize("licence", ["GPL-3.0-only", "NONE"])
+def test_gpl_or_unlicensed_set_may_only_be_measured_locally_unpublished(licence: str) -> None:
+    """The owner's decision of 2026-11-01: measured on this computer, nothing more."""
+    row = _row(licence=licence, use=("measure",), local_only=True, publish_results=False)
+    assert row.no_grant and licence_problems(row) == []
+    for use in (("train",), ("train", "measure"), ("pretrain",)):
+        assert licence_problems(dataclasses.replace(row, use=use))  # type: ignore[arg-type]
+
+
 def test_register_with_a_bad_row_is_refused(tmp_path: Path) -> None:
     bad = tmp_path / "datasets.toml"
     bad.write_text(
@@ -96,4 +181,29 @@ def test_register_with_a_bad_row_is_refused(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     with pytest.raises(BenchError, match="licensregeln"):
+        load_register(bad)
+
+
+@pytest.mark.parametrize(
+    ("line", "key"),
+    [
+        ('publish_weights = "false"', "publish_weights"),
+        ("local_only = 0", "local_only"),
+        ('publish_results = "false"', "publish_results"),
+        ('licence_confirmed = "yes"', "licence_confirmed"),
+        ("ranges = 1", "ranges"),
+    ],
+)
+def test_register_flag_must_be_a_toml_boolean(tmp_path: Path, line: str, key: str) -> None:
+    """``bool("false")`` is True: a quoted flag would publish what it means to keep."""
+    flags = {"publish_weights": "false", "local_only": "false"}
+    flags[key] = line.split(" = ", 1)[1]
+    bad = tmp_path / "datasets.toml"
+    bad.write_text(
+        '[[dataset]]\nname = "v"\ntitle = "v"\nlicence = "CC-BY-4.0"\n'
+        'attribution = "a"\nlayout = "wisard_vis"\nuse = ["measure"]\n'
+        'url = "https://example.org/v.zip"\n' + "".join(f"{k} = {v}\n" for k, v in flags.items()),
+        encoding="utf-8",
+    )
+    with pytest.raises(BenchError, match=f"{key} i v ska vara true eller false"):
         load_register(bad)

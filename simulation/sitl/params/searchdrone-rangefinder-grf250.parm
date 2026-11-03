@@ -1,0 +1,21 @@
+# LightWare GRF-250 laser pointing down, for ArduCopter Copter-4.7 or newer (its driver
+# came in 4.7; research 31). Load after the safety layer and list this file in
+# sd-onboard's expected_param_files, so the flight controller is read back against it
+# before every takeoff. In config/onboard.toml: [rangefinder] model = "grf250",
+# min_tested_m = 10 and max_tested_m from a field test.
+#
+# The serial port depends on the board: set SERIALn_PROTOCOL 9 (rangefinder) and
+# SERIALn_BAUD 115 for the port the laser is wired to, in the vehicle's own file. The
+# laser may need its own 5 V supply.
+#
+# Only the onboard computer uses the laser, for the closer look's height floor. The flight
+# controller reads it and reports DISTANCE_SENSOR, and never flies by it.
+
+RNGFND1_TYPE 45          # LightWare GRF, serial (TYPE 48 is its I2C driver)
+RNGFND1_ORIENT 25        # pointing down
+RNGFND1_MIN 10           # m: the retailers' shortest distance (ArduPilot's page says 0.2; untested)
+RNGFND1_MAX 120          # m: the height limit as a start; set the field-tested value
+RNGFND1_GRF_RET 1        # first return, filtered: the nearest treetop, not the ground in a gap
+WP_RFND_USE 0            # no terrain following in AUTO or GUIDED (out of range there = RTL)
+SURFTRAK_MODE 0          # no surface tracking in LOITER: a person flying keeps a plain height
+EK3_RNG_USE_HGT -1       # the EKF never takes its height from the laser (ArduPilot default)

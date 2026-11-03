@@ -829,3 +829,19 @@
 .shell[data-vp="phone"] .stage-banner {
   top: 82px;
 }
+
+/* The charter's operation mode beside the mission title: SIM, ÖVNING (yellow), SKARPT (red). */
+.op-badge {
+  font-weight: 700;
+  letter-spacing: var(--ls-label);
+}
+.op-badge[data-mode="exercise"] {
+  border-color: var(--c-warn);
+  background: var(--c-warn-soft);
+  color: var(--c-warn);
+}
+.op-badge[data-mode="live"] {
+  border-color: var(--c-bad);
+  background: var(--c-bad-soft);
+  color: var(--c-bad);
+}

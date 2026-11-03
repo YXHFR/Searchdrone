@@ -43,6 +43,8 @@ interface MapHandle {
     o: { padding: number; duration: number },
   ): void;
   fire(type: string, e: unknown): void;
+  triggerRepaint(): void;
+  getCanvas(): HTMLCanvasElement;
   getSource(id: string):
     | {
         serialize(): { data: { features: { geometry: { type: string; coordinates: unknown } }[] } };
@@ -70,15 +72,26 @@ async function mapReady(page: Page): Promise<void> {
   );
 }
 
-async function mapClick(page: Page, east: number, north: number): Promise<void> {
-  const [lng, lat] = lonlat(east, north);
-  await page.evaluate(
-    ({ lng, lat }) =>
-      (window as unknown as { __sd: { map: MapHandle } }).__sd.map.fire("click", {
-        lngLat: { lng, lat },
-      }),
-    { lng, lat },
-  );
+/** Clicks on the map at (east, north) metres from home, in order, in one round trip. Each
+ *  click is its own map event, as a pilot's taps are; sending them together keeps the test
+ *  from waiting for a software-rendered WebGL frame (around a second here) after each one. */
+async function mapClicks(page: Page, at: [number, number][]): Promise<void> {
+  const points = at.map(([e, n]) => lonlat(e, n));
+  await page.evaluate((points) => {
+    const map = (window as unknown as { __sd: { map: MapHandle } }).__sd.map;
+    for (const [lng, lat] of points) map.fire("click", { lngLat: { lng, lat } });
+  }, points);
+}
+
+/** Resolves once the map has drawn every pending change (its sources loaded, nothing dirty). */
+async function mapDrawn(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const map = (window as unknown as { __sd?: { map?: MapHandle | null } }).__sd?.map;
+    if (!map?.getCanvas().isConnected) return;
+    const idle = map.once("idle");
+    map.triggerRepaint();
+    await idle;
+  });
 }
 
 async function feats(page: Page, id: string) {
@@ -91,7 +104,7 @@ async function feats(page: Page, id: string) {
 }
 
 async function shot(page: Page, name: string): Promise<void> {
-  await page.waitForTimeout(300); // let the map draw the last change
+  await mapDrawn(page); // the picture shows the last change
   // WebKit's screenshot injects a stylesheet, which the panel's CSP rightly refuses (and the
   // fake ground counts as a violation): the pictures come from the Chromium projects.
   if (page.context().browser()?.browserType().name() === "webkit") return;
@@ -149,7 +162,7 @@ test("draw a path, ask in the chat, approve: planned dashed, flown solid, progre
   // 1. Draw the path: five clicks along the trail, then Klar.
   await page.getByTestId("draw-menu").click();
   await page.getByTestId("draw-path").click();
-  for (const [e, n] of TRAIL) await mapClick(page, e, n);
+  await mapClicks(page, TRAIL);
   await expect(page.getByTestId("draw-bar")).toContainText("5 punkter");
   await shot(page, "1-drawing");
   await page.getByTestId("draw-done").click();
@@ -257,8 +270,10 @@ test("a path outside the search area is refused in the panel, in Swedish", async
   await mapReady(page);
   await page.getByTestId("draw-menu").click();
   await page.getByTestId("draw-path").click();
-  await mapClick(page, 0, 20);
-  await mapClick(page, 200, 60); // 80 m past the charter's east edge
+  await mapClicks(page, [
+    [0, 20],
+    [200, 60], // 80 m past the charter's east edge
+  ]);
   await page.getByTestId("draw-done").click();
   await expect(page.getByTestId("draw-bar")).toContainText(
     "Vägen går utanför sökområdet. Rita den inom uppdragsramen.",

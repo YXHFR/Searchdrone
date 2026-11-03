@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import io
 import math
+import re
 import shutil
 import tomllib
 import urllib.parse
@@ -40,7 +41,11 @@ MAX_ZIP_BYTES = 64 * 1024 * 1024
 MAX_UNPACKED_BYTES = 256 * 1024 * 1024
 KEEP_DIRS = ("meshes/", "materials/")
 POSES = ("standing", "sitting", "lying")
+_LOOK = re.compile(r"[a-z0-9_]{1,40}-[a-z]{1,12}-[a-z]{1,12}")
 LICENSES = ("CC0-1.0", "CC-BY-4.0")
+# How far a model may be scaled to a drawn body height (``Person.scale``): a child of
+# 1.1 m to a tall adult of 2 m, from models made 1.67-1.93 m tall.
+SCALE_RANGE = (0.55, 1.25)
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,13 @@ class PersonModel:
     bounds_m: tuple[float, float, float, float, float, float]
     albedo_map: str = ""  # a texture the SDF must name itself (PBR), else the mesh's own
     mesh_offset_z_m: float = 0.0  # added to the mesh's height so the feet are at z = 0
+    stature_m: float = 0.0  # the standing body height a seated model shows (0: its box's)
+
+    @property
+    def body_height_m(self) -> float:
+        """The standing body height the model is made at: its box's height for a standing
+        model, ``stature_m`` for a seated one (whose box is lower)."""
+        return self.stature_m or self.bounds_m[5] - self.bounds_m[4]
 
     @property
     def url(self) -> str:
@@ -110,6 +122,7 @@ def load_catalog(folder: Path = CATALOG_DIR) -> tuple[PersonModel, ...]:
                 bounds_m=(bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5]),
                 albedo_map=data.get("albedo_map", ""),
                 mesh_offset_z_m=float(data.get("mesh_offset_z_m", 0.0)),
+                stature_m=float(data.get("stature_m", 0.0)),
             )
         )
     return tuple(out)
@@ -136,13 +149,35 @@ def _stamp(model: PersonModel) -> str:
     return f"{model.sha256}\n"
 
 
-def is_fetched(model: PersonModel, repo: Path = paths.REPO) -> bool:
-    stamp = model_dir(model, repo) / ".sha256"
+def _stamped(folder: Path, model: PersonModel) -> bool:
+    stamp = folder / ".sha256"
     return stamp.is_file() and stamp.read_text(encoding="utf-8") == _stamp(model)
 
 
-def missing(repo: Path = paths.REPO) -> list[str]:
-    return [m.id for m in CATALOG if not is_fetched(m, repo)]
+def is_fetched(model: PersonModel, repo: Path = paths.REPO) -> bool:
+    return _stamped(model_dir(model, repo), model)
+
+
+def search_dirs(env: Mapping[str, str], repo: Path = paths.REPO) -> list[Path]:
+    """Where Gazebo looks for ``model://<id>``, in its order: this checkout's assets, then
+    ``GZ_SIM_RESOURCE_PATH`` (in a farm round it has the owner's checkout's assets)."""
+    parts = [str(assets_dir(repo)), *env.get("GZ_SIM_RESOURCE_PATH", "").split(":")]
+    return [Path(p) for p in dict.fromkeys(parts) if p]
+
+
+def missing(repo: Path = paths.REPO, env: Mapping[str, str] | None = None) -> list[str]:
+    """The catalog models that are not fetched. Without ``env`` only this checkout's assets
+    count (what ``fetch`` fills). With ``env`` a model counts where Gazebo would load it
+    from: the first folder in ``search_dirs`` that has it, with the right hash stamp."""
+    if env is None:
+        return [m.id for m in CATALOG if not is_fetched(m, repo)]
+    dirs = search_dirs(env, repo)
+    out = []
+    for m in CATALOG:
+        found = next((d / m.id for d in dirs if (d / m.id).is_dir()), None)
+        if found is None or not _stamped(found, m):
+            out.append(m.id)
+    return out
 
 
 def _download(url: str) -> bytes:
@@ -219,7 +254,11 @@ def _rot_z(p: tuple[float, float, float], angle: float) -> tuple[float, float, f
 @dataclass(frozen=True)
 class Person:
     """A person on the ground. ``pose`` "lying" lays a standing model on its back (a
-    quarter turn about its x axis) with its lowest point on the ground."""
+    quarter turn about its x axis) with its lowest point on the ground. ``scale`` sizes
+    the whole model evenly (``SCALE_RANGE``), so one mesh can be a child or a tall adult;
+    ``height_m`` is the standing body height that gives. ``look`` names a copy of the
+    model with other clothes colours (``sd_sim.farm.looks``), made in ``build/`` before
+    the world is loaded; it replaces ``tint``."""
 
     name: str
     model: str  # catalog id
@@ -230,6 +269,8 @@ class Person:
     tint: tuple[float, float, float] | None = None
     is_target: bool = False
     up_m: float = 0.0
+    scale: float = 1.0
+    look: str = ""
 
     def __post_init__(self) -> None:
         if self.model not in BY_ID:
@@ -241,6 +282,11 @@ class Person:
             raise objects.ObjectError(f"{self.name}: {self.model} kan inte vara {self.pose}")
         if self.tint is not None and not all(0.0 <= c <= 1.0 for c in self.tint):
             raise objects.ObjectError(f"{self.name}: tint ska vara tre tal mellan 0 och 1")
+        low, high = SCALE_RANGE
+        if not low <= self.scale <= high:
+            raise objects.ObjectError(f"{self.name}: scale ska ligga mellan {low:g} och {high:g}")
+        if self.look and not (_LOOK.fullmatch(self.look) and self.look.startswith(self.model)):
+            raise objects.ObjectError(f"{self.name}: ogiltig look {self.look!r}")
 
     @classmethod
     def from_truth(cls, row: Mapping[str, Any]) -> Person:
@@ -257,6 +303,8 @@ class Person:
             tint=(float(tint[0]), float(tint[1]), float(tint[2])) if tint else None,
             is_target=truth.get("role") == "target",
             up_m=float(row.get("up_m", 0.0)),
+            scale=float(truth.get("scale", 1.0)),
+            look=str(truth.get("look") or ""),
         )
 
     @property
@@ -268,13 +316,21 @@ class Person:
         return PERSON_LABEL
 
     @property
+    def height_m(self) -> float:
+        """The person's standing body height (also when sitting or lying)."""
+        return self.spec.body_height_m * self.scale
+
+    def _bounds(self) -> tuple[float, ...]:
+        return tuple(v * self.scale for v in self.spec.bounds_m)
+
+    @property
     def roll_rad(self) -> float:
         return math.pi / 2 if self.pose == "lying" else 0.0
 
     def _local_corners(self) -> list[tuple[float, float, float]]:
         """The model box's corners after the pose turn, in the person's frame (origin on
         the ground under the model's origin, before yaw)."""
-        x0, x1, y0, y1, z0, z1 = self.spec.bounds_m
+        x0, x1, y0, y1, z0, z1 = self._bounds()
         pts = [(x, y, z) for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)]
         pts = [_rot_x(p, self.roll_rad) for p in pts]
         lift = -min(p[2] for p in pts)
@@ -283,7 +339,7 @@ class Person:
     @property
     def lift_m(self) -> float:
         """How far the turned model is raised so it rests on the ground."""
-        _x0, _x1, y0, y1, z0, z1 = self.spec.bounds_m
+        _x0, _x1, y0, y1, z0, z1 = self._bounds()
         pts = [_rot_x((0.0, y, z), self.roll_rad) for y in (y0, y1) for z in (z0, z1)]
         return -min(p[2] for p in pts)
 
@@ -308,24 +364,29 @@ class Person:
             "model": self.model,
             "pose": self.pose,
             "tint": list(self.tint) if self.tint is not None else None,
+            **({} if self.scale == 1.0 else {"scale": self.scale}),
+            **({"look": self.look} if self.look else {}),
+            "height_m": round(self.height_m, 3),
             "attribution": self.spec.attribution(),
         }
 
     def sdf(self, pose: objects.Pose) -> str:
         spec = self.spec
-        uri = f"model://{spec.id}/{spec.mesh}"
+        folder = self.look or spec.id
+        uri = f"model://{folder}/{spec.mesh}"
         label = (
             '<plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">'
             f"<label>{PERSON_LABEL}</label></plugin>"
         )
-        z = self.lift_m + spec.mesh_offset_z_m
-        if self.tint is not None:
+        z = self.lift_m + spec.mesh_offset_z_m * self.scale
+        size = "" if self.scale == 1.0 else f"<scale>{' '.join([_num(self.scale)] * 3)}</scale>"
+        if self.tint is not None and not self.look:
             rgb = " ".join(_num(c) for c in self.tint)
             material = f"<material><ambient>{rgb} 1</ambient><diffuse>{rgb} 1</diffuse></material>"
         elif spec.albedo_map:
             material = (
                 "<material><diffuse>1 1 1 1</diffuse><pbr><metal>"
-                f"<albedo_map>model://{spec.id}/{spec.albedo_map}</albedo_map>"
+                f"<albedo_map>model://{folder}/{spec.albedo_map}</albedo_map>"
                 "</metal></pbr></material>"
             )
         else:
@@ -336,7 +397,7 @@ class Person:
     <link name="link">
       <visual name="visual">
         <pose>0 0 {_num(z)} {_num(self.roll_rad)} 0 0</pose>
-        <geometry><mesh><uri>{uri}</uri></mesh></geometry>{material}
+        <geometry><mesh><uri>{uri}</uri>{size}</mesh></geometry>{material}
       </visual>
     </link>
     {label}

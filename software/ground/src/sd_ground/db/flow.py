@@ -31,7 +31,8 @@ _MISSION_COLS = """m.id, m.vehicle_id, m.title, m.status, m.paused_by, m.returni
   m.created_at, m.activated_at, m.landed_at, m.closed_at, m.closed_reason, m.notes"""
 _CHARTER_COLS = """c.id, c.mission_id, c.vehicle_id, c.version, c.status, c.body, c.proposed_by,
   c.autonomy_mode, c.approved_by, c.approved_at, c.install_status, c.fence_hash,
-  c.fence_verified_at, c.created_at,
+  c.fence_verified_at, c.created_at, c.operation_mode, c.overflight_allowed,
+  c.floor_pack_id, c.floor_pack_sha256, c.floor_pack_set,
   (SELECT a.id FROM approvals a WHERE a.kind = 'charter' AND a.subject_id = c.id
    ORDER BY a.requested_at DESC LIMIT 1) AS approval_id"""
 _APPROVAL_COLS = """id, mission_id, vehicle_id, kind, subject_id, subject_version, status,
@@ -67,6 +68,12 @@ def charter_body(row: RowMapping) -> MissionCharter:
     body = dict(_json(row["body"]))
     if row["autonomy_mode"] is not None:
         body["autonomy_mode"] = row["autonomy_mode"]
+    if row["operation_mode"] is not None:
+        body["operation_mode"] = row["operation_mode"]
+        body["overflight_allowed"] = row["overflight_allowed"]
+    if row["floor_pack_set"]:  # the pilot's pick on approval, "Ingen höjdkarta" included
+        body["floor_pack_id"] = row["floor_pack_id"]
+        body["floor_pack_sha256"] = row["floor_pack_sha256"]
     body["approved_by"] = row["approved_by"]
     body["approved_at"] = row["approved_at"]
     body["fence_hash"] = row["fence_hash"]
@@ -425,11 +432,17 @@ class FlowRepo:
             await self._x(
                 conn,
                 "UPDATE charters c SET status = 'approved', autonomy_mode = :mode, "
+                "operation_mode = :op, overflight_allowed = :over, "
+                "floor_pack_id = :pack, floor_pack_sha256 = :pack_sha, floor_pack_set = true, "
                 "approved_by = :by, approved_at = :t, install_status = 'none', "
                 "fence_hash = o.fence_hash, fence_verified_at = o.fence_verified_at "
                 "FROM (SELECT CAST(:keep AS uuid) AS id) k "
                 "LEFT JOIN charters o ON o.id = k.id WHERE c.id = :id",
                 mode=str(charter.autonomy_mode),
+                op=charter.operation_mode,
+                over=charter.overflight_allowed,
+                pack=charter.floor_pack_id,
+                pack_sha=charter.floor_pack_sha256,
                 by=by,
                 t=now,
                 keep=keep_fence_from,
@@ -458,6 +471,9 @@ class FlowRepo:
                     "charter_id": cid,
                     "version": charter.version,
                     "autonomy_mode": str(charter.autonomy_mode),
+                    "operation_mode": charter.operation_mode,
+                    "overflight_allowed": charter.overflight_allowed,
+                    "floor_pack_id": charter.floor_pack_id,
                     "by": by,
                 },
             )
@@ -1394,13 +1410,14 @@ class FlowRepo:
     async def inspect_target(self, mission_id: str, detection_id: str) -> dict[str, Any] | None:
         """Where a closer look at a detection aims: the newest position of a candidate
         that observed it and is neither rejected nor merged, else the detection's own
-        (``lat``, ``lon``, ``sigma95_m``)."""
+        (``lat``, ``lon``, ``sigma95_m``; ``candidate_id`` None without a candidate)."""
         row = await self._one(
             "SELECT COALESCE(c.lat, ST_Y(d.geom)) AS lat, COALESCE(c.lon, ST_X(d.geom)) AS lon, "
-            "COALESCE(c.sigma95_m, d.sigma95_m) AS sigma95_m FROM detections d "
-            "LEFT JOIN LATERAL (SELECT lat, lon, sigma95_m FROM ("
-            "SELECT DISTINCT ON (k.candidate_id) k.rev, k.state, ST_Y(k.geom) AS lat, "
-            "ST_X(k.geom) AS lon, k.sigma95_m FROM candidate_observations o "
+            "COALESCE(c.sigma95_m, d.sigma95_m) AS sigma95_m, c.candidate_id FROM detections d "
+            "LEFT JOIN LATERAL (SELECT candidate_id, lat, lon, sigma95_m FROM ("
+            "SELECT DISTINCT ON (k.candidate_id) k.candidate_id, k.rev, k.state, "
+            "ST_Y(k.geom) AS lat, ST_X(k.geom) AS lon, k.sigma95_m "
+            "FROM candidate_observations o "
             "JOIN candidates k ON k.candidate_id = o.candidate_id "
             "WHERE o.detection_id = d.detection_id ORDER BY k.candidate_id, k.rev DESC) newest "
             "WHERE state NOT IN ('rejected', 'merged') ORDER BY rev DESC LIMIT 1) c ON TRUE "

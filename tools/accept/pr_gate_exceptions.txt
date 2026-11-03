@@ -1,0 +1,22 @@
+# Commits on main from before all three gate workflows existed: the first-parent line up
+# to and including the commit that added owner-gate.yml (PR #11). review-gate.yml and
+# pr-title.yml came in PR #2. tools/check_merged_pr_gates.py skips these SHAs; every
+# later commit must come from a pull request with green gates. Regenerate with:
+#   git log --first-parent --reverse --format='%H  # %s' main | sed '/^1a64a280/q'
+# A later commit belongs here only when the owner accepts it, with the reason after #
+# (a pull request that changes this file needs owner-ok, check_owner_gate.PROTECTED).
+81a52821bba915c94d7b83ae03603b9e51d15ead  # Initial README and gitignore
+746b084703d8e98d0bd177ef3daafdd1902653a3  # Add Apache-2.0 license
+0a84976ee1d87cd2227c6d4597338e2c0e90766b  # Keep internal planning out of the repo, allow public docs
+51f35655e3cc37e223a75dfa4445d1245d69fb17  # License hardware under CERN-OHL-S-2.0, adopt REUSE
+a4b7643107c243e68465c3434b3e1168e90968e8  # Ignore local docs folder
+29ea4095c58488d87790bfba87dbf9653b660ce0  # feat(repo): B0-01 repository skeleton and tooling (#1)
+be29de2eec423906cc97bd7f174359cd38e97f12  # feat(ground): B0-04 local Postgres + PostGIS and first migration (#4)
+0b7a8bbbdaedf193a43846e16d090d0441af62e2  # feat(schemas): B0-03 shared schemas and skill registry (#3)
+00264025c2aa6004a2ac33eb184913b3686e30f8  # feat(sim): B0-05 simulator environment for WSL2 and containers (#5)
+e689cb0f7d796ec13729dabf0560a3fdd1bfbacc  # feat(panel): B1-06 panel shell with views, layout and safety bar (#7)
+6bd6571cbc9c7afab1ef1891212f23d1170ade35  # ci(ci): B0-02 CI baseline jobs (#2)
+3a4b45ebd2fa23217e87fe8ae6094d3681bef5be  # feat(safety): B1-03 safety gate and charter checks (#6)
+b8a25d3cbbc8e49cdb6b0eae890a656710e11972  # feat(link): B1-04 SD-link ground ↔ onboard (#8)
+3007fbaeb72376e880767ed941f2423b0d6bc36a  # feat(ground): B1-05 ground server, database schema and access (#9)
+1a64a2804e4ea54d8c910caafbf92ff88ddbab28  # feat(hw): B0-06 hardware gate with mass and flight-time check (#11)

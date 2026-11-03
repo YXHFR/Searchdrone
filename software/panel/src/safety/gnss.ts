@@ -1,5 +1,5 @@
 // Alerts the panel words itself (GPS, the link coming back, the link-down codes, the keep-out
-// list on board or not, the keep-out hover) and the log
+// list on board or not, the keep-out hover, the mission's built-in end) and the log
 // line for a find-hold that ended without the link. Pure: keys and values, no i18next.
 import type { KeepoutHoldField } from "@searchdrone/schemas";
 import { mmss } from "../lib/useNow";
@@ -66,6 +66,8 @@ export function alertView(
           tone: "red",
         };
       return { key: "keepouts.HOLD_INSIDE", vars: {}, tone: "red" };
+    case "MISSION_FALLBACK":
+      return { key: "onboard.MISSION_FALLBACK", vars: {}, tone: "red" };
     case "GPS_WEAK":
       return { key: "gnss.GPS_WEAK", vars: { sats: round(details.satellites) }, tone: "yellow" };
     case "GPS_LOST":

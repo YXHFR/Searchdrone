@@ -361,6 +361,7 @@
         "KEEPOUTS_NOT_INSTALLED",
         "KEEPOUTS_INSTALLED",
         "KEEPOUT_HOLD",
+        "MISSION_FALLBACK",
         "GPS_WEAK",
         "GPS_LOST",
         "DEAD_RECKONING",
@@ -762,6 +763,33 @@
             "reject"
           ],
           "type": "string"
+        },
+        "floor_pack": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FloorPackChoice"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "operation_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "sim",
+                "exercise",
+                "live"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "reason": {
           "anyOf": [
@@ -1703,7 +1731,8 @@
             "reject",
             "inspect",
             "unsure",
-            "reopen"
+            "reopen",
+            "resume"
           ],
           "type": "string"
         },
@@ -4207,6 +4236,7 @@
         "TAKEOFF",
         "TRANSIT",
         "SURVEY",
+        "INSPECT",
         "HOLD",
         "RTL",
         "LAND",
@@ -4341,6 +4371,77 @@
         "hover_offset_m"
       ],
       "title": "FindMeParams",
+      "type": "object"
+    },
+    "FloorPackChoice": {
+      "additionalProperties": false,
+      "description": "The pilot's map pack on the charter card: one from ``GET /floor_packs`` with the\nhash the list showed, or neither (\"Ingen höjdkarta\": a closer look does not come\ndown). The ground refuses a pack it does not have whole or whose hash has changed.",
+      "properties": {
+        "floor_pack_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "floor_pack_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "FloorPackChoice",
+      "type": "object"
+    },
+    "FloorPackInfo": {
+      "additionalProperties": false,
+      "description": "``GET /floor_packs``: a height-floor map pack the ground station holds under\n``<data_dir>/floor/<floor_pack_id>/`` whose files all match their hashes, for the\npilot's choice on the charter card. ``attribution`` is the data's source credit (it\nis shown wherever the pack is picked).",
+      "properties": {
+        "attribution": {
+          "maxLength": 500,
+          "type": "string"
+        },
+        "floor_pack_id": {
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+          "type": "string"
+        },
+        "floor_pack_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/LatLon"
+        },
+        "size_east_m": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "size_north_m": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "floor_pack_id",
+        "floor_pack_sha256",
+        "attribution",
+        "origin",
+        "size_east_m",
+        "size_north_m"
+      ],
+      "title": "FloorPackInfo",
       "type": "object"
     },
     "FollowMeParams": {
@@ -5234,23 +5335,47 @@
       "title": "HoldParams",
       "type": "object"
     },
+    "InspectAborted": {
+      "additionalProperties": false,
+      "description": "``inspect.aborted``: the look ended without the wait (STOP, FLY HOME, a takeover,\nthe battery, the link ...); the candidate goes back to ``ready``. Never resumed.",
+      "properties": {
+        "candidate_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "stop",
+            "home",
+            "override",
+            "battery",
+            "gnss",
+            "link_loss",
+            "refused_onboard",
+            "failed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "candidate_id",
+        "reason"
+      ],
+      "title": "InspectAborted",
+      "type": "object"
+    },
     "InspectDetectionParams": {
       "additionalProperties": false,
-      "description": "A closer look at a detection, straight down (``sd_schemas.keepout.inspect_geometry``).\n\nThe ground fills in where the target is (``lat``, ``lon``: the candidate's position\nwhen the detection belongs to one) and its cylinder's radius from its own records;\nwithout them the order is unresolved. ``alt_m`` is the highest the drone may go for it\n(the charter's ceiling when left out).",
+      "description": "A closer look at a candidate (version 2: ``candidate_id``; ``sd_schemas.inspect``).\n\nThe order names the card only. The ground fills in where the candidate is (``lat``,\n``lon``), its uncertainty and its cylinder's radius (``PERSON_KEEPOUT_M`` +\n``sigma95_m``) from its own records, never the AI or the panel; without them the\norder is unresolved. The order gives no height: the drone works its heights out\nonboard from the height floor.\n\n``geometry`` is the look from the side (``sd_schemas.keepout.inspect_geometry``): a\npoint outside the cylinder from which the main camera sees the target nearly straight\ndown, at most at the charter's ceiling. It is the whole look in ``live`` without the\noverflight permit. With the charter's ``overflight_allowed`` (sim, exercise, live with\nthe permit) the order goes straight over the candidate, without a height: the drone\nkeeps its own above the height floor (``sd_safety.floor``) and the gate checks that\nfloor instead (R-FLOOR, R-FLOOR-CEIL).",
       "properties": {
-        "alt_m": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "detection_id": {
+        "candidate_id": {
           "format": "uuid",
           "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
@@ -5281,10 +5406,18 @@
           ],
           "default": null
         },
-        "standoff_m": {
-          "maximum": 200,
-          "minimum": 15,
-          "type": "number"
+        "sigma95_m": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "target_radius_m": {
           "anyOf": [
@@ -5301,10 +5434,472 @@
         }
       },
       "required": [
-        "detection_id",
-        "standoff_m"
+        "candidate_id"
       ],
       "title": "InspectDetectionParams",
+      "type": "object"
+    },
+    "InspectDone": {
+      "additionalProperties": false,
+      "description": "``inspect.done``: the steps are over and the drone hovers for the pilot's decision.\nThe candidate stays ``inspecting`` until it comes, or ``AWAIT_DECISION_S`` passes.",
+      "properties": {
+        "candidate_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "clear": {
+          "type": "boolean"
+        },
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "end": {
+          "enum": [
+            "clear",
+            "floor",
+            "lower_declined",
+            "steps_max",
+            "timeout",
+            "keepout",
+            "laser_lost",
+            "side_look"
+          ],
+          "type": "string"
+        },
+        "lowest_above_ground_m": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "steps": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "still_ids": {
+          "items": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "type": "string"
+          },
+          "maxItems": 200,
+          "type": "array"
+        }
+      },
+      "required": [
+        "command_id",
+        "candidate_id",
+        "end",
+        "steps",
+        "clear"
+      ],
+      "title": "InspectDone",
+      "type": "object"
+    },
+    "InspectLaserLost": {
+      "additionalProperties": false,
+      "description": "``inspect.laser_lost``: the laser stopped confirming below the map's floor without\nit; the drone climbs to that floor and goes to wait.",
+      "properties": {
+        "above_ground_m": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id"
+      ],
+      "title": "InspectLaserLost",
+      "type": "object"
+    },
+    "InspectLower": {
+      "additionalProperties": false,
+      "description": "Ground -> onboard, reliable: the pilot's yes to going below 30 m above ground\n(``inspect.lower_offer``). Only from the pilot's own click, never from the AI.",
+      "properties": {
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id"
+      ],
+      "title": "InspectLower",
+      "type": "object"
+    },
+    "InspectLowerOffer": {
+      "additionalProperties": false,
+      "description": "``inspect.lower_offer``: the next step would go below the automatic floor (30 m\nabove ground); the drone hovers and asks the pilot (``link.InspectLower``).",
+      "properties": {
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "lowest_above_ground_m": {
+          "maximum": 1000,
+          "minimum": 0,
+          "type": "number"
+        },
+        "now_above_ground_m": {
+          "maximum": 1000,
+          "minimum": 0,
+          "type": "number"
+        },
+        "reason": {
+          "enum": [
+            "map",
+            "unknown",
+            "powerline",
+            "laser",
+            "no_map",
+            "laser_lost"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "now_above_ground_m",
+        "lowest_above_ground_m",
+        "reason"
+      ],
+      "title": "InspectLowerOffer",
+      "type": "object"
+    },
+    "InspectOutcome": {
+      "additionalProperties": false,
+      "description": "Ground -> onboard, reliable: the pilot's decision on a closer look while the drone\nhovers for it (``hold_reason`` \"inspect_await\"). The drone flies back to where the\nsearch broke off, except after \"confirmed\": then it hovers over the find.",
+      "properties": {
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "rejected",
+            "unsure",
+            "resume",
+            "confirmed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "outcome"
+      ],
+      "title": "InspectOutcome",
+      "type": "object"
+    },
+    "InspectProgress": {
+      "additionalProperties": false,
+      "description": "How a look is going, in the onboard computer's state snapshot (at most 2 Hz).",
+      "properties": {
+        "above_ground_m": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "await_left_s": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "candidate_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "floor_auto_above_ground_m": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "floor_lowest_above_ground_m": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "floor_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "map",
+                "unknown",
+                "powerline",
+                "laser",
+                "no_map",
+                "laser_lost"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "laser_confirmed": {
+          "default": false,
+          "type": "boolean"
+        },
+        "phase": {
+          "enum": [
+            "approach",
+            "step",
+            "lower_offer",
+            "await",
+            "return"
+          ],
+          "type": "string"
+        },
+        "step": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command_id",
+        "candidate_id",
+        "step",
+        "phase"
+      ],
+      "title": "InspectProgress",
+      "type": "object"
+    },
+    "InspectStay": {
+      "additionalProperties": false,
+      "description": "Ground -> onboard, reliable: the pilot's no to \"Gå lägre?\" (\"Nej, stanna här\"). The\ndrone stops waiting for an answer at once and the look ends where it is\n(``lower_declined``), as on no answer in ``LOWER_OFFER_S``: it never goes lower for it.\nA kind of its own, not a flag on ``InspectLower``, so that a no can never be read as a\nyes. Only from the pilot's own click.",
+      "properties": {
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id"
+      ],
+      "title": "InspectStay",
+      "type": "object"
+    },
+    "Inspection": {
+      "additionalProperties": false,
+      "description": "A closer look as the ground keeps it (``GET /api/v1/missions/{id}/inspections``\nand ``inspection.updated`` on the live topic ``candidates``). At most one is open per\nmission (``ended_at`` None).",
+      "properties": {
+        "await_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "candidate_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "done": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InspectDone"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lower_offer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InspectLowerOffer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lower_offer_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "operation_mode": {
+          "enum": [
+            "sim",
+            "exercise",
+            "live"
+          ],
+          "type": "string"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "enum": [
+                "confirmed",
+                "rejected",
+                "unsure",
+                "resume",
+                "timeout",
+                "resumed_by_pilot",
+                "aborted",
+                "refused_onboard",
+                "failed"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "overflight": {
+          "type": "boolean"
+        },
+        "phase": {
+          "enum": [
+            "flying",
+            "lower_offer",
+            "await",
+            "ended"
+          ],
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "started_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "started_by": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "candidate_id",
+        "mission_id",
+        "seq",
+        "started_at",
+        "started_by",
+        "operation_mode",
+        "overflight",
+        "phase"
+      ],
+      "title": "Inspection",
       "type": "object"
     },
     "Item": {
@@ -5408,10 +6003,11 @@
       "type": "object"
     },
     "KeepoutHoldField": {
-      "description": "The fields of the onboard ``executor.keepout_hold`` data that the ground's\n``KEEPOUT_HOLD`` alert passes on in its details, for the panel's text.",
+      "description": "The fields of the ``KEEPOUT_HOLD`` alert's details: the onboard\n``executor.keepout_hold`` data the ground passes on, for the panel's text, and the\nenvelope's send time.",
       "enum": [
         "inside",
-        "climb_to_m"
+        "climb_to_m",
+        "sent_utc"
       ],
       "title": "KeepoutHoldField",
       "type": "string"
@@ -6505,6 +7101,30 @@
             }
           ]
         },
+        "floor_pack_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "floor_pack_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "geofence_buffer_m": {
           "default": 20,
           "maximum": 50,
@@ -6549,6 +7169,26 @@
             "return_home"
           ],
           "type": "string"
+        },
+        "operation_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "sim",
+                "exercise",
+                "live"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "overflight_allowed": {
+          "default": false,
+          "type": "boolean"
         },
         "pilot_position": {
           "$ref": "#/$defs/LatLon"
@@ -6977,7 +7617,7 @@
           "type": "string"
         },
         "type": {
-          "pattern": "^executor\\.[a-z_]+$",
+          "pattern": "^(executor|inspect)\\.[a-z_]+$",
           "type": "string"
         }
       },
@@ -7395,6 +8035,18 @@
           "minItems": 4,
           "type": "array"
         },
+        "inspect_step": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "pose": {
           "$ref": "#/$defs/Pose"
         },
@@ -7427,6 +8079,47 @@
         "detector"
       ],
       "title": "PerceptionReport",
+      "type": "object"
+    },
+    "Permit": {
+      "additionalProperties": false,
+      "description": "The ground's overflight permit for ``live`` (``GET``/``PUT /api/v1/permit``): the\nreference of the operator's permit in the specific category (Transportstyrelsen) and\nwhether a closer look may then fly straight over its candidate. A charter approved\nin ``live`` carries ``overflight_allowed`` from it; sim and exercise always may.",
+      "properties": {
+        "allow_overflight_live": {
+          "default": false,
+          "type": "boolean"
+        },
+        "specific_category_ref": {
+          "default": "",
+          "maxLength": 64,
+          "type": "string"
+        }
+      },
+      "title": "Permit",
+      "type": "object"
+    },
+    "PermitChanged": {
+      "additionalProperties": false,
+      "description": "``permit.changed`` on the ground: the overflight permit setting for ``live``.",
+      "properties": {
+        "allow_overflight_live": {
+          "type": "boolean"
+        },
+        "changed_by": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "has_specific_category_ref": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "changed_by",
+        "has_specific_category_ref",
+        "allow_overflight_live"
+      ],
+      "title": "PermitChanged",
       "type": "object"
     },
     "PilotPosition": {
@@ -9308,7 +10001,8 @@
                 "find_hold",
                 "ai_silent",
                 "startup",
-                "manual_input_lost"
+                "manual_input_lost",
+                "inspect_await"
               ],
               "type": "string"
             },
@@ -9316,6 +10010,17 @@
               "type": "null"
             }
           ]
+        },
+        "inspect": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InspectProgress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "last_transition_state_seq": {
           "type": "integer"
@@ -9605,7 +10310,8 @@
             "reject",
             "inspect",
             "unsure",
-            "reopen"
+            "reopen",
+            "resume"
           ],
           "type": "string"
         },

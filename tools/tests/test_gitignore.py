@@ -41,6 +41,13 @@ IGNORED = [
     "x.tlog",
     "flight.BIN",
     "video.mp4",
+    # Floor packs and the point clouds they are made from.
+    "floor/meadow/chm_dm.npy",
+    "data/floor/meadow/floor_pack.toml",
+    "build/x/floor/.cache/m657_68.tif",
+    "y21c031-65750_6775_25.copc.laz",
+    "config/floor_area.local.geojson",
+    "config/my_area.geojson",
 ]
 
 NOT_IGNORED = [
@@ -51,6 +58,9 @@ NOT_IGNORED = [
     "config/ground.example.toml",
     "software/common/schemas/generated/x.json",
     ".env.example",
+    "config/floor_area.example.geojson",
+    "software/common/safety/src/sd_safety/floor_pack.py",
+    "tools/terrain/fetch_floor_map.py",
     "software/brain/tests/golden/sim/SIM-01.json",
 ]
 
@@ -80,6 +90,20 @@ def test_no_internal_files_tracked() -> None:
         assert parts[0] != "docs", f
         assert "CLAUDE.md" not in parts, f
         assert ".claude" not in parts, f
+
+
+def test_no_floor_data_in_git() -> None:
+    """No floor pack or point cloud is tracked: map data made with the owner's login
+    stays in ${SD_DATA_DIR}/floor/ (spec titta-narmare 15.2)."""
+    files = subprocess.run(
+        ["git", "ls-files"], cwd=ROOT, check=True, capture_output=True, text=True
+    ).stdout.splitlines()
+    for f in files:
+        path = Path(f)
+        in_floor = "floor" in path.parts[:-1]
+        assert not (in_floor and path.suffix in (".npy", ".laz", ".tif", ".tiff")), f
+        assert path.name != "floor_pack.toml", f
+        assert not f.endswith(".copc.laz"), f
 
 
 def test_ai_exam_outputs_default_to_ignored_folders() -> None:

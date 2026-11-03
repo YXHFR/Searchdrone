@@ -233,19 +233,21 @@
       </sensor>
 {% endif %}
 {% if stills %}
-      <!-- The stills camera (on request of a search scenario) and a bounding-box camera
-           with the same picture: the simulator's labelled boxes for the oracle source and
-           the evaluation. Pictures go to Gazebo Transport topics on loopback, read by
-           sd_sim's gz_stills capture process. -->
-{% for sensor, kind in [("stills", "camera"), ("boxes", "boundingbox_camera")] %}
+      <!-- The stills cameras (on request of a search scenario: the main camera, and the
+           tele camera when asked for) each with a bounding-box camera of the same
+           picture: the simulator's labelled boxes for the oracle source and the
+           evaluation. All look straight down from this link. Pictures go to Gazebo
+           Transport topics on loopback, read by sd_sim's gz_stills capture processes. -->
+{% for cam in stills %}
+{% for sensor, kind in [(cam.sensor, "camera"), (cam.boxes, "boundingbox_camera")] %}
       <sensor name="{{ sensor }}" type="{{ kind }}">
         <pose degrees="true">0 0 0 0 90 0</pose>
-        <topic>{{ stills.topic_prefix }}/{{ sensor }}</topic>
+        <topic>{{ cam.topic_prefix }}/{{ sensor }}</topic>
         <camera>
-          <horizontal_fov>{{ stills.hfov_rad }}</horizontal_fov>
+          <horizontal_fov>{{ cam.hfov_rad }}</horizontal_fov>
           <image>
-            <width>{{ stills.width }}</width>
-            <height>{{ stills.height }}</height>
+            <width>{{ cam.width }}</width>
+            <height>{{ cam.height }}</height>
           </image>
           <clip>
             <near>0.1</near>
@@ -256,9 +258,10 @@
 {% endif %}
         </camera>
         <always_on>1</always_on>
-        <update_rate>{{ stills.rate_hz }}</update_rate>
+        <update_rate>{{ cam.rate_hz }}</update_rate>
         <visualize>0</visualize>
       </sensor>
+{% endfor %}
 {% endfor %}
 {% endif %}
     </link>

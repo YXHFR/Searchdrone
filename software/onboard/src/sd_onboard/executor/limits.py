@@ -59,7 +59,8 @@ _AI_HOLD_FROM: Final = frozenset({S.TRANSIT, S.SURVEY})
 # "after_step": nothing now; the running step finishes, then the vehicle holds.
 # "find" (the link-loss rule only): fly to the hover point beside a confirmed find.
 # "event": only the event, nothing to steer.
-Kind = Literal["hold", "rtl", "alt", "after_step", "find", "event"]
+# "inspect_climb" (the link-loss rule only): a closer look ends, straight up to its start height.
+Kind = Literal["hold", "rtl", "alt", "after_step", "find", "event", "inspect_climb"]
 
 
 @dataclass(frozen=True, slots=True)

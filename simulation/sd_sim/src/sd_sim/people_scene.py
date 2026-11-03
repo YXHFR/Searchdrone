@@ -85,5 +85,4 @@ class PeopleScene:
 
 def resource_path(env: Mapping[str, str], repo: Path = paths.REPO) -> str:
     """``GZ_SIM_RESOURCE_PATH`` with the fetched person models first."""
-    parts = [str(people.assets_dir(repo)), *env.get("GZ_SIM_RESOURCE_PATH", "").split(":")]
-    return ":".join(p for p in dict.fromkeys(parts) if p)
+    return ":".join(str(d) for d in people.search_dirs(env, repo))

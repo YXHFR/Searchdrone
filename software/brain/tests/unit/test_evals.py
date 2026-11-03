@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 from brain_helpers import GOLDEN, SCENARIOS
 
+from sd_brain.backends import LlmCommander
+from sd_brain.config import LlmConfig
+from sd_brain.evals import runner
 from sd_brain.evals.runner import (
     ScenarioResult,
     language_ok,
@@ -20,15 +24,42 @@ from sd_schemas.reason_codes import CHARTER_VALIDATION_CODES, GATE_REASON_CODES
 PATHS = sorted(SCENARIOS.glob("*.yaml"))
 
 
-def test_there_are_33_scenarios() -> None:
+def test_there_are_41_scenarios() -> None:
     ids = [load_scenario(p)["id"] for p in PATHS]
-    assert ids == [f"EV-{i:02d}" for i in range(1, 34)]
+    assert ids == [f"EV-{i:02d}" for i in range(1, 42)]
 
 
 @pytest.mark.parametrize("path", PATHS, ids=[p.stem for p in PATHS])
 async def test_scenario_golden(path: Path) -> None:
     result = await run_scenario(path, golden_dir=GOLDEN)
     assert result.ok, result.failures
+
+
+@pytest.mark.parametrize(
+    "llm",
+    [None, LlmConfig(max_tokens=2048, context_tokens=12000, prompt_budget_tokens=5000)],
+)
+async def test_the_eval_commander_is_a_flights(
+    llm: LlmConfig | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """[llm]'s sampling, prompt budget and context window, as in a flight: a prompt the
+    builder allows is never cut off here and sent there."""
+    made: list[LlmCommander] = []
+
+    def spy(*args: Any, **kw: Any) -> LlmCommander:
+        made.append(LlmCommander(*args, **kw))
+        return made[-1]
+
+    monkeypatch.setattr(runner, "LlmCommander", spy)
+    result = await run_scenario(PATHS[0], golden_dir=GOLDEN, llm=llm)
+    assert result.ok, result.failures
+    want = llm or LlmConfig()
+    [cmd] = made
+    assert (cmd.sampling.max_tokens, cmd.context_tokens, cmd.context.budget) == (
+        want.max_tokens,
+        want.context_tokens,
+        want.prompt_budget_tokens,
+    )
 
 
 def test_language_check() -> None:

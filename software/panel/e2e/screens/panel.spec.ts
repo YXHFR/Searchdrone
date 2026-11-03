@@ -278,6 +278,7 @@ const STATES: State[] = [
     name: "02-proposal-holding",
     async run(page, ground) {
       await proposal(page, ground);
+      await page.getByTestId("approval-AP1").getByTestId("op-mode-exercise").check();
       const btn = page.getByTestId("approval-AP1").getByTestId("approve");
       await btn.scrollIntoViewIfNeeded();
       const box = await btn.boundingBox();
@@ -375,7 +376,122 @@ const STATES: State[] = [
       await showView(page, "status");
     },
   },
+  {
+    name: "12-inspect-await",
+    async run(page, ground) {
+      await inspecting(page, ground, "await");
+    },
+  },
+  {
+    name: "13-inspect-lower",
+    async run(page, ground) {
+      await inspecting(page, ground, "lower_offer");
+    },
+  },
 ];
+
+/** A closer look on K3 in an exercise: the drone asks to go lower, or waits for the
+ * decision after the steps. */
+async function inspecting(
+  page: Page,
+  ground: FakeGround,
+  phase: "lower_offer" | "await",
+): Promise<void> {
+  const id = "0192f4a1-7b90-7a22-b1c3-000000000003";
+  const cmd = "0192f4a1-7b90-7a22-b1c3-100000000003";
+  const at = {
+    lat: HOME.lat + 130 / 111_320,
+    lon: HOME.lon + 50 / (111_320 * Math.cos((HOME.lat * Math.PI) / 180)),
+  };
+  ground.setConfig({ features: { ...ground.config.features, candidates: true } });
+  ground.candidates = [
+    {
+      candidate_id: id,
+      seq: 3,
+      rev: 2,
+      state: "inspecting",
+      priority: 0.8,
+      priority_class: "high",
+      best_detector_score: 0.7,
+      first_seen_utc: new Date(Date.now() - 5 * 60_000).toISOString(),
+      last_seen_utc: new Date().toISOString(),
+      ...at,
+      n_seen: 4,
+      n_in_view: 5,
+      sigma95_m: 3,
+      thumb_detection_id: "d-3",
+      engine: "strong",
+      person: "yes",
+    },
+  ];
+  ground.candidateDetail[id] = {
+    observations: [
+      {
+        detection_id: "d-3",
+        captured_utc: new Date(Date.now() - 30_000).toISOString(),
+        distance_m: 1,
+        has_crop: true,
+        label: "person",
+        ...at,
+        px_size: 96,
+        score: 0.82,
+        sigma95_m: 3,
+      },
+    ],
+    assessments: [],
+  };
+  ground.inspections = [
+    {
+      command_id: cmd,
+      candidate_id: id,
+      mission_id: "M1",
+      seq: 3,
+      started_at: new Date(Date.now() - 70_000).toISOString(),
+      started_by: "operator:demo",
+      operation_mode: "exercise",
+      overflight: true,
+      phase,
+      ...(phase === "lower_offer"
+        ? {
+            lower_offer: {
+              command_id: cmd,
+              now_above_ground_m: 30,
+              lowest_above_ground_m: 21,
+              reason: "map" as const,
+            },
+            lower_offer_until: new Date(Date.now() + 52_000).toISOString(),
+          }
+        : {
+            done: {
+              command_id: cmd,
+              candidate_id: id,
+              end: "clear" as const,
+              steps: 3,
+              lowest_above_ground_m: 21,
+              still_ids: [],
+              clear: true,
+            },
+            await_until: new Date(Date.now() + 103_000).toISOString(),
+          }),
+    },
+  ];
+  await searching(page, ground);
+  ground.pushLive("candidates", "candidate.inspect_progress", {
+    command_id: cmd,
+    candidate_id: id,
+    seq: 3,
+    step: 3,
+    phase: phase === "await" ? "await" : "lower_offer",
+    above_ground_m: phase === "await" ? 21 : 30,
+    floor_auto_above_ground_m: 30,
+    floor_lowest_above_ground_m: 21,
+    floor_reason: "map",
+    laser_confirmed: false,
+  });
+  await showView(page, "candidates");
+  await page.locator('[data-testid="candidate-card"][data-seq="3"] button').click();
+  await expect(page.getByTestId("inspect-strip")).toBeVisible();
+}
 
 for (const theme of ["dark", "light"] as const) {
   for (const state of STATES) {

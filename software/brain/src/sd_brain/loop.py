@@ -23,15 +23,16 @@ import datetime as dt
 import hashlib
 import json
 import logging
+import math
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from pydantic import ValidationError
 
-from sd_brain.backends.base import BackendCrashError, CommanderBackend
+from sd_brain.backends.base import PARSE_FAIL_TEXT, BackendCrashError, CommanderBackend
 from sd_brain.charter_draft import (
     CharterDraft,
     CharterError,
@@ -69,6 +70,7 @@ from sd_brain.memory import (
 )
 from sd_brain.profile_draft import profile_proposal
 from sd_brain.runtime.fallback import EngineName
+from sd_brain.runtime.replay import ReplayExhaustedError, ReplayNotConsumedError
 from sd_brain.state_view import current_limits, fresh_request, motion_block, takeoff_ok
 from sd_brain.sv import height_m
 from sd_brain.toolcall_parse import truncate
@@ -264,6 +266,10 @@ class CommanderLoop:
         self._own_approvals: set[str] = set()
         # the AI's own action cards: only these make it wait (its own charter proposals do not)
         self._own_action_approvals: set[str] = set()
+        # The AI's own orders whose end (done, failed, superseded, ...) has not reached it as
+        # an event yet: command id -> when an idle check first found no order active.
+        # Its own skill_event turn decides what follows, not an idle turn (``_end_unseen``).
+        self._unended: dict[str, float | None] = {}
         self._backlog_ids: set[str] = set()
         # Refused charter proposals since the last approved/rejected charter (or mission).
         self._charter_attempts = 0
@@ -319,10 +325,15 @@ class CommanderLoop:
             self._queue.clear()
             self._followups.clear()
             self._backlog.clear()
-            self._charter_attempts = 0
-            self._carry = None
-            self._candidates_woken.clear()
+            self._new_mission()
             self._activity_at = self.clock.monotonic()
+
+    def _new_mission(self) -> None:
+        """What belongs to one mission only, for both ways a new one arrives."""
+        self._charter_attempts = 0
+        self._carry = None
+        self._candidates_woken.clear()
+        self._unended.clear()
 
     async def connected(self, reconnect: bool) -> None:
         """The stream is up. After a reconnect the AI says it is back."""
@@ -332,7 +343,18 @@ class CommanderLoop:
             self._followups.append(("recovered", {}))
             self._wake.set()
 
+    def stream_resynced(self) -> None:
+        """The ground could not replay what the stream missed (a new server epoch, or a gap
+        past its replay ring): an end sent meanwhile never comes. A reconnect it can replay
+        keeps the record, since the missed ends arrive in the replay."""
+        self._unended.clear()
+
     async def health_recovered(self) -> None:
+        """Out of the degraded state. Like a reconnect it keeps the record of orders whose
+        end is unseen. An entry leaves that record when its end event arrives, when its
+        submit fails or is not allowed (no end comes), when it has waited out
+        ``idle_airborne_tick_s`` (``_end_unseen``), or all at once on ``stream_resynced``
+        or a new mission."""
         self.health.recovered()
         await self.connected(True)
 
@@ -367,6 +389,8 @@ class CommanderLoop:
                 self._start_stop_check(evt)
         elif kind == "event.skill":
             cid = str(body.get("command_id"))
+            if body.get("status") in SKILL_WAKE:
+                self._unended.pop(cid, None)
             if body.get("status") == "rejected_by_gate" and cid in self._sync_rejects:
                 return  # already handled by the retry turn
             if body.get("status") in SKILL_WAKE:
@@ -431,9 +455,7 @@ class CommanderLoop:
             mid = evt.get("mission_id") or body.get("mission_id")
             if mid:
                 if str(mid) != self.mission_id:
-                    self._charter_attempts = 0
-                    self._carry = None
-                    self._candidates_woken.clear()
+                    self._new_mission()
                 self.mission_id = str(mid)
         if trigger is None:
             return
@@ -538,6 +560,12 @@ class CommanderLoop:
                 if exc.status == 401:
                     raise
                 log.warning("turen (%s) avbröts, markstationen svarade inte: %s", trigger, exc)
+            except (ReplayExhaustedError, ReplayNotConsumedError):
+                raise  # a test harness out of answers must fail loudly
+            except Exception as exc:
+                # Backstop: no single turn ends the loop. The turn is lost; the next one
+                # runs. Type and a short message only (the text may be the model's).
+                log.error("turn_failed trigger=%s: %s", trigger, _exc_summary(exc))
             finally:
                 self._turn_task = None
                 self._turn_events = []
@@ -579,7 +607,9 @@ class CommanderLoop:
         # so a pin the operator placed before writing is in it.
         chat = await self.ground.chat(mid, 0, 200)
         s = await self.ground.situation(mid)
-        if trigger in ("skill_event", "operator_override"):
+        # A skill's end waits for its snapshot also in a turn named after a higher
+        # trigger (a critical alert arrives with a keep-out hover's end).
+        if trigger == "operator_override" or any(e.get("type") == "event.skill" for e in events):
             s = await self._fresh_situation(mid, s, trigger, events)
         try:
             mem = await self.ground.memory(mid)
@@ -692,8 +722,8 @@ class CommanderLoop:
         if mem != mem_before:
             try:
                 await self.ground.put_memory(mid, to_update(mem))
-            except GroundError:
-                pass
+            except GroundError as exc:
+                _raise_if_refused(exc)
             except ValidationError as exc:  # too large for the schema: log, keep the turn
                 log.warning("kunde inte spara minnet: %s", exc.errors()[:1])
         await self._log_decision(mid, record, out)
@@ -767,7 +797,25 @@ class CommanderLoop:
             )
             and motion_block(s) is None
             and s.ai_enabled
+            and not self._end_unseen()  # last: only with no order active
         )
+
+    def _end_unseen(self) -> bool:
+        """An order of ours is no longer active on the ground, but its end has not reached
+        the AI as an event yet: the turn for that end is on its way and decides what comes
+        next. An idle turn that ran first saw no active order and acted on its own (#159:
+        a scripted resume right after a goto ended). An end that never comes stops counting
+        after ``idle_airborne_tick_s``, so the idle turns are never held up for good. The
+        clock starts at the first idle check that finds no order active and idle checks
+        come one period apart (each stand-down counts as a turn), so in practice the hold
+        lasts up to about two periods (plus the 1 s ticker)."""
+        now = self.clock.monotonic()
+        for cid, since in list(self._unended.items()):
+            if since is None:
+                self._unended[cid] = since = now
+            if now - since > self.cfg.behaviour.idle_airborne_tick_s:
+                del self._unended[cid]
+        return bool(self._unended)
 
     def _operator_message(
         self, events: list[dict[str, Any]], chat: list[ChatMessage]
@@ -858,6 +906,21 @@ class CommanderLoop:
                     backend=_wire_backend(backend.name), error="http_error"
                 ),
             )
+        except (ReplayExhaustedError, ReplayNotConsumedError):
+            raise  # a test harness out of answers must fail loudly
+        except Exception as exc:
+            if isinstance(exc, GroundError) and exc.status == 401:
+                raise  # a refused token ends the loop, as in drain_queue
+            # Last resort: no single model answer may end the brain. A fault the backend
+            # did not foresee counts as an answer it could not read; the loop goes on.
+            # The type and a short message only: a traceback may quote the hostile text.
+            log.error("backend_decide_failed backend=%s: %s", backend.name, _exc_summary(exc))
+            out = TurnOutput(
+                messages=[OutMessage(text=PARSE_FAIL_TEXT, refs={"turn_failed": "parse"})],
+                diagnostics=TurnDiagnostics(
+                    backend=_wire_backend(backend.name), error="parse_error"
+                ),
+            )
         if out.diagnostics.latency_ms == 0:
             out.diagnostics.latency_ms = int((self.clock.monotonic() - start) * 1000)
         err = out.diagnostics.error
@@ -929,6 +992,7 @@ class CommanderLoop:
         try:
             await self.ground.post_message(self.mission_id, body)
         except GroundError as exc:
+            _raise_if_refused(exc)
             log.warning("kunde inte skriva i chatten: %s", exc)
 
     async def _execute(
@@ -1016,9 +1080,15 @@ class CommanderLoop:
             await self._say(OutMessage(text=text), reply_to)
             return mem
         await self._respect_rate()
+        # Counted before the submit: the ground can publish the order's end before its
+        # answer (a ground skill such as report is done on insert), and that end must find it.
+        cid = str(req.command_id)
+        self._unended[cid] = None
         try:
             result = await self.ground.submit(mid, req)
         except GroundError as exc:
+            self._unended.pop(cid, None)
+            _raise_if_refused(exc)
             log.warning("ordern gick inte fram: %s", exc)
             await self._say(OutMessage(text="Ordern gick inte fram till markstationen."), reply_to)
             return mem
@@ -1026,6 +1096,8 @@ class CommanderLoop:
         self._activity_at = self.clock.monotonic()
         record.request = req
         record.result = result
+        if result.decision not in ("ALLOW", "PENDING_APPROVAL"):
+            self._unended.pop(cid, None)  # never started: no end comes
         if result.decision == "ALLOW":
             self._rate_rejects = 0
             if out.action.skill == "takeoff":
@@ -1099,12 +1171,12 @@ class CommanderLoop:
         older one is refused onboard as ``STATE_CHANGED``); after the pilot's Resume, the
         mission no longer paused by a person nor HELD by the STOP (until the onboard
         computer confirms the release, the gate still says the pilot must resume)."""
-        kind = "event.skill" if trigger == "skill_event" else "event.operator_override"
+        kind = "event.operator_override" if trigger == "operator_override" else "event.skill"
         body = next((e.get("body") or {} for e in reversed(events) if e.get("type") == kind), {})
         first = (s.snapshot_state_epoch, s.snapshot_state_seq)
 
         def stale(s: Situation) -> bool:
-            if trigger == "skill_event":
+            if kind == "event.skill":
                 ended = body.get("command_id")
                 if ended is None:
                     return False
@@ -1185,22 +1257,49 @@ class CommanderLoop:
         try:
             return await self.ground.propose_charter(mid, proposal)
         except GroundError as exc:
+            _raise_if_refused(exc)
             return CharterProposalOutcome(
                 ok=False, errors=[CharterError(code="GROUND_ERROR", detail_sv=str(exc))]
             )
 
     async def _log_decision(self, mid: str, record: TurnRecord, out: TurnOutput) -> None:
-        d = out.diagnostics
-        prompt = d.prompt_json or {"trigger": record.trigger, "texts": record.texts}
-        prompt_bytes = json.dumps(prompt, sort_keys=True, ensure_ascii=False, default=str)
+        try:
+            entry = self._decision_entry(record, out.diagnostics)
+        except Exception as exc:  # e.g. an entry too large: the log is lost, not the turn
+            log.warning("decision_log_unbuilt: %s", type(exc).__name__)
+            return
+        try:
+            await self.ground.post_decision(mid, entry)
+        except GroundError as exc:
+            _raise_if_refused(exc)
+            log.warning("kunde inte spara beslutsloggen: %s", exc)
+        except ValueError as exc:  # not expected after _sendable: logged, never raised
+            log.warning("kunde inte spara beslutsloggen: %s", type(exc).__name__)
+
+    def _decision_entry(self, record: TurnRecord, d: TurnDiagnostics) -> DecisionLog:
+        """The turn's audit entry, made safe to send once: the model wrote much of it."""
+        prompt = _wire_safe(d.prompt_json or {"trigger": record.trigger, "texts": record.texts})
+        # default=str: a value that is no JSON (a UUID, a datetime) is logged as its text.
+        # That text is cleaned too: str() of an odd value may hold a lone surrogate.
+        prompt_bytes: str = _wire_safe(
+            json.dumps(prompt, sort_keys=True, ensure_ascii=False, default=str)
+        )
         result = record.result
+        fields: dict[str, Any] = _wire_safe(
+            {
+                "trigger": record.trigger,
+                "backend": d.backend,
+                "engine": d.engine,
+                "model_id": d.model_id,
+                "tool_calls": d.tool_calls[:32],
+                "reason_codes": result.reason_codes if result else [],
+                "proposal_draft": _logged_draft(record.proposal_draft or record.refused_draft),
+                "proposal_errors": [e.model_dump() for e in _logged_errors(record.proposal)],
+            }
+        )
         entry = DecisionLog(
             id=new_id(),
             turn_id=uuid.UUID(record.turn_id),
-            trigger=record.trigger,
-            backend=d.backend,
-            engine=d.engine,
-            model_id=d.model_id,
             ai_config_hash=self.ai_hash,
             prompt_sha256=hashlib.sha256(prompt_bytes.encode()).hexdigest(),
             prompt_tokens=d.prompt_tokens,
@@ -1208,23 +1307,28 @@ class CommanderLoop:
             latency_ms=d.latency_ms,
             rounds=d.rounds,
             repairs=d.repairs,
-            tool_calls=d.tool_calls[:32],
             command_id=record.request.command_id if record.request else None,
             gate_decision=result.decision if result else None,
-            reason_codes=result.reason_codes if result else [],
             error=d.error,
             retry_of=uuid.UUID(record.retry_of) if record.retry_of else None,
             attempt=record.attempt,
             proposal_id=record.proposal.proposal_id if record.proposal else None,
             proposal_ok=record.proposal.ok if record.proposal else None,
-            proposal_errors=_logged_errors(record.proposal),
-            proposal_draft=_logged_draft(record.proposal_draft or record.refused_draft),
             prompt_json=json.loads(prompt_bytes) if len(prompt_bytes) < 900_000 else None,
+            **fields,
         )
-        try:
-            await self.ground.post_decision(mid, entry)
-        except (GroundError, ValueError) as exc:
-            log.warning("kunde inte spara beslutsloggen: %s", exc)
+        if _sendable(entry):
+            return entry
+        # Still not sendable (no case known): a reduced entry, so the turn stays in the log.
+        log.warning("decision_log_reduced turn=%s", record.turn_id)
+        return entry.model_copy(
+            update={
+                "prompt_json": None,
+                "proposal_draft": None,
+                "proposal_errors": [],
+                "tool_calls": [{"name": _wire_safe(c.get("name"))} for c in entry.tool_calls],
+            }
+        )
 
     # --- the quick stop check -------------------------------------------------------------
 
@@ -1240,9 +1344,19 @@ class CommanderLoop:
         message_id = body.get("message_id")
         if not text or message_id is None:
             return
-        task = asyncio.create_task(self._stop_check(str(message_id), text, evt))
+        task = asyncio.create_task(self._side_task(self._stop_check(str(message_id), text, evt)))
         self._side_tasks.add(task)
         task.add_done_callback(self._side_tasks.discard)
+
+    async def _side_task(self, work: Coroutine[Any, Any, None]) -> None:
+        """A side task outside the turn loop: a refused token is logged here, and the
+        next turn's read ends the loop."""
+        try:
+            await work
+        except GroundError as exc:
+            if exc.status != 401:
+                raise
+            log.error("sd-ground godtar inte befälhavartokenet (stoppkontrollen)")
 
     async def _stop_check(self, message_id: str, text: str, evt: dict[str, Any]) -> None:
         mid = self.mission_id
@@ -1385,7 +1499,10 @@ class _ReadTools:
                 skill = str(args.get("skill"))
                 if skill not in self.loop.reg or skill == PROPOSAL_TOOL:
                     return {"error": f"unknown skill {skill}"}
-                params = adapt(skill, dict(args.get("params") or {}), self.turn.situation)
+                raw_params = args.get("params") or {}
+                if not isinstance(raw_params, dict):
+                    return {"error": "invalid arguments: params must be an object"}
+                params = adapt(skill, dict(raw_params), self.turn.situation)
                 req = SkillRequest(
                     command_id=new_id(),
                     skill=skill,
@@ -1413,6 +1530,8 @@ class _ReadTools:
                     "status": "proposed: the pilot corrects and approves it on the profile card",
                 }
         except (GroundError, AdaptError, ValueError, KeyError) as exc:  # ProfileArgsError too
+            if isinstance(exc, GroundError):
+                _raise_if_refused(exc)
             return {"error": truncate(str(exc), TOOL_RESULT_MAX_CHARS)}
         return {"error": f"unknown tool {name}"}
 
@@ -1436,8 +1555,56 @@ def _logged_draft(draft: Any) -> dict[str, Any] | None:
     body = draft.model_dump(mode="json") if isinstance(draft, CharterDraft) else draft
     if not isinstance(body, dict):
         return None
-    raw = json.dumps(body, ensure_ascii=False, default=str)
-    return json.loads(raw) if len(raw.encode()) <= PARAMS_MAX_BYTES else None
+    safe: dict[str, Any] = _wire_safe(body)
+    raw = json.dumps(safe, ensure_ascii=False, default=str).encode()
+    return safe if len(raw) <= PARAMS_MAX_BYTES else None
+
+
+WIRE_DEPTH_MAX = 64
+"""How deep a decision-log value may nest. The model writes drafts and arguments, and
+pydantic will not serialise a value nested a few hundred deep."""
+
+
+def _wire_safe(value: Any, depth: int = 0) -> Any:
+    """``value`` as the ground client can send it: every string valid UTF-8 (a lone
+    surrogate such as "\\ud800" becomes "?"), no NaN or infinity, nested at most
+    ``WIRE_DEPTH_MAX`` deep (deeper parts become "…")."""
+    if isinstance(value, str):
+        return value.encode(errors="replace").decode()
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict | list | tuple):
+        if depth >= WIRE_DEPTH_MAX:
+            return "…"
+        if isinstance(value, dict):
+            return {
+                _wire_safe(str(k)): _wire_safe(v, depth + 1)
+                for k, v in value.items()  # pyright: ignore[reportUnknownVariableType]
+            }
+        return [_wire_safe(v, depth + 1) for v in value]  # pyright: ignore[reportUnknownVariableType]
+    return value
+
+
+def _sendable(entry: DecisionLog) -> bool:
+    """Whether the ground client can encode ``entry`` (as httpx 0.28 does)."""
+    try:
+        data = entry.model_dump(mode="json")
+        json.dumps(data, ensure_ascii=False, allow_nan=False).encode()
+    except (ValueError, RecursionError):
+        return False
+    return True
+
+
+def _exc_summary(exc: BaseException) -> str:
+    """An exception for one log line: its type and a short ``repr`` of its text, so no
+    newline or control character from the model can forge another log line."""
+    return f"{type(exc).__name__}: {truncate(str(exc), 200)!r}"
+
+
+def _raise_if_refused(exc: GroundError) -> None:
+    """A refused token (401) ends the loop, on a write as on a read."""
+    if exc.status == 401:
+        raise exc
 
 
 def _deadline(why: str) -> OutMessage:

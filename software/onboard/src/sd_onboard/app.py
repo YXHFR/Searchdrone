@@ -25,8 +25,9 @@ from sd_onboard.io.params import effective_params
 from sd_onboard.io.persistence import StateStore
 from sd_onboard.link_client import OnboardLink
 from sd_onboard.logs import setup_logging
-from sd_onboard.perception.loop import PerceptionLoop
+from sd_onboard.perception.loop import Feed, PerceptionLoop
 from sd_onboard.perception.sources import DirStillSource
+from sd_onboard.rangefinder import LaserReader
 
 __all__ = ["main", "serve"]
 
@@ -76,6 +77,8 @@ async def serve(loaded: Loaded, stop: asyncio.Event | None = None) -> int:
             require_rc=cfg.require_rc,
             takeoff_delay_after_arm_s=cfg.test_hooks.takeoff_delay_after_arm_s,
             expected_params=effective_params(loaded.param_files()),
+            profile=cfg.profile,
+            floor_dir=loaded.state_dir / "floor",
         ),
         StateStore(loaded.state_dir, clock),
     )
@@ -84,6 +87,8 @@ async def serve(loaded: Loaded, stop: asyncio.Event | None = None) -> int:
     if perception is not None:
         perception.on_targets = executor.on_detections  # E8: cylinders from our own finds
         executor.camera = perception.capture  # capture_stills and inspect_detection
+        executor.capture_round = perception.capture_round  # a closer look: every camera
+    executor.laser = _laser(loaded, vehicle)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with contextlib.suppress(NotImplementedError, RuntimeError):
@@ -128,10 +133,27 @@ def _perception(
     p = loaded.config.perception
     if not p.enabled:
         return None
+    synthetic = loaded.config.profile == "sim"
+    tele = p.tele
+    extra = (
+        [
+            Feed(
+                DirStillSource(
+                    loaded.path(tele.still_dir),
+                    synthetic=synthetic,
+                    max_size=(tele.width_px, tele.height_px),
+                ),
+                PinholeCamera(tele.width_px, tele.height_px, tele.hfov_deg),
+                "tele",
+            )
+        ]
+        if tele.enabled
+        else []
+    )
     return PerceptionLoop(
         DirStillSource(
             loaded.path(p.still_dir),
-            synthetic=loaded.config.profile == "sim",
+            synthetic=synthetic,
             max_size=(p.width_px, p.height_px),
         ),
         lambda: vehicle.telemetry,
@@ -145,7 +167,19 @@ def _perception(
             "executor.perception_off", "warning", {"reason": reason, "error": error}
         ),
         on=lambda: link.event("executor.perception_on", "info", {}),
+        extra=extra,
     )
+
+
+def _laser(loaded: Loaded, vehicle: Vehicle) -> LaserReader | None:
+    """The downward laser's reader, fed every reading; None without a laser (the height
+    floor then uses the map alone)."""
+    rf = loaded.config.rangefinder
+    if not rf.fitted:
+        return None
+    laser = LaserReader(rf)
+    vehicle.subscribe(laser.observe)
+    return laser
 
 
 def _log_side_task(task: asyncio.Future[None]) -> None:

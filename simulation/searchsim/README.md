@@ -19,15 +19,28 @@ just rl-eval size=ci          # 300 scenarios
 
 Keys: `size=full|ci`, `seed=0..9` (train), `workers=<int>` (default: every core),
 `out=<file>`, `policy=<file>` (eval), `world=synthetic|real`, `sites=<folder>`,
-`belief_motion=diffuse|lpb` (real only, see below). The policy is written to `build/rl/policy.json`,
+`belief_motion=diffuse|lpb` (real only, see below), `miss_correlation=0..1` (default 0.8,
+see below). The policy is written to `build/rl/policy.json`,
 which git ignores; trained weights never go into the repository. Without a policy file
 `rl-eval` compares only the baselines.
 
 ## The simulator
 
 - **Map:** 2 x 2 km in 25 m cells, split into 8 x 8 sectors of 250 m. Random tracks and
-  a smooth canopy field. Canopy hides people: the chance a sweep sees a person in a
-  cell is `p_det * (1 - canopy)`.
+  a smooth canopy field. Canopy hides people: the chance the first sweep sees a person
+  in a cell is `p_det * (1 - canopy)`. A repeat sweep sees less (next point).
+- **Repeat sweeps (`miss_correlation`):** someone hidden under trees on one pass is
+  likely still hidden on the next pass over the same spot. So the first sweep's chance is
+  split into two parts: is the person *visible* from the air in that cell at all
+  (`1 - miss_correlation * canopy`, the same on every pass) and, if so, does this sweep
+  see them (the rest, fresh each pass). After `n` empty sweeps with the person in the
+  cell, the next sweep sees them with `per_pass * P(visible | n misses)`, which falls
+  towards zero under trees and stays the same on open ground. The default is 0.8 (a
+  guess, not a measured value); 0 makes every sweep an independent chance, as before.
+  The truth counts the empty sweeps per cell while the person was in it; the belief
+  counts the sweeps of each sector, as if the person had stayed put, and uses that for
+  its Bayes update and for every sector's expected detection, so the planners see the
+  smaller gain too. Both worlds work the same way.
 - **Prior (the belief):** log-normal distance rings around the last seen point, weighted
   up near tracks. The truth is drawn with a different ring size, track pull and
   detector strength, so the map is never exactly right.
@@ -43,6 +56,18 @@ which git ignores; trained weights never go into the repository. Without a polic
   detection chance, so the simulator computes the exact expectation over the coins:
   `p_find`, `expected_minutes` (time to find, counted as 180 when not found) and
   `score = 1 - expected_minutes / 180`.
+
+Why a visible/hidden split and not a fixed factor per repeat (`pod * rho^(n-1)`): the
+split keeps the score an exact expectation. Each cell's "visible" coin is drawn once and
+the cells' coins are independent, so the simulator only has to count the misses per cell.
+The first sweep keeps its old chance, open ground keeps independent passes (there only the
+camera misses), and a person who walks into a new cell gets a fresh chance there. A fixed
+factor would need a made-up `rho` with no meaning of its own and would cut the chance on
+open ground as much as under trees.
+
+**Numbers from before `miss_correlation` (when every sweep was an independent chance)
+are not comparable with numbers made with the default.** To make them again, pass
+`miss_correlation=0` to `rl-train` and `rl-eval`; it gives the old results bit for bit.
 
 ## Real places (`world=real`)
 
@@ -114,6 +139,24 @@ interval about ±0.01). Search theory points the same way: when the travel cost 
 counted, the greedy rule is hard to beat. The policy has not yet earned a place ahead of
 `greedy_psr`. The full run on more scenarios is how to find out whether it ever does.
 A validation gain on its own does not show it; only the paired comparison does.
+
+Those first results were made before `miss_correlation`, with every sweep an independent
+chance, and are not comparable with runs made now. What the change does, on the
+baselines only (`just rl-eval size=ci`, 300 made-up scenarios, mean score with 95 %
+interval):
+
+| Name | Independent sweeps (`miss_correlation=0`) | Default (0.8) |
+|---|---|---|
+| `greedy_psr` | 0.256 (0.222-0.289) | 0.241 (0.211-0.270) |
+| `greedy_poa` | 0.228 (0.196-0.259) | 0.184 (0.155-0.214) |
+| `spiral` | 0.205 (0.183-0.228) | 0.205 (0.183-0.228) |
+| `lawnmower` | 0.089 (0.074-0.105) | 0.089 (0.074-0.105) |
+
+`spiral` and `lawnmower` do not change: in 180 minutes they almost never sweep a sector
+twice. `greedy_psr` now spreads its about 30 surveys over 21 sectors on average instead
+of 15. `greedy_poa` loses the most: it looks only at the probability, which a sweep under
+trees now lowers less, so it keeps going back to the same wooded sector. The policy has to
+be trained again under the new model before it can be compared.
 
 What the numbers do not show: the map, the motion model and the detector are simple
 stand-ins. A policy that wins here has only earned a place in the SITL tests, not in a

@@ -16,6 +16,17 @@ SD-link message; the phases are ``sd_schemas.executor.LinkLossPhase``.
 
 Anyone else taking over (a person, the RC transmitter, a flight-controller failsafe,
 another limit's return home) ends the rule's part (``YIELDED``) until the link is back.
+
+* **Inspect climb** (a closer look under way): the look ends and the drone climbs straight
+  up to the height it started at (an internal order in ``INSPECT``); then L-LINK as usual
+  from the same clock, the climb counted as ``climbing_out``.
+
+The keep-out climb (``climbing_out``: straight up out of a person's cylinder) is not cut
+short: L-LINK holds once it has ended (in the keep-out hold) and goes home from there when
+that is due, and L-FIND's hover starts up there, with its clock, also past the find move's
+deadline. A climb that has not ended by then does not hold home back for good: L-LINK goes
+home regardless at ``HOME_CLIMBING_MS`` (53 s plus ``KEEPOUT_CLIMB_LINK_ALLOWANCE_S``, 113 s)
+and L-FIND at its usual 123 s.
 """
 
 from __future__ import annotations
@@ -33,8 +44,10 @@ from sd_safety.link_loss import (
     FIND_HOVER_UNTIL_MS,
     FIND_MOVE_DEADLINE_MS,
     HOLD_MS,
+    HOME_CLIMBING_MS,
     HOME_MS,
     FindPlan,
+    InspectClimbPlan,
     choose_mode,
 )
 from sd_schemas.charter import MissionCharter
@@ -67,6 +80,11 @@ class LinkLossInput:
     # Why the executor is no longer steering, when that happened this tick or earlier:
     # "battery", "limit", "gnss", "human" or "fc_failsafe".
     taken_by: str | None = None
+    # The keep-out climb is under way: it ends in the keep-out hold, which nothing cuts short.
+    climbing_out: bool = False
+    # A closer look is under way and started at this height above home: the link lost,
+    # it ends and the drone climbs straight up to it first (``InspectClimbPlan``).
+    inspect_start_alt_m: float | None = None
 
 
 class LinkLossRule:
@@ -131,7 +149,9 @@ class LinkLossRule:
                     self.phase = P.YIELDED  # someone else steers already
                     return []
                 return self._detect(x)
-            case P.GRACE if down_ms >= HOLD_MS:
+            case P.GRACE if down_ms >= HOLD_MS and (
+                not x.climbing_out or down_ms >= HOME_CLIMBING_MS
+            ):
                 self.phase = P.HOLD
                 return [LimitAction("L-LINK", "hold", "link_loss", "link_loss_hold", {})]
             case P.HOLD if down_ms >= HOME_MS:
@@ -141,7 +161,9 @@ class LinkLossRule:
                 # Arrived (T27), or another limit held it on the way (LL-T11).
                 self._hover(x.now_ms)
                 return []
-            case P.FIND_MOVE if down_ms >= FIND_MOVE_DEADLINE_MS:
+            case P.FIND_MOVE if down_ms >= FIND_MOVE_DEADLINE_MS and (
+                not x.climbing_out or down_ms >= FIND_HOVER_UNTIL_MS
+            ):
                 self._hover(x.now_ms)
                 return [LimitAction("L-FIND", "hold", "find_hold", "find_move_deadline", {})]
             case P.FIND_HOVER if down_ms >= FIND_HOVER_UNTIL_MS:
@@ -161,7 +183,20 @@ class LinkLossRule:
             nav_ok=x.nav_ok,
             keepouts=x.keepouts,
             charter=x.charter,
+            inspect_start_alt_m=x.inspect_start_alt_m,
         )
+        if isinstance(plan, InspectClimbPlan):
+            self.phase = P.GRACE
+            return [
+                LimitAction("L-LINK", "event", "link_loss", "link_lost", {}),
+                LimitAction(
+                    "L-LINK",
+                    "inspect_climb",
+                    "link_loss",
+                    "link_loss_inspect_climb",
+                    {"alt_m": round(plan.alt_m, 1)},
+                ),
+            ]
         if not isinstance(plan, FindPlan):
             self.phase = P.GRACE
             return [LimitAction("L-LINK", "event", "link_loss", "link_lost", {})]

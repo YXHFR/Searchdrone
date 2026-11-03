@@ -52,6 +52,7 @@ __all__ = [
     "mode_shown",
     "rc_switch_moved",
     "set_mode_with_fallback",
+    "switch_moved",
 ]
 
 STEP_CONFIRM_S: Final = 1.0  # a step whose mode the HEARTBEAT does not show by then failed
@@ -83,13 +84,18 @@ def late_order(mode: int, targets: frozenset[CopterMode]) -> bool:
 RC_SWITCH_MOVED_US: Final = 100  # a mode-switch change bigger than noise
 
 
-def rc_switch_moved(vehicle: Vehicle, before: int | None) -> bool:
-    """The RC flight-mode switch is not where it was (``before``): a person with an RC
-    transmitter chose a mode, and the RC transmitter goes before everything."""
-    now = vehicle.telemetry.rc_mode_pwm
+def switch_moved(before: int | None, now: int | None) -> bool:
+    """The RC flight-mode switch reads ``now`` and is not where it was (``before``): a
+    person with an RC transmitter chose a mode."""
     if now is None:
         return False  # no RC receiver heard: nothing a person did with it
     return before is None or abs(now - before) > RC_SWITCH_MOVED_US  # turned on, or moved
+
+
+def rc_switch_moved(vehicle: Vehicle, before: int | None) -> bool:
+    """The RC flight-mode switch is not where it was (``before``): a person with an RC
+    transmitter chose a mode, and the RC transmitter goes before everything."""
+    return switch_moved(before, vehicle.telemetry.rc_mode_pwm)
 
 
 def failsafe_began_recently(vehicle: Vehicle) -> bool:

@@ -34,6 +34,7 @@ from sd_schemas.safety import MIN_ALT_AGL_M
 
 __all__ = [
     "AI_SCHEMA_MIN_ALT_M",
+    "CANDIDATE_NUMBER_PATTERN",
     "FORBIDDEN_SKILL_NAMES",
     "PATH_MAX_LENGTH_M",
     "SKILL_REGISTRY",
@@ -48,6 +49,7 @@ __all__ = [
     "GotoAiParams",
     "GotoParams",
     "HoldParams",
+    "InspectDetectionAiParams",
     "InspectDetectionParams",
     "LandAtParams",
     "MarkLocationAiParams",
@@ -98,6 +100,8 @@ FORBIDDEN_SKILL_NAMES: frozenset[str] = frozenset(
 )
 
 _PIN = r"^P[0-9]{1,3}$"
+# A candidate's display number (K3): the ground translates it to the candidate.
+CANDIDATE_NUMBER_PATTERN: Final = r"^K[1-9][0-9]{0,4}$"
 _PATH = r"^pa-[0-9]{1,3}$"  # a drawn path (the annotation's label)
 
 # The longest path follow_path flies (the gate's PATH_TOO_LONG). The battery rule usually
@@ -406,18 +410,27 @@ def orbit_ring(centre: LatLon, radius_m: float, start: LatLon) -> list[LatLon]:
 
 
 class InspectDetectionParams(SkillParams):
-    """A closer look at a detection, straight down (``sd_schemas.keepout.inspect_geometry``).
+    """A closer look at a candidate (version 2: ``candidate_id``; ``sd_schemas.inspect``).
 
-    The ground fills in where the target is (``lat``, ``lon``: the candidate's position
-    when the detection belongs to one) and its cylinder's radius from its own records;
-    without them the order is unresolved. ``alt_m`` is the highest the drone may go for it
-    (the charter's ceiling when left out)."""
+    The order names the card only. The ground fills in where the candidate is (``lat``,
+    ``lon``), its uncertainty and its cylinder's radius (``PERSON_KEEPOUT_M`` +
+    ``sigma95_m``) from its own records, never the AI or the panel; without them the
+    order is unresolved. The order gives no height: the drone works its heights out
+    onboard from the height floor.
 
-    detection_id: Id
-    alt_m: float | None = Field(default=None, gt=0)
-    standoff_m: float = Field(ge=15, le=200)
+    ``geometry`` is the look from the side (``sd_schemas.keepout.inspect_geometry``): a
+    point outside the cylinder from which the main camera sees the target nearly straight
+    down, at most at the charter's ceiling. It is the whole look in ``live`` without the
+    overflight permit. With the charter's ``overflight_allowed`` (sim, exercise, live with
+    the permit) the order goes straight over the candidate, without a height: the drone
+    keeps its own above the height floor (``sd_safety.floor``) and the gate checks that
+    floor instead (R-FLOOR, R-FLOOR-CEIL)."""
+
+    candidate_id: Id
+    # Filled in by the ground from its own records:
     lat: float | None = Field(default=None, ge=-90, le=90)
     lon: float | None = Field(default=None, ge=-180, le=180)
+    sigma95_m: float | None = Field(default=None, ge=0, le=1000)
     target_radius_m: float | None = Field(default=None, gt=0, le=500)
 
     def geometry(self, ctx: TargetContext) -> tuple[LatLon, float, float, float] | None:
@@ -431,18 +444,16 @@ class InspectDetectionParams(SkillParams):
             or self.target_radius_m is None
         ):
             return None
-        top = (
-            charter.alt_max_agl_m if self.alt_m is None else min(self.alt_m, charter.alt_max_agl_m)
-        )
         g = inspect_geometry(
             target_lat=self.lat,
             target_lon=self.lon,
             target_radius_m=self.target_radius_m,
-            standoff_m=self.standoff_m,
+            # No standoff of its own: the edge of the cylinders + INSPECT_STANDOFF_MARGIN_M.
+            standoff_m=0.0,
             here_lat=here.lat,
             here_lon=here.lon,
             alt_min_m=charter.alt_min_agl_m,
-            alt_max_m=top,
+            alt_max_m=charter.alt_max_agl_m,
             keepouts=ctx.keepouts,
         )
         if g is None:
@@ -451,6 +462,13 @@ class InspectDetectionParams(SkillParams):
         return LatLon(lat=g.lat, lon=g.lon), g.alt_m, g.yaw_deg, speed
 
     def gate_targets(self, ctx: TargetContext) -> GateTargets:
+        charter, here = ctx.charter, _here(ctx)
+        if charter is not None and charter.overflight_allowed:
+            if here is None or self.lat is None or self.lon is None:
+                return UNRESOLVED
+            target = LatLon(lat=self.lat, lon=self.lon)
+            speed = min(INSPECT_SPEED_MS, charter.max_speed_ms)
+            return GateTargets(points=[target], path=[here, target], speed_ms=speed)
         found = self.geometry(ctx)
         if found is None:
             return UNRESOLVED
@@ -553,6 +571,16 @@ class FollowPathAiParams(SdModel):
     path: str = Field(pattern=_PATH)  # a path the pilot drew, e.g. "pa-1"
     alt_m: float | None = _AiAlt
     speed_ms: float | None = _AiSpeed
+
+
+class InspectDetectionAiParams(SdModel):
+    """The AI names the card only, by its display number; the ground translates it to the
+    candidate and fills in the rest. The AI's look is always a proposal for the pilot."""
+
+    candidate_id: str = Field(
+        pattern=CANDIDATE_NUMBER_PATTERN,
+        description="The candidate's number as listed under Kandidater in LÄGE, e.g. K3.",
+    )
 
 
 class MarkLocationAiParams(SdModel):
@@ -771,7 +799,9 @@ _SPECS: tuple[SkillSpec, ...] = (
         name="return_home",
         stage=1,
         status="implemented",
-        allowed_from=frozenset({ExecutorState.TAKEOFF, *_MOVING_FROM, ExecutorState.RTL}),
+        allowed_from=frozenset(
+            {ExecutorState.TAKEOFF, *_MOVING_FROM, ExecutorState.INSPECT, ExecutorState.RTL}
+        ),
         runs_on="onboard",
         params_model=ReturnHomeParams,
         ends_flight=True,
@@ -901,13 +931,15 @@ _SPECS: tuple[SkillSpec, ...] = (
         allowed_from=_MOVING_FROM,
         runs_on="onboard",
         params_model=InspectDetectionParams,
+        ai_params_model=InspectDetectionAiParams,
+        requires_approval_in_b=True,  # the AI only proposes: the pilot always clicks
         moves_vehicle=True,
         allowed_when="airborne",
         rate_class="action",
         description_en=(
-            "Look closer at a detection: fly to the edge of its keep-out cylinder on the "
-            "drone's side, at a height that sees it nearly straight down, take 5 stills, "
-            "then hover. Never enters a keep-out cylinder."
+            "Look closer at a candidate (K3): fly over it and down in steps as low as the "
+            "height floor allows, then hover for the pilot's decision and fly back to the "
+            "search."
         ),
         synonyms_sv=["titta närmare", "inspektera"],
         title_sv="Titta närmare",

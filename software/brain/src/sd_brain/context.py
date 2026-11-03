@@ -16,7 +16,7 @@ import yaml
 
 from sd_brain.ai_config import prompt_text
 from sd_brain.charter_draft import CharterError
-from sd_brain.constants import MAX_CHARTER_ATTEMPTS
+from sd_brain.constants import MAX_CHARTER_ATTEMPTS, SURVEY_DEFAULT_SPACING_M
 from sd_brain.geo import bearing_word, to_enu
 from sd_brain.memory import mission_request
 from sd_brain.state_view import current_limits, motion_block
@@ -27,9 +27,10 @@ from sd_brain.turn import TurnInput
 from sd_schemas.api import ChatMessage
 from sd_schemas.charter import Sector
 from sd_schemas.commander import Situation
-from sd_schemas.skills import SkillRegistry
+from sd_schemas.safety import home_limit_pct
+from sd_schemas.skills import SkillRegistry, SurveySectorAiParams
 
-__all__ = ["ContextBuilder", "situation_text", "takeoff_rule"]
+__all__ = ["ContextBuilder", "min_survey_spacing_m", "situation_text", "takeoff_rule"]
 
 _TAKEOFF_RULES = {
     "request_then_clearance": (
@@ -53,6 +54,26 @@ _BLOCK_TEXT = {
 
 def takeoff_rule(policy: str) -> str:
     return _TAKEOFF_RULES[policy]
+
+
+def min_survey_spacing_m() -> float:
+    """The smallest ``spacing_m`` the survey tool takes (its schema's lower bound)."""
+    for rule in SurveySectorAiParams.model_fields["spacing_m"].metadata:
+        ge = getattr(rule, "ge", None)
+        if ge is not None:
+            return float(ge)
+    raise RuntimeError("survey spacing_m has no lower bound")
+
+
+def _spacing_values() -> dict[str, str]:
+    """The search-again rule's numbers, from the executor's default and the schema."""
+    floor = min_survey_spacing_m()
+    second = max(floor, SURVEY_DEFAULT_SPACING_M * 2 / 3)
+    return {
+        "{survey_spacing_m}": f"{SURVEY_DEFAULT_SPACING_M:g}",
+        "{second_spacing_m}": f"{round(second):g}",
+        "{min_spacing_m}": f"{floor:g}",
+    }
 
 
 def _num(value: float, digits: int = 0) -> str:
@@ -109,9 +130,12 @@ def situation_text(s: Situation, now: dt.datetime) -> str:
         lines.append(f"Drönare: på marken, {armed}, {conn}")
     lines.append(f"Position: {_where(s, v.lat, v.lon)}")
     if v.battery_pct is not None:
+        # The level it flies home at; the ground counts its seconds down to the same one.
+        home_pct = home_limit_pct(
+            s.limits.battery_rtl_pct, None if s.charter is None else s.charter.battery_rtl_pct
+        )
         reserve = (
-            f"  (till hemgräns {_num(s.limits.battery_rtl_pct)} %: ca "
-            f"{round(v.battery_to_reserve_s / 60)} min)"
+            f"  (till hemgräns {_num(home_pct)} %: ca {round(v.battery_to_reserve_s / 60)} min)"
             if v.battery_to_reserve_s is not None
             else ""
         )
@@ -301,13 +325,14 @@ class ContextBuilder:
             else:
                 lines.append(f"AI: {ex['answer']}")
             rendered.append("\n".join(lines))
-        self.system = (
+        system = (
             prompt_text("system_v1.md")
             .replace("{takeoff_rule}", takeoff_rule(takeoff_policy))
             .replace("{latch_tools}", latch_tools)
-            + "\n\nEXEMPEL\n"
-            + "\n\n".join(rendered)
         )
+        for key, value in _spacing_values().items():
+            system = system.replace(key, value)
+        self.system = system + "\n\nEXEMPEL\n" + "\n\n".join(rendered)
         self.budget = prompt_budget_tokens
         self._count = count_tokens
 

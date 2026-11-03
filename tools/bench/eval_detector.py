@@ -15,6 +15,10 @@ every measured set that is fetched), ``mini=1`` (the small CI bank instead), ``l
 weakest dataset, as ``just pick-detector`` ranks, or for any one dataset, or when a
 dataset of the earlier result is missing; see ``compare``).
 
+After the per-dataset lines it prints recall by person size (the box's longest side, in
+finer bins than the three size classes; ``recall_by_size`` in the result), so the effect
+of training at our cameras' scales (``just train-detector scales=``) can be seen.
+
 The detector sees one picture at a time as the drone's camera would give it; the
 result file holds only numbers (no picture, no file name, no box).
 """
@@ -34,6 +38,7 @@ from typing import Any, ClassVar
 import numpy as np
 from bench.common import (
     RESULTS,
+    ROOT,
     BenchError,
     data_dir,
     flag,
@@ -46,6 +51,7 @@ from bench.common import (
 from bench.datasets import Image, image_root, index_path, load_register, read_index
 from bench.metrics import (
     FP_PER_12MP,
+    SIZE_BINS,
     PictureResult,
     Summary,
     match_picture,
@@ -53,7 +59,7 @@ from bench.metrics import (
     summarise,
     weakest_recall,
 )
-from bench.splits import CURRENT, MINI_VERSION, load_mini, load_split
+from bench.splits import MEASURED, MINI_VERSION, load_mini, load_split
 
 from sd_detect.api import BBox, Detection, Detector, Frame
 from sd_detect.fake import NullDetector
@@ -116,7 +122,7 @@ def pictures(args: dict[str, str], data: Path) -> tuple[str, list[Picture]]:
         part = args.get("part", "test")
         if part not in ("test", "val"):
             raise BenchError("part ska vara test eller val", 2)
-        split = load_split(CURRENT)
+        split = load_split(MEASURED)
         register = load_register()
         measured = [n for n, ds in register.items() if "measure" in ds.use]
         if args.get("sets"):
@@ -197,9 +203,12 @@ def model_detector(model: str, data: Path) -> Detector:
     from sd_detect.onnx import ModelError, load_model
 
     try:
-        return load_model(manifest).tiled
+        tiled = load_model(manifest).tiled
     except ModelError as exc:
         raise BenchError(str(exc), 1) from exc
+    if tiled.upscale > 1:  # from the manifest: as the model was trained, as on the drone
+        say(f"{model}: varje ruta på {tiled.span} px förstoras {tiled.upscale}x")
+    return tiled
 
 
 def measure(model: str, items: Sequence[Picture], data: Path | None = None) -> Summary:
@@ -256,6 +265,28 @@ def compare(body: dict[str, object], earlier: Path) -> str | None:
     return None
 
 
+def size_table(body: Mapping[str, Any]) -> list[str]:
+    """Recall by the person's longest side, pooled and per dataset, as text lines (empty
+    for a result from before ``recall_by_size``)."""
+    pooled = body.get("recall_by_size") or {}
+    rows = [("alla", pooled)] + [
+        (name, row.get("by_size") or {})
+        for name, row in (body.get("recall_by_dataset") or {}).items()
+    ]
+    bins = [b for b in SIZE_BINS if any(b in r for _, r in rows)]
+    if not bins:
+        return []
+    width = max(len(n) for n, _ in rows)
+    out = [
+        "Recall per personstorlek (längsta sidan i px; antal personer inom parentes):",
+        "  " + " " * width + "".join(f"{b:>15}" for b in bins),
+    ]
+    for name, row in rows:
+        cells = [f"{row[b]['recall']:.2f} ({row[b]['n']})" if b in row else "-" for b in bins]
+        out.append(f"  {name:<{width}}" + "".join(f"{c:>15}" for c in cells))
+    return out
+
+
 def selfcheck(items: Sequence[Picture], source: str = "") -> tuple[list[str], dict[str, object]]:
     """Null must find nothing and the facit everything; the errors and both results."""
     errors = []
@@ -268,6 +299,23 @@ def selfcheck(items: Sequence[Picture], source: str = "") -> tuple[list[str], di
         bodies[model] = result_body(model, source, s)
         say(f"{model}: recall {s.recall['all']['recall']} över {s.recall['all']['n']} personer")
     return errors, bodies
+
+
+def private_out(out: Path, sets: Sequence[str], register: Mapping[str, Any]) -> str | None:
+    """A warning when numbers that may not leave this computer land where git could take them.
+
+    Outside the repository, and under the ignored build/, is the owner's own business. A set
+    the register no longer knows counts as private, as in profiles.py."""
+    where = out.resolve()
+    if not where.is_relative_to(ROOT) or where.is_relative_to(RESULTS.parent):
+        return None
+    private = [s for s in sets if s not in register or not register[s].publish_results]
+    if not private:
+        return None
+    return (
+        f"{out} ligger i förrådet utanför build/ och innehåller resultat på "
+        f"{', '.join(private)}, som inte får publiceras; checka inte in den."
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -289,19 +337,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             out.write_text(
                 json.dumps({"errors": errors, **bodies}, indent=1) + "\n", encoding="utf-8"
             )
+            sets: set[str] = set()
+            for b in bodies.values():
+                rows = b.get("recall_by_dataset") if isinstance(b, dict) else None
+                if isinstance(rows, dict):
+                    sets.update(rows)
+            private = private_out(out, sorted(sets), load_register())
+            if private:
+                warn(private)
             for e in errors:
                 warn(e)
             return 1 if errors else 0
         body = result_body(model, source, measure(model, items, data))
         out.write_text(json.dumps(body, indent=1) + "\n", encoding="utf-8")
+        by_set = body["recall_by_dataset"]
+        assert isinstance(by_set, dict)  # noqa: S101 - built just above
+        private = private_out(out, list(by_set), load_register())
+        if private:
+            warn(private)
         rec = body["recall"]
         assert isinstance(rec, dict)  # noqa: S101 - built just above
         say(
             f"recall < 16 px {rec['lt16']['recall']}, 16-32 px {rec['16to32']['recall']}, "
             f"> 32 px {rec['gt32']['recall']}; AP50 {body['ap50']}; skrivet till {out}"
         )
-        by_set = body["recall_by_dataset"]
-        assert isinstance(by_set, dict)  # noqa: S101 - built just above
         for name, row in by_set.items():
             cls = row["by_class"]
             say(
@@ -309,6 +368,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"(16-32 px {cls['16to32']['recall']}, > 32 px {cls['gt32']['recall']}; "
                 f"egen tröskel {row['threshold']}, {row['fp_per_12mp']} falsklarm per 12 MP)"
             )
+        for line in size_table(body):
+            say(line)
         if args.get("compare"):
             why = compare(body, Path(args["compare"]))
             if why:

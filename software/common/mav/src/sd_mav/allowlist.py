@@ -28,7 +28,8 @@ What                                   Allowed
 ``MISSION_ACK``
 ``DO_SET_MISSION_CURRENT`` (224),      a mission index
 ``MISSION_SET_CURRENT``
-``SET_MESSAGE_INTERVAL`` (511)         the telemetry streams, 1-100 Hz
+``SET_MESSAGE_INTERVAL`` (511)         the telemetry streams (also the downward laser's
+                                       ``DISTANCE_SENSOR``), 1-100 Hz
 ``REQUEST_MESSAGE`` (512)              ``HOME_POSITION``, ``AUTOPILOT_VERSION``
 ``PARAM_REQUEST_READ``                 read one parameter by name
 ``SET_EKF_SOURCE_SET`` (42007)         ``param1 = 2`` only (no GPS), origin ``gnss`` only:
@@ -126,6 +127,7 @@ ONBOARD_STREAMS: Final = frozenset(
         mavlink.MAVLINK_MSG_ID_MISSION_CURRENT,
         mavlink.MAVLINK_MSG_ID_HOME_POSITION,
         mavlink.MAVLINK_MSG_ID_RC_CHANNELS,  # the RC mode switch: a person took over
+        mavlink.MAVLINK_MSG_ID_DISTANCE_SENSOR,  # the optional laser pointing down
     }
 )
 GROUND_STREAMS: Final = frozenset(
@@ -141,6 +143,7 @@ GROUND_STREAMS: Final = frozenset(
         mavlink.MAVLINK_MSG_ID_HOME_POSITION,
         mavlink.MAVLINK_MSG_ID_RC_CHANNELS,  # the RC mode switch: a person took over
         mavlink.MAVLINK_MSG_ID_WIND,  # the EKF's wind estimate for the wind warning
+        mavlink.MAVLINK_MSG_ID_MISSION_CURRENT,  # the mission's built-in end is flying
     }
 )
 _REQUESTABLE: Final = frozenset(

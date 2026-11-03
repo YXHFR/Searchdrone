@@ -25,6 +25,16 @@ sha256 = "63b9dc4847d3d36941777e73f0923d987f67ad2225ce2ce5f5db7608903a7cc3"
 path = "simulation/sitl/params/searchdrone-safety.field.parm"
 sha256 = "2e65e836d2d543c9180054c57aa5f1d16f660e18e0c83f34047c3929682bb7e3"
 
+# The optional laser's layers (loaded after the safety layer when a laser is fitted): they
+# keep the flight controller from flying by the laser (WP_RFND_USE 0, SURFTRAK_MODE 0).
+[[pinned]]
+path = "simulation/sitl/params/searchdrone-rangefinder-tf02.parm"
+sha256 = "45a680b59e6875fe47a75cf6a87b9d6217c53faf2572543ad7a187e9dfceb486"
+
+[[pinned]]
+path = "simulation/sitl/params/searchdrone-rangefinder-grf250.parm"
+sha256 = "324e8670af09f8c6be00037501f724f5bcf10436a200463e7ef00258e41c3166"
+
 [[pinned]]
 path = "simulation/sitl/scripts/sd_gcs_loiter_cap.lua"
 sha256 = "d3c41c7724dc147f13887b67141dda009f6d8fb4b7ffc505cc647ab912b6945d"
@@ -44,4 +54,35 @@ sha256 = "5f9b7ae7f8b8bab290c75310f70163c0765e10f587844151fdf7bb2da6a3127a"
 
 [[pinned]]
 path = "software/common/safety/src/sd_safety/constants.py"
-sha256 = "00861380f06add8eaca1d44f2332f7695bdbd74c009e7672e3fe1f56d1101b0f"
+sha256 = "e8b6153dbdcc604d70caa108070b181299d4097eeebe3a57a8b619beaa2afa24"
+
+# What enforces the rules: the gate (Vehicle.send, its connection, its run-time
+# allowlist), SITL's layer order, the sim
+# layers' allowlist check and the checks themselves (the list they must keep pinned).
+[[pinned]]
+path = "software/common/mav/src/sd_mav/vehicle.py"
+sha256 = "08b245c79a484a0fac911ed2eefd50d25ee98f08f25c81c8bf6c5698d4277ba3"
+
+[[pinned]]
+path = "software/common/mav/src/sd_mav/connection.py"
+sha256 = "05e5aa96667595fdea8c98c6da89e6d663e47b97ba77a35f26f1ebd417e12ce3"
+
+[[pinned]]
+path = "software/common/mav/src/sd_mav/allowlist.py"
+sha256 = "244e2b1ab2ca210d09a75a0221df1b67046875e0f06fda2a3512b6617a6ec0e1"
+
+[[pinned]]
+path = "simulation/sd_sim/src/sd_sim/sitl.py"
+sha256 = "94741ac12598f03f95f8d54f1b204b7cd0238219e9bebc4486bcfff5230c3504"
+
+[[pinned]]
+path = "tools/params_check.py"
+sha256 = "f9221f62a258663aedf88605ede5ae134222ed6b65d6917814f213a5b15d3fc7"
+
+[[pinned]]
+path = "tools/check_forbidden_mavlink.py"
+sha256 = "2fbb4cce0ba02d04c6adfe1097b8c826d3d0ee4a443d59a3bdf9dd53d75bc89a"
+
+[[pinned]]
+path = "tools/check_safety_manifest.py"
+sha256 = "f242052caa0cb4ddb47402caabe0ca7c5719f3c5bf924f3f8d295487df4d7460"

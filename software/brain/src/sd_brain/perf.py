@@ -43,12 +43,18 @@ def _messages() -> list[dict[str, Any]]:
 
 
 async def measure_cloud(
-    cfg: CloudConfig, key: str, client: httpx.AsyncClient, *, runs: int
+    cfg: CloudConfig,
+    key: str,
+    client: httpx.AsyncClient,
+    *,
+    runs: int,
+    sampling: Sampling,
 ) -> dict[str, Any]:
     runtime = CloudModelRuntime(cfg, key, client)
     tools = registry_tool_schemas(SKILL_REGISTRY)
-    sampling = Sampling(temperature=0.2, top_p=0.8, max_tokens=512)
     latencies: list[int] = []
+    completion: list[int] = []
+    reasoning: list[int] = []
     models: dict[str, int] = {}
     errors: dict[str, int] = {}
     tool_calls = 0
@@ -60,6 +66,8 @@ async def measure_cloud(
             errors[exc.kind] = errors.get(exc.kind, 0) + 1
             continue
         latencies.append(int((time.monotonic() - start) * 1000))
+        completion.append(reply.completion_tokens)
+        reasoning.append(reply.reasoning_tokens)
         name = reply.model_id or "?"
         models[name] = models.get(name, 0) + 1
         tool_calls += bool(reply.tool_calls)
@@ -77,6 +85,9 @@ async def measure_cloud(
         "latency_p50_ms": p50,
         "latency_p95_ms": p95,
         "latency_max_ms": lat[-1] if lat else None,
+        "max_tokens": sampling.max_tokens,
+        "completion_tokens_max": max(completion, default=None),
+        "reasoning_tokens_max": max(reasoning, default=None),
         "answered_by": models,
         "errors": errors,
         "target_p50_ms": TARGET_P50_MS,

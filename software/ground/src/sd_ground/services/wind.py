@@ -73,6 +73,7 @@ __all__ = [
     "WIND_FRESH_S",
     "WIND_PARAMS",
     "WIND_WINDOW_S",
+    "BatteryDrain",
     "FcParams",
     "WindStage",
     "WindWatch",
@@ -266,6 +267,16 @@ class _Tilt:
 
 
 @dataclass(frozen=True, slots=True)
+class BatteryDrain:
+    """What the battery is drawing in flight: the mean current over the last tilt
+    window and the pack's capacity (``FcParams.capacity_mah``: read from the flight
+    controller, else the constant)."""
+
+    current_a: float
+    capacity_mah: float
+
+
+@dataclass(frozen=True, slots=True)
 class _Wind:
     mono_ms: int
     speed_ms: float
@@ -371,6 +382,20 @@ class WindWatch:
         while self._wind and now_mono_ms - self._wind[0].mono_ms > WIND_WINDOW_S * 1000:
             self._wind.popleft()
 
+    def drain(self, now_mono_ms: int) -> BatteryDrain | None:
+        """The mean measured current of the samples of the last ``TILT_WINDOW_S`` (so a
+        moment of descent or low load does not stand for the flight), with the capacity;
+        None without a finite current in that window (on the ground, or none measured)."""
+        since = now_mono_ms - TILT_WINDOW_S * 1000
+        currents = [
+            s.current_a
+            for s in self._tilt
+            if s.current_a is not None and math.isfinite(s.current_a) and s.mono_ms >= since
+        ]
+        if not currents:
+            return None
+        return BatteryDrain(sum(currents) / len(currents), self.params.capacity_mah)
+
     def _full_tilt_window(self) -> bool:
         return bool(self._tilt) and (
             self._tilt[-1].mono_ms - self._tilt[0].mono_ms >= _FULL_WINDOW_S * 1000
@@ -407,14 +432,15 @@ class WindWatch:
         pct = None if t.battery_pct is None else t.battery_pct / 100.0
         p = self.params
         left = None if pct is None else pct * p.capacity_mah
-        # Only a capacity read from the flight controller may send the drone home: with
-        # the constant, what is left is a guess for another pack, so it only warns.
-        capacity_read = "BATT_CAPACITY" not in p.fallback
+        # Only a capacity and a reserve both read from the flight controller may send the
+        # drone home: with a constant, what is left (or the 1500 mAh reserve, on a small
+        # pack) is a guess for another battery, so it only warns.
+        battery_read = not {"BATT_CAPACITY", "BATT_LOW_MAH"} & set(p.fallback)
         estimates = [
             _Energy(
                 home_mah(way, current), None if pct is None else pct * CAPACITY_MAH, RESERVE_MAH
             ),
-            _Energy(home_mah(way, current, p.rtl_speed_ms), left, p.reserve_mah, capacity_read),
+            _Energy(home_mah(way, current, p.rtl_speed_ms), left, p.reserve_mah, battery_read),
         ]
         if wind is not None:
             head, cross = _wind_on_the_way(Plane(t.home.lat, t.home.lon), t.lat, t.lon, *wind)
@@ -428,7 +454,7 @@ class WindWatch:
                 drag_k=self.drag_k,
             )
             calibrated = self.drag_k is not None and cost is not None
-            estimates.append(_Energy(cost, left, p.reserve_mah, calibrated and capacity_read))
+            estimates.append(_Energy(cost, left, p.reserve_mah, calibrated and battery_read))
         return estimates
 
     def check(self, t: FcTelemetry, now_mono_ms: int) -> WindCheck:
@@ -462,6 +488,12 @@ class WindWatch:
             if mean > self.limit_ms or over_gust:
                 reasons.append("WIND_LIMIT")
 
+        if energy is None:
+            pct = t.battery_pct
+            left_mah = None if pct is None else pct / 100.0 * self.params.capacity_mah
+            reserve_mah = self.params.reserve_mah
+        else:
+            left_mah, reserve_mah = energy.left_mah, energy.reserve_mah
         return WindCheck(
             warning=bool(reasons),
             reasons=reasons,
@@ -473,14 +505,6 @@ class WindWatch:
             wind_limit_ms=self.limit_ms,
             wind_gust_limit_ms=self.gust_limit_ms,
             home_mah=None if energy is None else energy.cost_mah,
-            left_mah=(
-                (
-                    None
-                    if t.battery_pct is None
-                    else t.battery_pct / 100.0 * self.params.capacity_mah
-                )
-                if energy is None
-                else energy.left_mah
-            ),
-            reserve_mah=self.params.reserve_mah if energy is None else energy.reserve_mah,
+            left_mah=left_mah,
+            reserve_mah=reserve_mah,
         )

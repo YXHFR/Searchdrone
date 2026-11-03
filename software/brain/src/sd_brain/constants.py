@@ -23,6 +23,7 @@ __all__ = [
     "MIN_CALL_TIMEOUT_S",
     "RATIONALE_MAX_CHARS",
     "STOP_CHECK_TARGET_S",
+    "SURVEY_DEFAULT_SPACING_M",
     "SYNC_REJECT_MEMORY_S",
     "TAKEOFF_REQUEST_TTL_S",
     "TOOL_RESULT_MAX_CHARS",
@@ -30,6 +31,10 @@ __all__ = [
 ]
 
 BRAIN_HEARTBEAT_S = 1.0
+# The lane spacing the executor flies for a survey that names none. Not an owner value: it
+# mirrors sd_safety.constants.DEFAULT_SURVEY_SPACING_M (sd_brain does not depend on
+# sd_safety), and a unit test holds the two equal.
+SURVEY_DEFAULT_SPACING_M = 30.0
 BRAIN_HEARTBEAT_TIMEOUT_S = 5.0  # the ground station's limit (sets brain = down)
 BRAIN_TURN_DEADLINE_S = 20.0  # around one whole turn, every backend
 LLM_CALL_TIMEOUT_S = 15.0  # one HTTP call to a model, never past the turn deadline

@@ -17,7 +17,9 @@ import ssl
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
@@ -247,16 +249,21 @@ def download(
     url: str,
     dest: Path,
     size: int,
-    sha256: str,
+    sha256: str | None,
     opener: Opener = _open,
     progress: Callable[[int, int], None] | None = None,
     span: int = RANGE_SPAN,
 ) -> None:
     """Download ``url`` to ``dest`` in ranges of at most ``span`` bytes, resuming a
     ``dest.partial`` left by a stopped run, and check its size and SHA-256. A wrong file
-    is never kept: it is renamed ``*.bad`` and the run stops."""
+    is never kept: it is renamed ``*.bad`` and the run stops. ``sha256=None``: only the
+    size is checked here (a file of a share, whose SHA-256s are checked all together)."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.is_file() and dest.stat().st_size == size and sha256_file(dest) == sha256:
+    if (
+        dest.is_file()
+        and dest.stat().st_size == size
+        and (sha256 is None or sha256_file(dest) == sha256)
+    ):
         return
     part = dest.with_name(dest.name + ".partial")
     have = part.stat().st_size if part.is_file() else 0
@@ -272,7 +279,7 @@ def download(
             ) from exc
         if have == before:
             raise BenchError(f"Servern skickade inget mer efter {have} byte: {url}")
-    got = sha256_file(part)
+    got = sha256_file(part) if sha256 is not None else None
     if part.stat().st_size != size or got != sha256:
         bad = dest.with_name(dest.name + ".bad")
         part.replace(bad)
@@ -281,6 +288,40 @@ def download(
             f"Filen ligger kvar som {bad.name} och används inte."
         )
     part.replace(dest)
+
+
+MAX_LISTING_BYTES = 64 << 20
+
+
+def propfind(url: str, opener: Opener = _open) -> list[tuple[str, int | None]]:
+    """The entries one level under a WebDAV folder ``url``: ``(path, size)``, the path as
+    the server names it (``%``-escapes undone), the size ``None`` for a folder."""
+
+    def ask() -> bytes:
+        req = request(url, {"Depth": "1", "Content-Type": "application/xml"})
+        req.method = "PROPFIND"
+        with opener(req) as resp:
+            body = resp.read(MAX_LISTING_BYTES + 1)
+        if len(body) > MAX_LISTING_BYTES:
+            raise BenchError(f"Mapplistan är orimligt stor: {url}")
+        return body
+
+    body = _retry(ask)
+    if b"<!DOCTYPE" in body or b"<!ENTITY" in body:
+        raise BenchError(f"Mapplistan har en DTD och läses inte: {url}")
+    out: list[tuple[str, int | None]] = []
+    try:
+        root = ET.fromstring(body)  # noqa: S314 - no DTD (refused above)
+    except ET.ParseError as exc:
+        raise BenchError(f"Mapplistan går inte att läsa ({exc}): {url}") from exc
+    for resp in root.iter("{DAV:}response"):
+        href = resp.findtext("{DAV:}href") or ""
+        folder = resp.find(".//{DAV:}resourcetype/{DAV:}collection") is not None
+        length = resp.findtext(".//{DAV:}getcontentlength")
+        if not folder and (length is None or not length.isdigit()):
+            raise BenchError(f"Mapplistan saknar storlek för {href}")
+        out.append((urllib.parse.unquote(href), None if folder else int(length or 0)))
+    return out
 
 
 class RangeFile(io.RawIOBase):

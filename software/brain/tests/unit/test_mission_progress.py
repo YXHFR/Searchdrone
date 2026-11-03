@@ -21,7 +21,8 @@ from pydantic import ValidationError
 from sd_brain.backends import LlmCommander
 from sd_brain.charter_draft import CharterError
 from sd_brain.config import BehaviourConfig, BrainConfig
-from sd_brain.context import ContextBuilder, situation_text
+from sd_brain.constants import SURVEY_DEFAULT_SPACING_M
+from sd_brain.context import ContextBuilder, min_survey_spacing_m, situation_text
 from sd_brain.loop import DEADLINE_TEXT, FINISH_DONE_TEXT, FINISH_TEXT, PROPOSED_TEXT
 from sd_brain.memory import (
     MissionRequest,
@@ -43,6 +44,8 @@ from sd_brain.turn import (
     TurnOutput,
 )
 from sd_schemas.base import new_id
+from sd_schemas.probmap import SectorScore, situation_line
+from sd_schemas.skills import SurveySectorAiParams
 
 REQUEST = "Sök sektor A på 40 m. Landa hemma sen."
 STOP_OVERRIDE = {
@@ -231,6 +234,23 @@ def test_the_charter_line_shows_the_sectors_and_the_notes() -> None:
     assert "anteckningar (data): \"Sök längs 'bäcken' först.\"" in ram
 
 
+def test_the_home_limit_in_the_battery_line_is_the_charters_when_higher() -> None:
+    s = situation()
+    assert s.charter is not None
+    vehicle = s.vehicle.model_copy(update={"battery_pct": 60.0, "battery_to_reserve_s": 600})
+    limits = s.limits.model_copy(update={"battery_rtl_pct": 25.0})
+    high = s.charter.model_copy(update={"battery_rtl_pct": 35.0})
+    low = s.charter.model_copy(update={"battery_rtl_pct": 20.0})
+    text = situation_text(
+        s.model_copy(update={"vehicle": vehicle, "limits": limits, "charter": high}), _now()
+    )
+    assert "Batteri: 60 %  (till hemgräns 35 %: ca 10 min)" in text
+    text = situation_text(
+        s.model_copy(update={"vehicle": vehicle, "limits": limits, "charter": low}), _now()
+    )
+    assert "(till hemgräns 25 %: ca 10 min)" in text
+
+
 def _turn_input(s: Any, trigger: Any = "idle_tick") -> TurnInput:
     return TurnInput(
         turn_id=new_id(),
@@ -248,8 +268,68 @@ def _turn_input(s: Any, trigger: Any = "idle_tick") -> TurnInput:
 def test_the_prompt_has_the_finishing_rule() -> None:
     system = _ctx().system
     assert "FINISHING." in system and "call `return_home`" in system
+    # A search without a find goes on while the battery allows, by the map's order.
+    assert "search again instead of going home" in system and "Sektorer (POA" in system
     assert "WAITING CARDS." in system
     assert "så kör jag" not in system  # the example no longer teaches waiting
+
+
+def test_the_search_again_numbers_come_from_the_code() -> None:
+    """The default spacing is the executor's, the floor the survey tool's own minimum; the
+    operator's words and a "come home" end the search again."""
+    from sd_safety.constants import DEFAULT_SURVEY_SPACING_M
+
+    assert SURVEY_DEFAULT_SPACING_M == DEFAULT_SURVEY_SPACING_M
+    floor = min_survey_spacing_m()
+    assert floor == 10
+    with pytest.raises(ValidationError):
+        SurveySectorAiParams(sector="A", spacing_m=floor - 0.1)
+    system = _ctx().system
+    assert "{" not in system.split("EXEMPEL")[0]  # every placeholder filled
+    assert "one without `spacing_m` flew 30 m, so 20 m" in system
+    assert "never below 10 m" in system
+    assert "minutes * (spacing / your `spacing_m`) * 1.25" in system
+    assert "no minutes to the home limit" in system and "till hemgräns" in system
+    # The battery check only decides on another sector; it never ends a first search.
+    assert "it never stops the first search of a sector or an order in progress" in system
+    assert "the mission ends when every sector is searched once" in system
+    assert "the battery does not allow another sector" in system
+    assert "round" not in system.split("FINISHING.")[1].split("WAITING CARDS.")[0]
+    assert "at once, also in the middle of a search" in system
+
+
+def test_the_sector_line_guards_odd_minutes_and_spacing() -> None:
+    def score(est_min: float, spacing: float) -> SectorScore:
+        return SectorScore(
+            sector_id="A",
+            poa=0.4,
+            covered_pct=0,
+            mean_pod=0,
+            pos_plan=0.1,
+            est_min=est_min,
+            psr=0.016,
+            spacing_m=spacing,
+        )
+
+    assert situation_line([score(0, 42)]).endswith("A 0,40/0%/0,00/0,016/0,1@42")
+    assert situation_line([score(6.3, 0.4)]).endswith("A 0,40/0%/0,00/0,016")
+
+
+def test_the_sector_line_shows_the_minutes_of_a_pass_and_their_spacing() -> None:
+    score = SectorScore(
+        sector_id="A",
+        poa=0.4,
+        covered_pct=100,
+        mean_pod=0.3,
+        pos_plan=0.1,
+        est_min=6.3,
+        psr=0.016,
+        spacing_m=41.6,
+    )
+    line = situation_line([score])
+    assert line == (
+        "Sektorer (POA kvar / täckt / medel-POD / PSR / min@stråk m): A 0,40/100%/0,30/0,016/6,3@42"
+    )
 
 
 async def test_a_plan_note_sent_with_the_action_is_kept() -> None:

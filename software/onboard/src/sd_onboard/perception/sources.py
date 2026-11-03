@@ -2,7 +2,8 @@
 
 ``DirStillSource`` reads the folder a camera process writes: ``<name>.ppm`` (8-bit RGB)
 plus ``<name>.json`` with the size and, in the simulator, the bounding-box camera's
-labelled boxes (``boxes``: ``label``, ``x0``, ``y0``, ``x1``, ``y1``). The JSON file is
+labelled boxes (``boxes``: ``label``, ``x0``, ``y0``, ``x1``, ``y1``) and, optionally,
+when it was taken (``captured_utc``, ISO 8601 with a zone). The JSON file is
 written last, so a still is complete once its JSON exists. The source returns the newest
 complete still and deletes it and every older one: a detector that falls behind skips
 stills instead of building a backlog. A still larger than the configured camera is
@@ -14,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -30,6 +32,19 @@ class CapturedStill:
     still: Still
     name: str
     synthetic: bool  # rendered by the simulator, not a camera
+    taken_utc: datetime | None = None  # when the camera took it, if the source knows
+
+
+def _taken_utc(value: object) -> datetime | None:
+    """The sidecar's ``captured_utc`` (ISO 8601 with a zone) as UTC; ``None`` when it is
+    missing or not a time with a zone (the loop then stamps the still as it polls it)."""
+    if not isinstance(value, str):
+        return None
+    try:
+        when = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return None if when.tzinfo is None else when.astimezone(UTC)
 
 
 class StillSource(Protocol):
@@ -108,7 +123,10 @@ class DirStillSource:
                 )
             )
             return CapturedStill(
-                Still(frame=frame, sim_boxes=sim_boxes), newest.stem, self.synthetic
+                Still(frame=frame, sim_boxes=sim_boxes),
+                newest.stem,
+                self.synthetic,
+                _taken_utc(meta.get("captured_utc")),
             )
         except (OSError, ValueError, KeyError, TypeError) as exc:
             log.warning("unreadable still %s: %s", newest.name, exc)

@@ -273,6 +273,22 @@ async def test_altitude_overshoot_goes_back_down() -> None:
         assert r.up.kinds().count("executor.limit_altitude") == 1
 
 
+async def test_altitude_overshoot_with_the_ai_silent_ends_in_the_limit_hover() -> None:
+    """The way back down ends in the altitude limit's hover (``limit``) even when the AI
+    has gone quiet meanwhile (finish the step, then hover), as the keep-out climb does."""
+    async with rig() as r:
+        await _hovering(r, alt_max_agl_m=50, default_alt_agl_m=40)
+        r.fc.alt_rel = 55.0
+        await r.until(lambda: r.ex.state == S.TRANSIT, 20)
+
+        def held_with_the_ai_silent() -> bool:  # the rig's AI keeps talking: silence it
+            r.ex.ai_silent_after_step = True
+            return r.ex.state == S.HOLD
+
+        await r.until(held_with_the_ai_silent, 60)
+        assert r.ex.hold_reason == "limit"
+
+
 @pytest.mark.parametrize("seconds", [10, 60])
 async def test_sdlink_loss(seconds: int) -> None:
     async with rig() as r:

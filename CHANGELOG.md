@@ -8,6 +8,86 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Training at our cameras' scales (the owner's decision of 2026-11-03: more real
+  aerial pictures, resampled so people have the pixel sizes our cameras will see):
+  `just train-detector scales=native,wide,tele` also cuts each training picture
+  resampled so its people are as large as the wide Camera Module 3 (about 71 px/m at
+  50 m, a person about 33 px) or the tele (about 230 px/m, a person about 100 px) sees
+  them, each picture at a height drawn between 30 and 60 m. A picture's scale is its
+  set's `px_per_m` in the register (HERIDAL: about 2 cm per pixel) or read off its
+  person boxes, and it is enlarged at
+  most `max_up=2` times, since an enlarged person is blurred. The val and the locked
+  test part are never resampled. The tile builder prints how many people of what size
+  each set gave at each scale.
+- Recall by person size: `just bench-detector` prints, and its result holds
+  (`recall_by_size`, and `by_size` per dataset), the recall in bins of the box's
+  longest side (0-16, 16-24, 24-32, 32-48, 48-64, 64-96, 96-128, 128-192, 192+ px), so
+  the effect of `scales=` can be seen.
+- UIT-Drone4 to train on (Zenodo 14862652, CC BY 4.0, University of Information
+  Technology, VNU-HCM): city traffic in Vietnam filmed from drones at 3840x2160. Every
+  tenth video frame is taken: 1,523 pictures with 7,193 pedestrians, half of them
+  between 36 and 86 px (median 59 px), between our wide and tele cameras' sizes. Its
+  motorcycles are boxed with their riders, who are people but not boxed as persons, so
+  they are kept as ignore regions and a tile that overlaps one is never trained on. It
+  is never measured on: the new split v4 keeps every set of v3 as it was and gives
+  UIT-Drone4 only train and val parts by video. The measurement still reads v3, so
+  results measured before stay comparable.
+
+- A larger person detector to train (the owner's decision of 2026-11-03):
+  `just train-detector model=yolox_m` trains YOLOX-m, started from Megvii's COCO
+  weights (Apache-2.0, fetched and checked by `just detector-fetch only=yolox_m`), with
+  batch 4 by default so it fits an 8 GB graphics card. It exports and is measured like
+  `yolox_s`, and the drone reads it the same way, but each tile costs about 2.8 times
+  the arithmetic (73.8 against 26.8 GFLOPs at 640 px). `init=` from a `yolox_s` run is
+  refused with a plain reason: the two sizes cannot share weights.
+- A photo farm for the person detector (the owner's decision of 2026-11-02: as
+  realistic as possible, with the right proportions): `just sim-farm-stills` takes
+  still pictures of people at the site with its real trees, without flying. People
+  have real body heights (adults 1.50-1.95 m, sometimes a child), stand, walk, sit or
+  lie in the open, at a forest edge, under a tree or on a path, and wear their own or
+  recoloured clothes. The camera is aimed from heights that give HERIDAL's and KIOS's
+  centimetres per pixel, the ground under it gets photographed grass, forest floor,
+  gravel or rock (`just ground-pictures-fetch`, Poly Haven CC0) and the light is
+  developed like a photo. The boxes are what the bounding-box camera sees of each
+  person; a person of whom less than 30 % is seen (counted in a segmentation camera's
+  pixels, against the body's outline unhidden) gets no box, like in the hand-drawn
+  sets. Each scene keeps Gazebo's full logs. For this the tree leaves are drawn at
+  about 6 cm (`just tree-pictures-fetch` again), the needle and leaf tufts are tipped
+  every way instead of standing upright (seen from above they were long streaks), the
+  birch trunks are thinner, and the world generator's version is 7 so worlds rebuild. The pictures are the training-only set
+  `simstills` (`just train-detector sets=heridal,kios,kios_carperson,simstills`): it
+  is never measured on and is kept only if the real test gets better. A growing set's
+  scenes are split by a hash of their names (`GROWING` in `tools/bench/splits.py`).
+- The person detector can enlarge its tiles 2x so small people are seen larger:
+  `just train-detector upscale=2` cuts tiles of 320×320 picture pixels and enlarges them
+  to 640 px (bilinear) with their boxes, `just export-detector` writes `upscale` into the
+  model's manifest, and `TiledDetector` (on the drone, in the simulator and in
+  `just bench-detector`) enlarges each tile the same way and shrinks the boxes back. A
+  12 MP still then takes 170 tiles instead of 45. A manifest without `upscale` means 1,
+  so models already exported run as before; a manifest whose `upscale` is not a whole
+  number from 1 to 4 that divides `tile_px` is refused.
+- The ground station now fills the AI's "till hemgräns" minutes
+  (`battery_to_reserve_s`), which it sent as empty before, so the commander's
+  search-again battery check works in real flights. The estimate is the charge above
+  the level the drone flies home at (the charter's, never below the mission limit, as
+  the gate counts it) divided by the mean current of the wind check's last 10 s, using
+  the `BATT_CAPACITY` the connection read (the constant until then). It stays empty on
+  the ground and without a battery level, a fresh measured current or a link. The
+  brain's "till hemgräns X %" names the same level. Only the AI's picture uses it: the
+  battery guard still reads the level.
+- Two training-only sets of real pictures for the person detector (the owner's
+  decision of 2026-11-01): KIOS Aerial Dataset for Car and Person Detection (University
+  of Cyprus, Zenodo 21216709, CC BY 4.0; people on a parking lot, every tenth video
+  frame) and SeaDronesSee Object Detection v2 (University of Tübingen, CC0 1.0;
+  swimmers in open water). Fetched only by name (`just bench-fetch yes=1
+  sets=kios_carperson,seadronessee`) and trained on with `just train-detector
+  sets=heridal,kios,kios_carperson,seadronessee`. They are never measured on: the new
+  split `tools/bench/splits/v3.json` keeps every v2 row as it was and gives the two
+  sets only train and val parts, split by video. The register now takes a set in
+  several archives (`more_archives`), zips inside an archive, labels in one COCO file
+  for all pictures, and a set of loose files on a WebDAV share pinned by one SHA-256
+  over all of them. `just bench-fetch yes=1` without `sets=` now fetches only the
+  measured sets.
 - `just dev`: one command for the local development stack. It starts the database,
   `sd-ground`, `sd-onboard`, `sd-search`, the scripted AI commander and the panel's Vite
   dev server (hot reload), then prints the login link. The default `physics=mock`
@@ -19,24 +99,91 @@ All notable changes to this project are listed here. The format follows
 - `tools/check_forbidden_mavlink.py` (in `just lint`): reads the repository's Python and
   fails when code outside the MAVLink gate `sd_mav` names a message or command from its
   deny list (parameter writes, switching off the fence, flight termination, forced
-  arming with 21196 ...), also under an import alias or as a `getattr` string, or when
-  production code could write on a pymavlink connection itself instead of through
-  `Vehicle.send` (`pymavlink.mavutil`, `mavlink_connection`, a raw `MAVLink` encoder,
-  `<conn>.mav.*_send`, mavfile helpers such as `reboot_autopilot`). Tests are not read;
-  the simulator harness may set `SIM_*` parameters.
+  arming with 21196 ...), also under an import alias, as a `getattr` string or by
+  message id (`MAVLINK_MSG_ID_*`, `mavlink_map[...]`), or when production code could
+  write on a pymavlink connection itself instead of through `Vehicle.send`
+  (`pymavlink.mavutil`, also through `importlib`/`__import__`, `mavlink_connection`, a
+  raw `MAVLink` encoder, `mavlink_map`, `_conn` or `write_message` anywhere,
+  `pymavlink.mavutil` as a string (`sys.modules[...]`), any message's
+  `*_send`/`*_encode` method, `send` on a connection's `mav` (also assigned to a name or
+  attribute first, or with `:=`), mavfile helpers such as `reboot_autopilot` or `set_mode`, called, only
+  referenced or as a `getattr` string). Tests outside `src/` packages are not read; of
+  the denied messages only the simulator harness may send `PARAM_SET`: from a
+  `set_sim_param` that first refuses any name but `SIM_*` and then sends that name (if
+  it is never bound again) or a literal `SIM_*` one, or elsewhere in the harness with a
+  literal `SIM_*` name (a `param_set_send` on any owner but a literal `<x>.mav` needs it
+  in every place it may sit: first, as mavfile's, and third, as the dialect's; a
+  `*args`/`**kwargs` that may fill it is refused). The mavfile helpers that send
+  denied traffic themselves (`reboot_autopilot`, `set_servo`, `calibrate_level` ...)
+  are refused everywhere outside the gate. Names built at run time (f-strings,
+  arithmetic) are not seen.
 - The safety manifest `tools/safety_manifest.toml` and `tools/check_safety_manifest.py`
   (in `just test-contract`): the manifest names the safety parameter layers of the
   simulator and real-flight profiles and pins the content of the safety files, the Lua
-  script, the deny list, the parameter allowlist and the safety rules themselves
-  (`sd_sim/params.py`, `sd_safety/constants.py`). The check fails when a pinned file
-  changes without the manifest, when a failsafe, fence, battery, arming, RTL or
-  scripting line in either profile has no rule, when a profile breaks the safety rules or the values the
-  ground station reads back, when SITL or `sd-onboard` load other layers than the
-  manifest names, or when a sim-only layer (or the allowlist) could set a safety
-  parameter. `--update` writes the new digests after a reviewed change.
+  script, the deny list, the parameter allowlist, the safety rules themselves
+  (`sd_sim/params.py`, `sd_safety/constants.py`) and what enforces them (the gate's
+  `vehicle.py`, `connection.py` and `allowlist.py`, `sd_sim/sitl.py`,
+  `tools/params_check.py` and both checks); these
+  files must stay pinned, so changing one needs `--update` in the same PR. The check
+  fails when a pinned file changes without the manifest, when a failsafe, fence,
+  battery, arming, RTL or scripting line in either profile has no rule, when a profile
+  breaks the safety rules or the values the ground station reads back, when SITL or
+  `sd-onboard` load other layers than the manifest names, or when a sim-only layer (or
+  the allowlist) sets a parameter the safety layers set or any safety-relevant name
+  (`FS_`, `FENCE_`, every `BATTn_` and `GPSn_`, `ARMING_`, `FLTMODE`, `EK3_SRC`,
+  `MOT_SAFE_`, `RCn_OPTION`, `SYSID_MYGCS` ..., in any case); a parameter value that
+  is not a number is a finding with its file and line, not a crash; Python files are
+  pinned byte for byte, so a comment change needs `--update` too. `--update` writes the new digests after
+  a reviewed change and prints which pinned files changed.
+- Release tools. `just release-prep X.Y.Z` (or `X.Y.Z-rc.N`) refuses a dirty tree or an
+  existing tag, runs `tools/check_merged_pr_gates.py`, sets the version in every
+  `pyproject.toml` (PEP 440) and `package.json`, refreshes the uv lock files, runs
+  `check_versions --expect` and turns `[Unreleased]` into the release's section, with
+  the commit list from git-cliff (`cliff.toml`, pinned in `simulation/versions.lock`).
+  It never commits or tags. `tools/check_merged_pr_gates.py` checks that every commit on
+  main (the whole first-parent history minus `tools/accept/pr_gate_exceptions.txt`; tags
+  do not shorten it) is the merge commit of a pull request into `main` whose gates pass
+  when worked out again, since any workflow can write a status: `gate/review` with
+  `check_review_comments.evaluate` over the comments written before the merge,
+  `gate/owner` from the merge commit's own files (local git) and
+  `check_owner_gate.approved_by_label_events` (the owner's newest `owner-ok`, added after
+  the head commit's first check suite, so a head without one fails, and after any base
+  change, force push or reopening), and `gate/pr-title` from the title at the merge. Workflow files the merge
+  added or changed are read as YAML: none may be able to write a gate (a job without
+  `permissions` at either level counts, since it gets the default token), and the gate
+  workflows may only run on `pull_request_target`/`issue_comment`
+  (`tools/workflow_rules.py`, shared with `tools/tests/test_workflows.py`). The exceptions
+  file, the gate scripts and the gate and release workflows now need the owner's
+  `owner-ok` (`check_owner_gate.PROTECTED`).
+  Each merge is judged by the protected paths in force before it (its first parent's
+  `PROTECTED` as well as the checker's own; a parent list it cannot read in full makes
+  every changed path need `owner-ok`), and no merged workflow outside the gates may hold
+  `pull-requests: write`, `issues: write`, `secrets: inherit` or any secret other than
+  `GITHUB_TOKEN` and `OPENROUTER_API_KEY` (`workflow_rules.ALLOWED_SECRETS`).
+  `.github/workflows/release.yml`, on a pushed `v[0-9]*` tag, first runs a job that
+  refuses a tag that is not on main and runs the gate check from a clean copy of the
+  protected scripts, with PyYAML pinned by hash (Python 3.12), so no other repository
+  code runs before it. The workflow finds the newest published release (rc included)
+  on the tag's line with `gh` and git alone; the scripts come from that release, first
+  confirm that `release.yml` itself made it, with a successful run for that tag and
+  commit whose `gates` job passed, and the check starts after it. A different answer,
+  or any error, stops the job, and only the first release (no release and no release
+  tag on the line) checks the whole history with the tagged commit's own copy. Past
+  the API's hourly limit the check waits for the reset instead of failing, and a test
+  runs the workflow's own anchor loop against the check's choice. New rules therefore
+  apply from the release after the one that ships them; so do the `gates` job check and
+  the waiting, which run in the anchor's copy. A deleted release and a `release.yml`
+  without its gates job are left to the owner's ruleset on `v*` tags and immutable
+  releases. While the check waits it shares the token's hourly limit with the gate
+  workflows, so a long first release is best started when no pull request is under
+  review. Then it checks the
+  versions, builds the packages and the panel and publishes the
+  GitHub release only if the tag still names the commit it built; only its publish job
+  can write. `just showcase` is still not built.
 - `tools/tests/test_workflows.py` fails when any workflow other than `review-gate.yml`,
   `owner-gate.yml` and `pr-title.yml` grants `statuses: write`, `checks: write` or
-  `write-all` (at the top or in a job) or names a job `gate/...` or `review/...`, so no
+  `write-all` (at the top or in a job), leaves a job without `permissions` or names a job
+  `gate/...` or `review/...`, so no
   other workflow can write a gate (A18). The workflow rules now read `*.yaml` files too.
 - The image bank's second open dataset: KIOS Small Object Aerial Person Detection
   (University of Cyprus, Zenodo 7740081, CC BY 4.0; 3,136 pictures, 61,708 people),
@@ -154,6 +301,68 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- The simulator drill (`sd-brain eval --backend sim`), its golden replays, the
+  scenario evaluation and `perf-cloud` now ask the cloud model as a real flight does:
+  `[llm]`'s sampling (a completion limit of 4096 tokens, not a fixed 512), prompt
+  budget and context window (16384, not 8192). A drill turn that ran into 512 was cut
+  short where a flight's turn would not be, and a prompt over 4096 tokens never reached
+  the model in the drill. The eval report's AI config hash is that of the same sampling.
+- The safety exam, the golden sim replays (with `sd-brain eval`'s config) and the SITL
+  farm flight now pass `[llm]` on as the drill does. `Sampling()` and a bare
+  `LlmCommander` default to `[llm]`'s 4096 completion tokens and 16384-token context
+  window, not 512 and 8192. An empty string, list or 0 where the cloud's answer holds
+  a choice, message or tool call is now a parse error (the fallback model answers),
+  not an empty answer. Malformed usage metadata (`usage`, its token counts or
+  `completion_tokens_details`, also a count over the budget's 10,000,000 or too large
+  for a float) only drops those numbers: the answer stands, no second, paid call goes
+  to the fallback model, and the ground's cloud budget books the call at its whole
+  reservation (the estimated prompt and the completion limit), never as free. So do
+  usage left out and usage without its prompt or completion count; the eval ledger
+  books such a call the same way. A provider price outside 0 to 1000 USD is dropped
+  (a negative zero reads 0), and the ground prices the tokens. An answer with a number
+  longer than Python reads (4300 digits) is unreadable as a whole, so a parse error,
+  as is a body nested too deep to read: neither escapes the call. A tool call's
+  arguments string that cannot be read (also a number that long, or nested too deep)
+  goes to the repair round like any arguments that are not JSON, also when it is
+  written as a `<tool_call>` in the text, and the decision log and the repeat check
+  read such arguments without failing (also arguments that load but are nested too
+  deep to write back). A fault no part of the AI's turn foresaw is now logged
+  (`backend_decide_failed`, its type and a short message only) and counts as an answer
+  that could not be read; a turn that fails after the answer (`turn_failed`) is lost,
+  not the turn loop: no single model answer can end the brain. A test harness out of
+  recorded answers still fails. The decision log caps a search profile's key names
+  (32 names of at most 64 characters), writes a lone surrogate in a draft as "?", and a
+  log entry that cannot be built is dropped with a warning, not the turn. The
+  `estimate` read tool answers params that are no object with a tool error, so the
+  model gets its repair round. Counts no real call has (no prompt tokens, or
+  no completion tokens next to an answer) are no valid usage either; all invalid usage
+  reads 0 tokens, and its warning (`cloud_usage_invalid`) gives the reason: `absent`,
+  `malformed` or `implausible`. A failed cloud call that may have been billed (a timeout, a broken
+  answer, a cancel) is booked at its whole reservation, no longer at the prompt alone,
+  and the eval ledger now charges a timeout or a broken answer too (not a cancel) and
+  prices images in its estimate as the ground does (400 tokens per crop).
+- The decision log reaches the ground whatever the model wrote: the entry is made safe
+  to send once (every string valid UTF-8, a lone surrogate as "?", no NaN, nested at
+  most 64 deep, deeper parts as "…"), and an entry that still cannot be encoded is sent
+  reduced (no prompt, draft or arguments) instead of being lost. A lone surrogate in the
+  provider's answer text, a tool-call id, name or arguments reads "?", so the answer is
+  used as usual. Only a replay harness out of answers (`ReplayExhaustedError`,
+  `ReplayNotConsumedError`) ends the turn loop; any other `AssertionError` counts as a
+  failed turn. A refused token (401) ends the loop also when the AI's turn or a write
+  (a chat line, an order, a charter, the memory, the decision log) meets it, not only on
+  the next read. The `backend_decide_failed` and `turn_failed` log lines quote the
+  error's text with `repr`, so it cannot start a log line of its own. A prompt value
+  that is not JSON (a UUID, a datetime) is logged as its text, also when that text
+  holds a lone surrogate.
+- Each cloud call now logs its tokens (`cloud_call`: finish reason, latency, prompt,
+  completion and reasoning tokens, the limit), the drill keeps the same numbers with
+  each recorded answer, and `perf-cloud` reports the most completion and reasoning
+  tokens of a call, so a slow turn shows whether reasoning used the time. Never the key
+  or the text.
+- The panel's choice lists (a drawn area's hint, the search profile's fields) work
+  from the keyboard like a native select: ↓/↑ on the button opens the list on the
+  current choice, ↓/↑, Home and End move, Enter or Space chooses, Escape and Tab close,
+  and the focus returns to the button. The component moved to `src/ui/Picker.tsx`.
 - Flight safety: arming needs exactly `sd_gcs_loiter_cap.lua` loaded and running
   (`SCR_LD_CHECKSUM` / `SCR_RUN_CHECKSUM` in `searchdrone-safety.parm`); a unit test
   fails when the script changes without a new checksum. LOITER's braking
@@ -163,11 +372,14 @@ All notable changes to this project are listed here. The format follows
   refused, failed, expired or unanswered keep-out list is sent again (above a stale
   sequence number when the executor holds a newer one), and the operator gets one red,
   sticky alarm in Swedish (`KEEPOUTS_NOT_INSTALLED`) until the list is on board
-  (`KEEPOUTS_INSTALLED`). The sequence number stops at `INSTALL_SEQ_MAX`.
+  (`KEEPOUTS_INSTALLED`). The sequence number stops at `INSTALL_SEQ_MAX`, logged once
+  per run of refusals.
 - A drone hovering for a keep-out cylinder (`executor.keepout_hold`) alarms the operator:
   orange short of a cylinder, red and sticky over a person (`KEEPOUT_HOLD`), saying
   whether it climbs straight up first. The fields are shared (`KeepoutHoldField`). One
-  delivered after its mission closed is only logged.
+  delivered after its mission closed is only logged. Every such alarm carries the
+  drone's `sent_utc` in its details, so its record shows when a late one was sent (the
+  panel does not show it yet).
 - The tlog writer's queue has a cap (`QUEUE_MAX` frames); when the disk falls behind,
   new frames are dropped, numbered gaps show where, and `<stem>.lost.json` counts them.
 - The chain scenarios' E8 oracle is as strict as the executor: a drone inside a cylinder
@@ -175,6 +387,38 @@ All notable changes to this project are listed here. The format follows
   grace. FLY HOME pressed in a chain run must be under way within its limit, and the
   drone must land at home. New SITL tests fly the margin case from #96 and require the
   inspection's `keepout_replan`.
+- Flight safety: an inspection inside a cylinder over a person with every way out
+  refused climbs straight up to the cylinder's top plus a margin, never above the
+  geofence or the charter's height, then hovers and alarms; when it cannot climb it
+  hovers and alarms. An inspection plans its way at most `REPLANS_MAX` times, and a
+  goto's deadline runs from its first target, so replans cannot keep it flying. A way
+  out planned again gets its own deadline, `goto.start` can no longer overwrite a
+  renewed one, and every keep-out hover tells the ground whether the drone is inside a
+  cylinder. The AI's next order after such a hover waits for the onboard snapshot after
+  it also when the hover's red alarm names the turn (before, it was refused onboard as
+  `STATE_CHANGED` and the drone kept hovering). STOP and FLY HOME still go past the AI
+  and the reflex.
+- Flight safety: any other order that would hover inside a person's cylinder (a search
+  with no way around, a goto stopped short of the next cylinder) now climbs straight up
+  the same way first, as an internal goto that replaces the order, and ends in the
+  keep-out hover up there (`hold_reason` `limit`), never above the charter's height less
+  5 m or the geofence. When it cannot climb it hovers where it is, as before. STOP, FLY
+  HOME and manual take-over are unchanged.
+- Flight safety: every end of that climb is the keep-out hover (`hold_reason` `limit`):
+  its deadline, a mode not confirmed, and a charter hold when the AI goes quiet. While it
+  climbs, a link loss's find move never takes the drone sideways out of the cylinder. A
+  full list of the drone's own cylinders also climbs first when it is over a person, and
+  the altitude limit's way back down ends in its own hover when the AI is quiet.
+- Flight safety: a link loss detected during that climb no longer cuts it short or
+  sends the drone sideways out of the cylinder below its top: the climb goes on and the
+  find hover starts in the keep-out hold up there, also past the find move's deadline.
+  The AI going quiet in the keep-out hold keeps it the keep-out hold.
+- Flight safety: with no confirmed find near, a link loss during that climb no longer
+  stops it halfway up at 23 s either: the climb goes on to the top, the link-loss hold
+  there is the keep-out hold, and home is at 53 s (at once at the top when the climb
+  takes longer). A climb that has not ended by 113 s (53 s plus
+  `KEEPOUT_CLIMB_LINK_ALLOWANCE_S`, 60 s) goes home from where it is, and with a find
+  at 123 s as ever. The find hover's clock (`hovered_s`) now starts at the top.
 - The ground station's wind check reads the flight controller's own `ATC_ANGLE_MAX`,
   `RTL_SPEED_MS` (`WP_SPD` when it is 0), `BATT_CAPACITY` and `BATT_LOW_MAH` on each
   connection, with the fence check's parameter reading. A parameter that cannot be read
@@ -191,9 +435,11 @@ All notable changes to this project are listed here. The format follows
   not count. `ENERGY_HOME` also starts the battery guard's FLY HOME (`battery_rtl`,
   `vehicle.battery_rtl` and `alarm.BATTERY_RTL` with `reason: energy_home`), but only
   from the estimate with the flight controller's numbers, or from the wind estimate once
-  the drag is measured, and both only with `BATT_CAPACITY` read from the flight
-  controller (with the constant 10000 mAh, before the read, after a reconnect or when it
-  is not answered, they only warn); an uncalibrated drag and a wind too strong to get
+  the drag is measured, and both only with `BATT_CAPACITY` and `BATT_LOW_MAH` read from
+  the flight controller (with the constant 10000 mAh or 1500 mAh reserve, before the
+  read, after a reconnect, when one is not answered or `BATT_LOW_MAH` is 0 or not below
+  the capacity, they only warn, so the 1500 mAh constant never flies a small pack
+  home); an uncalibrated drag and a wind too strong to get
   home in only warn. Not while the pilot flies by hand. A ground speed of 0 or NaN does
   not count as holding position for the drag. Parameters outside ArduCopter's ranges
   (`RTL_SPEED_MS` and `WP_SPD` 0.1-20 m/s), a capacity outside 100-1,000,000 mAh and a
@@ -207,6 +453,11 @@ All notable changes to this project are listed here. The format follows
   SITL W5 shows the ground station using sd_fpv7's `ATC_ANGLE_MAX` 35; W6 has
   `ENERGY_HOME` fly home (reason `energy_home`, Resume refused, STOP and "Ta över" leave
   the drone in LOITER).
+  The battery guard's reason is set together with its latch (`Latches.start`), so no
+  moment shows the latch without its reason. A late ATTITUDE (up to 1 s back) no longer
+  moves `fc_boot_ms` back: the reboot check compares with the newest. The ground's
+  README says to set `BATT_CAPACITY` and `BATT_LOW_MAH` on the flight controller, since
+  without them `ENERGY_HOME` only warns.
 
 - The nightly search campaign's targets (`python -m sd_sim.eval_search aggregate`):
   SK02's "never in the low list" still passes on a share of at least 0.95 and now also
@@ -264,6 +515,13 @@ All notable changes to this project are listed here. The format follows
 - **Breaking (`commander/v1`):** the decision engine `local` is gone. `DecisionLog.engine`
   and `SystemStatus.brain_engine` now report `command` where they reported `local`, and
   readers that matched on `local` must match on `command`.
+- `tools/bench/profiles.py` also refuses a result that does not name its dataset
+  (`recall_by_dataset` missing or empty) or names one no longer in `datasets.toml`, so the
+  `publish_results` check can no longer be skipped. A yes/no field in `datasets.toml` must
+  be TOML `true` or `false`; a quoted `"false"` is refused instead of read as true.
+- `just bench-detector` warns when `out=` puts a result inside the repository but outside
+  `build/` and it includes a dataset with `publish_results = false` or one no longer in
+  `datasets.toml`.
 
 ### Added
 
@@ -536,6 +794,17 @@ All notable changes to this project are listed here. The format follows
   291 W hover power and 35.6 min hover time; every limit still holds. The SITL frame
   `sd_quad14.json` follows with `mass` 2.343, and the hwcalc tests read the mass from the
   file instead of repeating it.
+- The AI commander's search-again rule: the lane spacing never goes below the survey
+  tool's 10 m minimum, and the 30 m default and the 10 m floor are filled into the prompt
+  from the code. The battery check compares "till hemgräns" with the minutes of a pass,
+  now shown last in the "Sektorer (POA ...)" line of the situation together with the lane
+  spacing they are planned for (`min@stråk m`), so the AI scales them to the closer
+  spacing and adds a quarter for the flight there; with no minutes to the home limit it
+  flies home; that check only decides on another round and never ends the first one.
+  A request that names the sectors or says to come home after the search ends the
+  mission after the first round, and "come home" from the operator ends it at once.
+  Evaluations EV-34 to EV-41 cover these cases, two of them without a time to the home
+  limit and two with a low one in the middle of a round.
 - The cloud model's zero-data-retention default (`[cloud.provider] zdr` unset) follows
   the ground station's profile from its `server.hello`, not the brain's own: on until the
   ground station has said it, off only against a `sim` ground station, and on again while

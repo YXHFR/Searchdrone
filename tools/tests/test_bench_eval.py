@@ -8,14 +8,15 @@ from pathlib import Path
 
 import pytest
 from bench import eval_detector as ev
-from bench import pick_detector
+from bench import pick_detector, profiles
 from bench.common import BenchError
-from bench.datasets import Image
+from bench.datasets import Dataset, Image
 from bench.metrics import (
     MP12,
     PictureResult,
     ap50,
     match_picture,
+    size_bin,
     size_class,
     summarise,
     threshold_for,
@@ -207,6 +208,7 @@ def test_profile_has_the_oracle_format() -> None:
         "measured": "2026-11-02",
         "fp_per_12mp_target": 0.5,
         "recall": {c: {"recall": 0.5, "n": 10} for c in ("lt16", "16to32", "gt32", "all")},
+        "recall_by_dataset": {"heridal": {"recall": 0.5, "n": 10}},
         "latency_ms": {"p50": 800.0, "p95": 1200.0},
         "score_hit": {"a": 5.0, "b": 2.0},
         "score_fp": None,
@@ -240,6 +242,60 @@ def test_profile_refuses_a_result_pooled_over_datasets() -> None:
     }
     start = json.loads(START.read_text(encoding="utf-8"))
     with pytest.raises(BenchError, match="flera datamängder"):
+        build_profile("yolox_s", 1, result, start)
+
+
+def test_profile_refuses_a_result_whose_numbers_are_not_published(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A profile is committed, so a GPL or unlicensed set's numbers never become one."""
+    gpl = Dataset(
+        name="gplset",
+        title="g",
+        licence="GPL-3.0-only",
+        attribution="a",
+        layout="heridal_voc",
+        use=("measure",),
+        publish_weights=False,
+        local_only=True,
+        publish_results=False,
+        url="https://example.org/g.zip",
+    )
+    monkeypatch.setattr(profiles, "load_register", lambda *a, **k: {"gplset": gpl})
+    row = {"recall": 0.5, "n": 10}
+    result = {
+        "schema": "bench.detector/v1",
+        "recall": dict.fromkeys(("lt16", "16to32", "gt32", "all"), row),
+        "recall_by_dataset": {"gplset": row},
+        "latency_ms": {"p50": 800.0, "p95": 1200.0},
+    }
+    start = json.loads(START.read_text(encoding="utf-8"))
+    with pytest.raises(BenchError, match="publiceras"):
+        build_profile("yolox_s", 1, result, start)
+
+
+@pytest.mark.parametrize(
+    ("sets", "match"),
+    [
+        (None, "saknas eller är tom"),
+        ({}, "saknas eller är tom"),
+        ([], "saknas eller är tom"),
+        ({"gone": {"recall": 0.5, "n": 10}}, "gone, som inte finns i registret"),
+    ],
+)
+def test_profile_refuses_a_result_whose_set_is_unknown(sets: object, match: str) -> None:
+    """The publish check needs the set: a result without one, or measured on a set no
+    longer in the register, may hold numbers that must not be published."""
+    row = {"recall": 0.5, "n": 10}
+    result: dict[str, object] = {
+        "schema": "bench.detector/v1",
+        "recall": dict.fromkeys(("lt16", "16to32", "gt32", "all"), row),
+        "latency_ms": {"p50": 800.0, "p95": 1200.0},
+    }
+    if sets is not None:
+        result["recall_by_dataset"] = sets
+    start = json.loads(START.read_text(encoding="utf-8"))
+    with pytest.raises(BenchError, match=match):
         build_profile("yolox_s", 1, result, start)
 
 
@@ -394,9 +450,22 @@ def test_the_mini_bank_measures_only_its_listed_pictures(
         ev.pictures({"mini": "1"}, data)
 
 
-def test_profiles_main_writes_a_profile(tmp_path: Path) -> None:
+def test_profiles_main_writes_a_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from bench import profiles
 
+    # the synthetic pictures' set "t", registered with publishable results
+    t = Dataset(
+        name="t",
+        title="t",
+        licence="CC-BY-4.0",
+        attribution="a",
+        layout="heridal_voc",
+        use=("measure",),
+        publish_weights=False,
+        local_only=False,
+        url="https://example.org/t.zip",
+    )
+    monkeypatch.setattr(profiles, "load_register", lambda *a, **k: {"t": t})
     pics = _pictures(tmp_path)
     body = ev.result_body("facit", "splits/v1 test (t)", ev.measure("facit", pics))
     result = tmp_path / "r.json"
@@ -406,3 +475,112 @@ def test_profiles_main_writes_a_profile(tmp_path: Path) -> None:
     p = json.loads(out.read_text(encoding="utf-8"))
     assert p["profile_id"] == "det_facit_x_v2" and p["recall"]["gt32"] == 1.0
     assert profiles.main(["model=Bad-Name", f"result={result}", f"out={out}"]) == 2
+    monkeypatch.setattr(profiles, "load_register", lambda *a, **k: {})
+    assert profiles.main(["model=facit_x", f"result={result}", f"out={out}"]) == 2
+
+
+def test_private_results_inside_the_repo_but_outside_build_are_warned_about(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Warn, not refuse: the owner may measure anywhere, but git must not take these numbers."""
+    from types import SimpleNamespace
+
+    tmp_path = tmp_path.resolve()
+    monkeypatch.setattr(ev, "ROOT", tmp_path)
+    monkeypatch.setattr(ev, "RESULTS", tmp_path / "build" / "bench")
+    register = {
+        "open": SimpleNamespace(publish_results=True),
+        "kept": SimpleNamespace(publish_results=False),
+    }
+    inside_repo = tmp_path / "tools" / "r.json"
+    message = ev.private_out(inside_repo, ["open", "kept"], register)
+    assert message is not None
+    assert message.endswith("resultat på kept, som inte får publiceras; checka inte in den.")
+    assert ev.private_out(inside_repo, ["open"], register) is None
+    assert ev.private_out(inside_repo, ["gone"], register) is not None
+    assert ev.private_out(tmp_path / "build" / "bench" / "r.json", ["kept"], register) is None
+    assert ev.private_out(tmp_path.parent / "elsewhere.json", ["kept"], register) is None
+
+
+def test_main_warns_when_it_writes_private_results_into_the_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from types import SimpleNamespace
+
+    root = tmp_path.resolve()
+    monkeypatch.setattr(ev, "ROOT", root)
+    monkeypatch.setattr(ev, "RESULTS", root / "build" / "bench")
+    monkeypatch.setattr(ev, "pictures", lambda *a: ("s", [object()]))
+    monkeypatch.setattr(ev, "measure", lambda *a: None)
+    cls = {"lt16": {"recall": 0}, "16to32": {"recall": 0}, "gt32": {"recall": 0}}
+    row = {"recall": 0, "n": 1, "by_class": cls, "threshold": 0.5, "fp_per_12mp": 0}
+    monkeypatch.setattr(
+        ev,
+        "result_body",
+        lambda *a: {"recall": cls, "ap50": 0, "recall_by_dataset": {"kept": row}},
+    )
+    monkeypatch.setattr(
+        ev, "load_register", lambda *a: {"kept": SimpleNamespace(publish_results=False)}
+    )
+    assert ev.main(["model=null", f"data={root}", f"out={root / 'r.json'}"]) == 0
+    assert "kept, som inte får publiceras" in capsys.readouterr().err
+    assert ev.main(["model=null", f"data={root}", f"out={root / 'build' / 'r.json'}"]) == 0
+    assert "publiceras" not in capsys.readouterr().err
+
+
+def test_selfcheck_warns_too_when_it_writes_private_rows_into_the_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Selfcheck also writes per-dataset rows, so it gets the same warning as a real model."""
+    from types import SimpleNamespace
+
+    root = tmp_path.resolve()
+    monkeypatch.setattr(ev, "ROOT", root)
+    monkeypatch.setattr(ev, "RESULTS", root / "build" / "bench")
+    monkeypatch.setattr(ev, "pictures", lambda *a: ("s", [object()]))
+    rows = {"recall_by_dataset": {"kept": {"n": 1}}}
+    monkeypatch.setattr(ev, "selfcheck", lambda *a: ([], {"null": rows, "facit": rows}))
+    monkeypatch.setattr(
+        ev, "load_register", lambda *a: {"kept": SimpleNamespace(publish_results=False)}
+    )
+    assert ev.main(["model=selfcheck", f"data={root}", f"out={root / 'r.json'}"]) == 0
+    assert "kept, som inte får publiceras" in capsys.readouterr().err
+    assert ev.main(["model=selfcheck", f"data={root}", f"out={root / 'build' / 'r.json'}"]) == 0
+    assert "publiceras" not in capsys.readouterr().err
+
+
+# --- recall by person size -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("side", "label"),
+    [(0, "0-16"), (15.9, "0-16"), (16, "16-24"), (33, "32-48"), (100, "96-128"), (500, "192+")],
+)
+def test_size_bins_by_longest_side(side: float, label: str) -> None:
+    assert size_bin(side) == label
+
+
+def test_recall_is_given_by_person_size_pooled_and_per_dataset() -> None:
+    small = match_picture("a", 100, 100, [(0, 0, 10, 20)], [])  # 20 px, missed
+    big = match_picture("a", 100, 100, [(0, 0, 100, 40)], [(0.9, (0, 0, 100, 40))])
+    other = match_picture("b", 100, 100, [(0, 0, 30, 10)], [(0.9, (0, 0, 30, 10))])
+    s = summarise([small, big, other])
+    body = s.as_dict()
+    by_size = body["recall_by_size"]
+    assert {k: (v["n"], v["hits"]) for k, v in by_size.items()} == {  # type: ignore[union-attr]
+        "16-24": (1, 0),
+        "24-32": (1, 1),
+        "96-128": (1, 1),
+    }
+    assert set(s.recall_by_dataset["a"]["by_size"]) == {"16-24", "96-128"}  # type: ignore[arg-type]
+    lines = ev.size_table(body)
+    assert lines[0].startswith("Recall per personstorlek")
+    assert "16-24" in lines[1] and "192+" not in lines[1]  # only bins with people
+    assert any(line.strip().startswith("a ") and "0.00 (1)" in line for line in lines)
+
+
+def test_an_older_result_without_sizes_prints_no_size_table() -> None:
+    assert ev.size_table({"recall_by_dataset": {"a": {"recall": 0.5}}}) == []
+    # a result made by hand without sides counts in no bin
+    s = summarise(_two_sets())
+    assert s.recall_by_size == {}

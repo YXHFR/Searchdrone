@@ -12,6 +12,16 @@ licence = "Apache-2.0"
 attribution = "YOLOX, Megvii Inc. (Ge et al. 2021), trained on COCO"
 
 [[model]]
+name = "yolox_m"
+kind = "pretrained"  # the larger YOLOX: 25 M parameters, 73.8 GFLOPs at 640 px (S: 26.8)
+file = "pretrained/yolox_m.pth"
+url = "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_m.pth"
+size_bytes = 203114461
+sha256 = "60076992b32da82951c90cfa7bd6ab70eba9eda243e08b940a396f60ac2d19b6"
+licence = "Apache-2.0"
+attribution = "YOLOX, Megvii Inc. (Ge et al. 2021), trained on COCO"
+
+[[model]]
 name = "damoyolo_s"
 kind = "pretrained"
 file = "pretrained/damoyolo_tinynasL25_S.pt"

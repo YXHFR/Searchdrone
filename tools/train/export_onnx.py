@@ -1,14 +1,16 @@
 """Make the ONNX file from the best training epoch: ``just export-detector model=yolox_s``.
 
-Keys: ``model`` (yolox_s, damoyolo_s), ``data``, ``train`` (the training folder,
+Keys: ``model`` (yolox_s, yolox_m, damoyolo_s), ``data``, ``train`` (the training folder,
 default ``<data>/train/<model>``), ``name`` (default ``person_<model>``), ``out``
 (default ``<data>/models/detector``).
 
 Writes ``<name>.onnx`` and its manifest ``<name>.json`` (``sd.detector-model/v1``: the
-family, the input size, the classes, the SHA-256 of the ONNX file, what it was trained
-on and under which licences, and that recall is measured per dataset, each at its own
-threshold). Before writing, the ONNX file is run with ONNX Runtime
-next to PyTorch on the same pictures; if they disagree, nothing is written. Point
+family, the input size, how many times each tile is enlarged (``upscale``: the
+training run's, so the drone enlarges its tiles as the model was trained), the classes,
+the SHA-256 of the ONNX file, what it was trained on and under which licences, and that
+recall is measured per dataset, each at its own threshold). Before writing, the ONNX
+file is run with ONNX Runtime next to PyTorch on the same pictures; if they disagree,
+nothing is written. Point
 ``SD_DETECTOR_MODEL`` at the manifest to use the model (``tools/train/README.md``).
 """
 
@@ -41,6 +43,17 @@ RECALL_RULE = (
 )
 
 
+def val_ap50_rule(ck: dict[str, Any]) -> str:
+    """How ``val_ap50`` was made: the lowest of each dataset's AP50 (``min_over_datasets``),
+    the lowest over only some of them (``min_over_pick``: ``val_ap50_pick`` names them), or
+    (older runs) pooled over all tiles."""
+    by_dataset = ck.get("val_ap50_by_dataset")
+    if not by_dataset:
+        return "pooled"
+    pick = ck.get("val_ap50_pick")
+    return "min_over_pick" if pick and set(pick) != set(by_dataset) else "min_over_datasets"
+
+
 def export(
     best: Path, out_dir: Path, name: str, check_images: int = 2, seed: int = 0
 ) -> tuple[Path, Path]:
@@ -61,6 +74,7 @@ def export(
         shown["init"] = Path(shown["init"]).name  # the run's local path stays local
     fam = families.FAMILIES[model]
     tile = int(settings["tile"])
+    upscale = int(settings.get("upscale", 1))  # runs before upscale= did not enlarge
     net = families.build(model)
     net.load_state_dict(ck["ema"])
     net.eval()
@@ -93,6 +107,7 @@ def export(
         "model": model,
         "input_px": tile,
         "tile_px": tile,
+        "upscale": upscale,  # each tile covers tile_px / upscale picture pixels
         "classes": ["person"],
         "licence": fam.licence,
         "trained_on": [
@@ -104,8 +119,11 @@ def export(
         "started_from": ck.get("started_from"),
         "val_ap50": ck.get("val_ap50"),
         "val_ap50_by_dataset": ck.get("val_ap50_by_dataset"),
-        # how val_ap50 was made: the lowest of each dataset's AP50, or (older runs) pooled
-        "val_ap50_rule": "min_over_datasets" if ck.get("val_ap50_by_dataset") else "pooled",
+        "val_ap50_rule": val_ap50_rule(ck),
+        # the sets val_ap50 is the lowest of (all of val_ap50_by_dataset in older runs)
+        "val_ap50_pick": ck.get("val_ap50_pick", list(ck.get("val_ap50_by_dataset") or [])),
+        # how the epochs drew their tiles: "tiles" (each once) in runs before balance=
+        "balance": ck.get("balance", settings.get("balance", "tiles")),
         # AP50 needs no threshold; recall does, and the bench sets one per dataset
         "recall_rule": RECALL_RULE,
         "epoch": ck.get("epoch"),

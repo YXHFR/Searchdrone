@@ -33,6 +33,7 @@ export type AlertCode =
   | "KEEPOUTS_NOT_INSTALLED"
   | "KEEPOUTS_INSTALLED"
   | "KEEPOUT_HOLD"
+  | "MISSION_FALLBACK"
   | "GPS_WEAK"
   | "GPS_LOST"
   | "DEAD_RECKONING"
@@ -93,15 +94,27 @@ export type CommandStatus =
  * via the `definition` "ExecutorState".
  */
 export type ExecutorState =
-  "IDLE" | "PREFLIGHT" | "TAKEOFF" | "TRANSIT" | "SURVEY" | "HOLD" | "RTL" | "LAND" | "LANDED" | "HELD" | "FAILSAFE";
+  | "IDLE"
+  | "PREFLIGHT"
+  | "TAKEOFF"
+  | "TRANSIT"
+  | "SURVEY"
+  | "INSPECT"
+  | "HOLD"
+  | "RTL"
+  | "LAND"
+  | "LANDED"
+  | "HELD"
+  | "FAILSAFE";
 /**
- * The fields of the onboard ``executor.keepout_hold`` data that the ground's
- * ``KEEPOUT_HOLD`` alert passes on in its details, for the panel's text.
+ * The fields of the ``KEEPOUT_HOLD`` alert's details: the onboard
+ * ``executor.keepout_hold`` data the ground passes on, for the panel's text, and the
+ * envelope's send time.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "KeepoutHoldField".
  */
-export type KeepoutHoldField = "inside" | "climb_to_m";
+export type KeepoutHoldField = "inside" | "climb_to_m" | "sent_utc";
 /**
  * Where the onboard link-loss rule is (sd_onboard.executor.link_loss).
  *
@@ -365,8 +378,22 @@ export interface ApprovalDecisionRequest {
     | ["clear_around_drone", "clear_around_drone", "clear_around_drone"]
     | ["clear_around_drone", "clear_around_drone", "clear_around_drone", "clear_around_drone"];
   decision: "approve" | "reject";
+  floor_pack?: FloorPackChoice | null;
+  operation_mode?: ("sim" | "exercise" | "live") | null;
   reason?: string | null;
   subject_version: number;
+}
+/**
+ * The pilot's map pack on the charter card: one from ``GET /floor_packs`` with the
+ * hash the list showed, or neither ("Ingen höjdkarta": a closer look does not come
+ * down). The ground refuses a pack it does not have whole or whose hash has changed.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "FloorPackChoice".
+ */
+export interface FloorPackChoice {
+  floor_pack_id?: string | null;
+  floor_pack_sha256?: string | null;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -630,7 +657,7 @@ export interface CandidateCounts {
  * via the `definition` "CandidateDecision".
  */
 export interface CandidateDecision {
-  decision: "confirm" | "reject" | "inspect" | "unsure" | "reopen";
+  decision: "confirm" | "reject" | "inspect" | "unsure" | "reopen" | "resume";
   note?: string;
   subject_rev: number;
 }
@@ -691,7 +718,7 @@ export interface StoredAssessment {
  */
 export interface StoredDecision {
   created_at: string;
-  decision: "confirm" | "reject" | "inspect" | "unsure" | "reopen";
+  decision: "confirm" | "reject" | "inspect" | "unsure" | "reopen" | "resume";
   id: string;
   note: string;
   operator_ref: string;
@@ -783,6 +810,8 @@ export interface MissionCharter {
   charter_id: string;
   default_alt_agl_m?: number;
   fence_hash: string | null;
+  floor_pack_id?: string | null;
+  floor_pack_sha256?: string | null;
   geofence_buffer_m?: number;
   home: LatLonAlt;
   max_range_from_pilot_m?: number;
@@ -790,6 +819,8 @@ export interface MissionCharter {
   mission_id: string;
   notes?: string | null;
   on_ai_silent?: "continue_plan" | "hold" | "return_home";
+  operation_mode?: ("sim" | "exercise" | "live") | null;
+  overflight_allowed?: boolean;
   pilot_position: LatLon;
   /**
    * @maxItems 52
@@ -1561,6 +1592,23 @@ export interface FindMeParams {
   hover_offset_m: number;
 }
 /**
+ * ``GET /floor_packs``: a height-floor map pack the ground station holds under
+ * ``<data_dir>/floor/<floor_pack_id>/`` whose files all match their hashes, for the
+ * pilot's choice on the charter card. ``attribution`` is the data's source credit (it
+ * is shown wherever the pack is picked).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "FloorPackInfo".
+ */
+export interface FloorPackInfo {
+  attribution: string;
+  floor_pack_id: string;
+  floor_pack_sha256: string;
+  origin: LatLon;
+  size_east_m: number;
+  size_north_m: number;
+}
+/**
  * Stage 2. Unresolved here: the operator's position is checked onboard.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -1820,23 +1868,177 @@ export interface HoldParams {
   reason?: string;
 }
 /**
- * A closer look at a detection, straight down (``sd_schemas.keepout.inspect_geometry``).
+ * ``inspect.aborted``: the look ended without the wait (STOP, FLY HOME, a takeover,
+ * the battery, the link ...); the candidate goes back to ``ready``. Never resumed.
  *
- * The ground fills in where the target is (``lat``, ``lon``: the candidate's position
- * when the detection belongs to one) and its cylinder's radius from its own records;
- * without them the order is unresolved. ``alt_m`` is the highest the drone may go for it
- * (the charter's ceiling when left out).
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "InspectAborted".
+ */
+export interface InspectAborted {
+  candidate_id: string;
+  command_id: string;
+  reason: "stop" | "home" | "override" | "battery" | "gnss" | "link_loss" | "refused_onboard" | "failed";
+}
+/**
+ * A closer look at a candidate (version 2: ``candidate_id``; ``sd_schemas.inspect``).
+ *
+ * The order names the card only. The ground fills in where the candidate is (``lat``,
+ * ``lon``), its uncertainty and its cylinder's radius (``PERSON_KEEPOUT_M`` +
+ * ``sigma95_m``) from its own records, never the AI or the panel; without them the
+ * order is unresolved. The order gives no height: the drone works its heights out
+ * onboard from the height floor.
+ *
+ * ``geometry`` is the look from the side (``sd_schemas.keepout.inspect_geometry``): a
+ * point outside the cylinder from which the main camera sees the target nearly straight
+ * down, at most at the charter's ceiling. It is the whole look in ``live`` without the
+ * overflight permit. With the charter's ``overflight_allowed`` (sim, exercise, live with
+ * the permit) the order goes straight over the candidate, without a height: the drone
+ * keeps its own above the height floor (``sd_safety.floor``) and the gate checks that
+ * floor instead (R-FLOOR, R-FLOOR-CEIL).
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "InspectDetectionParams".
  */
 export interface InspectDetectionParams {
-  alt_m?: number | null;
-  detection_id: string;
+  candidate_id: string;
   lat?: number | null;
   lon?: number | null;
-  standoff_m: number;
+  sigma95_m?: number | null;
   target_radius_m?: number | null;
+}
+/**
+ * ``inspect.done``: the steps are over and the drone hovers for the pilot's decision.
+ * The candidate stays ``inspecting`` until it comes, or ``AWAIT_DECISION_S`` passes.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "InspectDone".
+ */
+export interface InspectDone {
+  candidate_id: string;
+  clear: boolean;
+  command_id: string;
+  end: "clear" | "floor" | "lower_declined" | "steps_max" | "timeout" | "keepout" | "laser_lost" | "side_look";
+  lowest_above_ground_m?: number | null;
+  steps: number;
+  /**
+   * @maxItems 200
+   */
+  still_ids?: string[];
+}
+/**
+ * ``inspect.laser_lost``: the laser stopped confirming below the map's floor without
+ * it; the drone climbs to that floor and goes to wait.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "InspectLaserLost".
+ */
+export interface InspectLaserLost {
+  above_ground_m?: number | null;
+  command_id: string;
+}
+/**
+ * Ground -> onboard, reliable: the pilot's yes to going below 30 m above ground
+ * (``inspect.lower_offer``). Only from the pilot's own click, never from the AI.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "InspectLower".
+ */
+export interface InspectLower {
+  command_id: string;
+}
+/**
+ * ``inspect.lower_offer``: the next step would go below the automatic floor (30 m
+ * above ground); the drone hovers and asks the pilot (``link.InspectLower``).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "InspectLowerOffer".
+ */
+export interface InspectLowerOffer {
+  command_id: string;
+  lowest_above_ground_m: number;
+  now_above_ground_m: number;
+  reason: "map" | "unknown" | "powerline" | "laser" | "no_map" | "laser_lost";
+}
+/**
+ * Ground -> onboard, reliable: the pilot's decision on a closer look while the drone
+ * hovers for it (``hold_reason`` "inspect_await"). The drone flies back to where the
+ * search broke off, except after "confirmed": then it hovers over the find.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "InspectOutcome".
+ */
+export interface InspectOutcome {
+  command_id: string;
+  outcome: "rejected" | "unsure" | "resume" | "confirmed";
+}
+/**
+ * How a look is going, in the onboard computer's state snapshot (at most 2 Hz).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "InspectProgress".
+ */
+export interface InspectProgress {
+  above_ground_m?: number | null;
+  await_left_s?: number | null;
+  candidate_id: string;
+  command_id: string;
+  floor_auto_above_ground_m?: number | null;
+  floor_lowest_above_ground_m?: number | null;
+  floor_reason?: ("map" | "unknown" | "powerline" | "laser" | "no_map" | "laser_lost") | null;
+  laser_confirmed?: boolean;
+  phase: "approach" | "step" | "lower_offer" | "await" | "return";
+  step: number;
+}
+/**
+ * Ground -> onboard, reliable: the pilot's no to "Gå lägre?" ("Nej, stanna här"). The
+ * drone stops waiting for an answer at once and the look ends where it is
+ * (``lower_declined``), as on no answer in ``LOWER_OFFER_S``: it never goes lower for it.
+ * A kind of its own, not a flag on ``InspectLower``, so that a no can never be read as a
+ * yes. Only from the pilot's own click.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "InspectStay".
+ */
+export interface InspectStay {
+  command_id: string;
+}
+/**
+ * A closer look as the ground keeps it (``GET /api/v1/missions/{id}/inspections``
+ * and ``inspection.updated`` on the live topic ``candidates``). At most one is open per
+ * mission (``ended_at`` None).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "Inspection".
+ */
+export interface Inspection {
+  await_until?: string | null;
+  candidate_id: string;
+  command_id: string;
+  detail?: string | null;
+  done?: InspectDone | null;
+  ended_at?: string | null;
+  lower_offer?: InspectLowerOffer | null;
+  lower_offer_until?: string | null;
+  mission_id: string;
+  operation_mode: "sim" | "exercise" | "live";
+  outcome?:
+    | (
+        | "confirmed"
+        | "rejected"
+        | "unsure"
+        | "resume"
+        | "timeout"
+        | "resumed_by_pilot"
+        | "aborted"
+        | "refused_onboard"
+        | "failed"
+      )
+    | null;
+  overflight: boolean;
+  phase: "flying" | "lower_offer" | "await" | "ended";
+  seq: number;
+  started_at: string;
+  started_by: string;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -2574,6 +2776,7 @@ export interface PerceptionReport {
    * @maxItems 4
    */
   footprint: [LatLon, LatLon, LatLon, LatLon];
+  inspect_step?: number | null;
   pose: Pose;
   px_per_m: number;
   sensor: "rgb";
@@ -2595,6 +2798,30 @@ export interface Pose {
   roll_deg: number;
   source_ts_ms: number;
   yaw_deg: number;
+}
+/**
+ * The ground's overflight permit for ``live`` (``GET``/``PUT /api/v1/permit``): the
+ * reference of the operator's permit in the specific category (Transportstyrelsen) and
+ * whether a closer look may then fly straight over its candidate. A charter approved
+ * in ``live`` carries ``overflight_allowed`` from it; sim and exercise always may.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "Permit".
+ */
+export interface Permit {
+  allow_overflight_live?: boolean;
+  specific_category_ref?: string;
+}
+/**
+ * ``permit.changed`` on the ground: the overflight permit setting for ``live``.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "PermitChanged".
+ */
+export interface PermitChanged {
+  allow_overflight_live: boolean;
+  changed_by: string;
+  has_specific_category_ref: boolean;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -3160,8 +3387,10 @@ export interface StateSnapshot {
         | "ai_silent"
         | "startup"
         | "manual_input_lost"
+        | "inspect_await"
       )
     | null;
+  inspect?: InspectProgress | null;
   last_transition_state_seq: number;
   limits_active: string[];
   link_loss_phase?: LinkLossPhase;

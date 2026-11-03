@@ -228,6 +228,14 @@ brain-eval-profiles:
 brain-eval-profiles-cloud:
     uv run --package sd-brain sd-brain eval-profiles --backend cloud
 
+# The safety exam: dangerous orders and hostile text in the data, recorded answers (no network)
+brain-eval-safety:
+    uv run --package sd-brain sd-brain eval-safety --backend replay
+
+# The same against the cloud model (the owner's key in .env; at most 3 kr per run, 30 kr per day)
+brain-eval-safety-cloud:
+    uv run --package sd-brain sd-brain eval-safety --backend cloud
+
 # Simulator exam: random searches with an answer key, the cloud model decides (keys:
 # flights, seed, model). Hard cap 30 kr per day on real usage, then the script flies.
 brain-eval-sim *args:
@@ -519,7 +527,7 @@ data-dir *args:
 detector-fetch *args:
     PYTHONPATH=tools uv run --no-sync python tools/train/fetch_weights.py "$@"
 
-# Train the person detector on this computer's graphics card (keys: model, epochs, batch, sets, init, out, simfarm, ...; see tools/train/README.md)
+# Train the person detector on this computer's graphics card (keys: model, epochs, batch, sets, balance, pick, upscale, init, out, simfarm, ...; see tools/train/README.md)
 train-detector *args:
     @just _train train_detector.py "$@"
 
@@ -568,11 +576,28 @@ trees-fetch *args:
 tree-pictures-fetch:
     uv run --no-sync python tools/terrain/fetch_tree_models.py
 
+# Ground pictures (grass, forest floor, gravel, rock) from Poly Haven's CC0 textures to
+# build/ground_textures/, for the photo farm's detailed ground
+ground-pictures-fetch:
+    uv run --no-sync python tools/terrain/fetch_ground_textures.py
+
 # The site's orthophoto from Lantmäteriet with your own Geotorget login
 # (config/geotorget.local.toml, see config/geotorget.example.toml) to build/ortho/<site>/:
 # only on this computer, never committed, uploaded or fetched in CI (keys: site; needs gdal-bin)
 ortho-fetch *args:
     uv run --no-sync python tools/terrain/fetch_ortho.py "$@"
+
+# The height map of a closer look (a floor pack): tree heights from Lantmäteriet's forest
+# laser scan and ground model with your own Geotorget login, power lines from
+# OpenStreetMap, to ${SD_DATA_DIR}/floor/<name>/ (keys: area, name, out, keep_cache, lines).
+# Never committed; laspy and tifffile are added only for this run
+floor-fetch *args:
+    uv run --no-sync --with 'laspy[lazrs]==2.7.0' --with 'lazrs==0.8.2' --with 'tifffile==2026.10.15' python tools/terrain/fetch_floor_map.py "$@"
+
+# Copy a floor pack, after checking it, to <dir>/floor/<name>/ on the onboard computer
+# (keys: name, host, dir, out)
+floor-push *args:
+    uv run --no-sync python tools/terrain/fetch_floor_map.py push "$@"
 
 # The simulator in photo mode: the orthophoto on the open ground, the real trees on it and
 # global illumination for the camera (keys: site, gi, and those of just sim)
@@ -591,6 +616,12 @@ sim-farm-status:
 # Fetch the sim farm's person models (CC0 / CC BY 4.0, from Gazebo Fuel) into build/
 sim-farm-setup:
     uv run --package sd-sim python -m sd_sim.farm setup
+
+# Photo farm: still pictures of people (real heights, poses, clothes) at the site with the
+# real trees, aimed from HERIDAL's and KIOS's heights, with boxes, to build/simfarm/stills/
+# (keys: scenes, seed, site, shots, profile, instance, gi, out). No flight, no drone code
+sim-farm-stills *args:
+    uv run --package sd-sim python -m sd_sim.farm stills "$@"
 
 # Pictures of a site world from the camera at 40 m and 100 m and from the side, with the
 # road's width and the map overlap measured in them (keys: world, instance)
@@ -636,8 +667,20 @@ check-traceability:
 showcase STAGE *args:
     uv run --no-sync python tools/just_args.py showcase stage="$1" "${@:2}"
 
-# Set one version everywhere before a release
-release-prep VERSION: (_not-built "B1-18")
+# Before a release: check every merge's gates on main, set one version everywhere and
+# write the changelog with git-cliff; never commits or tags (keys: gates=0 skips the gates)
+release-prep VERSION *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    opts=()
+    for arg in "${@:2}"; do
+        case "$arg" in
+            gates=0) opts+=(--no-gates) ;;
+            gates=1) ;;
+            *) echo "just release-prep: okänd inställning '$arg' (gates=0 eller gates=1)"; exit 2 ;;
+        esac
+    done
+    uv run --no-sync python tools/release_prep.py "$1" ${opts[@]+"${opts[@]}"}
 
 # --- helpers -------------------------------------------------------------------------
 

@@ -45,7 +45,7 @@ REPORT = "search_report.md"
 Z95_ONE_SIDED: Final = 1.6448536
 Z95_TWO_SIDED: Final = 1.959964
 LATENCY_P50_MAX_MS: Final = 3000.0
-SK04_MIN_SIGHTINGS: Final = 10  # verdicts that saw the hiker's top, over all runs
+SK04_MIN_SIGHTINGS: Final = 10  # runs whose verdict saw the hiker's top
 SK06_FACTOR: Final = 0.9
 TOO_FEW: Final = "för få data"
 
@@ -263,12 +263,22 @@ def _sk04(runs: list[dict[str, Any]]) -> list[Requirement]:
     first = _share(
         runs, lambda r: r.get("confirmed_thing") == "target" and r["false_confirms"] == 0
     )
-    tops = [v for r in runs for v in (r.get("upper_by_thing") or {}).get("green-jacket", [])]
-    seen = [v for v in tops if v in ("conflict", "match")]
+    by_run = [(r.get("upper_by_thing") or {}).get("green-jacket", []) for r in runs]
+    tops = [v for vs in by_run for v in vs]
+    # One verdict per run: the oracle draws a thing's field once per run (keyed by seed,
+    # thing and field), so its cards in one run say the same and are not separate draws.
+    # A run with both did not hold the hiker apart: it counts against the requirement
+    # (as a match, never as a conflict), and how many there were is reported.
+    seen = [
+        "match" if "match" in vs else "conflict"
+        for vs in by_run
+        if any(v in ("conflict", "match") for v in vs)
+    ]
+    mixed = sum("conflict" in vs and "match" in vs for vs in by_run)
     conflict = sum(v == "conflict" for v in seen)
     text = (
-        f"vandraren: conflict / (conflict + match) på överdel ≥ 0,80, "
-        f"minst {SK04_MIN_SIGHTINGS} sedda"
+        f"vandraren: conflict / (conflict + match) på överdel ≥ 0,80, en bedömning per "
+        f"körning, minst {SK04_MIN_SIGHTINGS} körningar"
     )
     if len(seen) < SK04_MIN_SIGHTINGS:
         hiker = Requirement(
@@ -279,7 +289,8 @@ def _sk04(runs: list[dict[str, Any]]) -> list[Requirement]:
         hiker = _req(
             "SK04",
             text,
-            f"{conflict}/{len(seen)} = {share:.2f} ({len(tops)} kort)",
+            f"{conflict}/{len(seen)} = {share:.2f} ({len(tops)} kort"
+            + (f", {mixed} blandade körningar räknade som match)" if mixed else ")"),
             share >= 0.80,
             n,
         )

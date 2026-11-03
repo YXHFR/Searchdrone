@@ -9,6 +9,7 @@ from fake_openai import FakeOpenAI
 from sd_brain import perf
 from sd_brain.config import CloudConfig
 from sd_brain.perf import measure_cloud
+from sd_brain.runtime.base import Sampling
 
 KEY = "sk-test-" + "k" * 40
 MAIN = "z-ai/glm-5.3-flash"
@@ -17,7 +18,13 @@ FALLBACK = "anthropic/claude-haiku-5.5"
 
 async def _measure(fake: FakeOpenAI, runs: int) -> dict[str, object]:
     async with httpx.AsyncClient(trust_env=False) as client:
-        return await measure_cloud(CloudConfig(base_url=fake.base_url), KEY, client, runs=runs)
+        return await measure_cloud(
+            CloudConfig(base_url=fake.base_url),
+            KEY,
+            client,
+            runs=runs,
+            sampling=Sampling(max_tokens=4096),
+        )
 
 
 async def test_all_answered() -> None:
@@ -56,3 +63,19 @@ async def test_slow_median_fails_the_measurement(monkeypatch: pytest.MonkeyPatch
         report = await _measure(fake, 2)
     assert report["answered"] == 2 and report["errors"] == {}
     assert report["ok"] is False
+
+
+async def test_the_report_holds_the_token_limit_and_the_reasoning() -> None:
+    with FakeOpenAI() as fake:
+        fake.reply_reasoning_tokens = 6
+        report = await _measure(fake, 2)
+    assert report["max_tokens"] == 4096
+    assert report["completion_tokens_max"] == 10 and report["reasoning_tokens_max"] == 6
+
+
+async def test_no_answer_has_no_token_numbers() -> None:
+    with FakeOpenAI() as fake:
+        fake.behaviour[MAIN] = "500"
+        fake.behaviour[FALLBACK] = "500"
+        report = await _measure(fake, 1)
+    assert report["completion_tokens_max"] is None and report["reasoning_tokens_max"] is None

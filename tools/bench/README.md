@@ -15,13 +15,42 @@ setup-config`, outside the repository).
 |---|---|---|---|
 | `heridal` | HERIDAL: 1,684 pictures (4000×3000) of Croatian hillsides with hikers, from the University of Split | CC BY 3.0 | training, tuning, measuring |
 | `kios` | KIOS Small Object Aerial Person Detection: 3,136 pictures (1920×1080 to 3840×2160) with 61,708 people from drone flights in Cyprus, from the University of Cyprus | CC BY 4.0 | training, tuning, measuring |
+| `kios_carperson` | KIOS Aerial Dataset for Car and Person Detection: a parking lot at the University of Cyprus filmed from 40 and 60 m, 11 videos, 13,755 frames; every tenth frame is taken | CC BY 4.0 | training and tuning only |
+| `seadronessee` | SeaDronesSee Object Detection v2 (JPEG version): 10,477 pictures of swimmers in open water (Lake Constance and the North Sea), from the University of Tübingen | CC0 1.0 | training and tuning only |
+| `uit_drone4` | UIT-Drone4: city traffic in Vietnam filmed from drones (3840×2160), 25 videos, 15,370 frames; every tenth frame is taken (1,523 pictures, 7,193 pedestrians, median 59 px). Pedestrians are the persons; motorcycles, boxed with their riders, are ignore regions (a training tile that overlaps one is left out). From the University of Information Technology, VNU-HCM | CC BY 4.0 | training and tuning only |
+| `simstills` | Our own photo farm's renders (`just sim-farm-stills`), indexed where they lie in `build/simfarm/stills/`; a scene is one sequence, drawn to train or val by a hash of its name since the set keeps growing | Apache-2.0 (models CC0 / CC BY 4.0) | training and tuning only |
 | `wisard` | WiSARD v1, visible-light part: 20,504 pictures with labels from wilderness search flights in Washington, from the University of Washington | MIT (see below) | measuring only, for now |
 | `simfarm` | Our own simulator pictures (`just sim-farm`) | Apache-2.0 | pre-training only, never measured on |
 
 The register is `datasets.toml`: address, size, SHA-256, licence and credit of each
 archive. `tools/tests/test_bench_datasets.py` holds the licence rule: only open licences
 (CC0, CC BY, MIT, Apache) may be trained on; a non-commercial set may only ever be
-measured on, on your own computer; nothing without a licence is allowed.
+measured on, on your own computer.
+
+**Measure-only sets (GPL or no data licence).** A set under the GPL, or with no data
+licence at all (`licence = "NONE"`), gives no right to build on it. Since the owner's
+decision of 2026-11-01 such a set may still be measured on, on your own computer, and
+nothing more. Its row must say `use = ["measure"]`, `local_only = true`,
+`publish_weights = false` and `publish_results = false`, or the register is refused.
+`just train-detector` refuses it in `sets=` (it is not quietly left out), and
+`profiles.py` refuses a result measured on it, because a profile is committed here.
+Its numbers stay on your computer: they go in no README, profile, issue or paper. Any
+other licence (one not listed above) is not allowed at all.
+
+None is in the register yet. The two candidates could not be pinned (checked
+2026-11-01):
+
+- **LADD** (Lacmus Drone Dataset, lacmus-foundation, GPL-3.0 per
+  [ladd-utils](https://github.com/lacmus-foundation/ladd-utils)): the download link in
+  that README (Mail.ru Cloud) answers "404", and the foundation's DVC store
+  ([ladd-and-weights](https://github.com/lacmus-foundation/ladd-and-weights)) needs
+  credentials from the Lacmus team. Copies elsewhere (Dataset Ninja, Kaggle, Roboflow)
+  are not the primary source and are not used.
+- **NOMAD** (Notre Dame, WACV 2024, [ArtRuss/NOMAD](https://github.com/ArtRuss/NOMAD),
+  no licence): a public Google Drive folder with the pictures as ten zip files of ten
+  actors each (about 38 GB each) and the labels as loose files and one
+  `annotations.json`. Google Drive answered "quota exceeded" for every file, so no size
+  or SHA-256 could be read.
 
 **WiSARD's licence.** The project page carries the MIT licence text for "the Software"
 and says nothing else about the pictures. Until the lab confirms the data licence in
@@ -37,6 +66,40 @@ them name another picture. The archive's own Train/Valid/Test folders are ignore
 hold frames of the same videos, so a model would be measured on near-copies of what it
 learned.
 
+**Training-only sets: KIOS car/person and SeaDronesSee.** The owner's decision of
+2026-11-01: train on real pictures only, and add these two. They are trained and tuned
+on, never measured on (`use = ["train"]`), so the locked test part stays HERIDAL's and
+KIOS's land pictures, and a model trained on them is kept only if it beats the current
+one there. `just bench-fetch yes=1` without `sets=` leaves them out (about 19 GB more);
+fetch them by name:
+
+```bash
+just bench-fetch yes=1 sets=kios_carperson,seadronessee
+```
+
+- **KIOS car/person** ([Zenodo 21216709](https://zenodo.org/records/21216709), CC BY 4.0
+  on the record): a parking lot at the University of Cyprus, people walking at random
+  (40 and 60 m) and a group walking one way (60 m), DJI Mavic 3M, 1920×1080. The people
+  are 21–31 px across, the size the drone struggles with most. Four archives: three of
+  pictures (11.5 GB, one zip per video inside) and `YOLO.zip` (labels; class 0 is
+  Human, 1 Car, and only Human is read). All four are pinned and checked. The 13,755
+  frames come from 11 videos at video rate, so neighbours are near-copies: only every
+  tenth frame is taken (about 1,375 pictures), and a whole video is one sequence. The
+  labels were drawn on key frames and filled in between by the labelling tool, so a
+  box can sit a little off.
+- **SeaDronesSee Object Detection v2** ([seadronessee.cs.uni-tuebingen.de](https://seadronessee.cs.uni-tuebingen.de/dataset);
+  licence "dataset is Creative Commons CC0 1.0 Universal" in the authors'
+  [README](https://github.com/Ben93kie/SeaDronesSee)): swimmers and boats in open water,
+  filmed from many heights and angles over Lake Constance and the North Sea. Only the JPEG
+  version's labelled parts are fetched (`annotations/`, `images/train`, `images/val`:
+  10,479 files, 7.4 GB); the authors' test part has no labels. Only the class `swimmer`
+  is a person; boats, jet skis, buoys and life-saving appliances are not. The authors'
+  own train and val parts hold frames of the same videos, so they are pooled and split
+  again by video. The files lie loose on the university's Nextcloud share, not in an
+  archive (the share's own zip download changes with every request), so they are pinned
+  together: the register holds their number, total size and the SHA-256 of their
+  `sha256sum` lines.
+
 **AOS (JKU Linz) is not in the bank.** The Airborne Optical Sectioning data
 ([Zenodo 3894774](https://zenodo.org/records/3894774), CC BY 4.0) has person boxes only
 for 512×512 thermal frames and for integral images (many frames combined into one).
@@ -50,9 +113,15 @@ up here.
 Marušić and Gotovac, IJCV 2019, CC BY 3.0), KIOS (Makrigiorgis, Kyrkou and Kolios,
 "Small Object Aerial Person Detection Dataset", KIOS CoE, University of Cyprus, Zenodo
 2023, doi:10.5281/zenodo.7740081, CC BY 4.0) and WiSARD (Broyles, Hayner and Leung,
-IROS 2022).
+IROS 2022). Weights trained on the training-only sets name KIOS car/person (Vasileiadis,
+Savva and Kyrkou, "Aerial Dataset for Car and Person Detection", KIOS CoE, University
+of Cyprus, Zenodo 2026, doi:10.5281/zenodo.21216709, CC BY 4.0) and SeaDronesSee
+(Varga, Kiefer, Messmer and Zell, "SeaDronesSee: A Maritime Benchmark for Detecting
+Humans in Open Water", WACV 2022, University of Tübingen, CC0 1.0; credit is not
+required by CC0 but given). The manifest of each model carries the credit of every set
+it was trained on.
 
-## The split (`splits/v2.json`)
+## The split (`splits/v4.json`)
 
 Pictures from the same flight look nearly alike, so the split is by **sequence**, never
 by picture: all of a sequence's pictures are in the same part. A sequence is the place
@@ -73,8 +142,26 @@ slip a new site into a part unseen.
 
 The test part is **locked**. `v2.json` is `v1.json` with KIOS added: HERIDAL's and
 WiSARD's parts are copied from v1 unchanged (`test_v2_keeps_every_v1_dataset_as_it_was`),
-so a HERIDAL number measured on v1 still compares with one measured on v2. Changing a
-locked part means a new file and every number measured again.
+so a HERIDAL number measured on v1 still compares with one measured on v2. `v3.json` is
+`v2.json` with the two training-only sets added the same way: HERIDAL's, KIOS's and
+WiSARD's rows are copied unchanged (`test_v3_keeps_every_v2_dataset_as_it_was`), so
+every test and val number measured on v2 still holds. `v4.json` is `v3.json` with
+UIT-Drone4 added the same way (`test_v4_keeps_every_v3_dataset_as_it_was`). Since v4
+changes no measured set, the measurement keeps reading v3 (`MEASURED` in `splits.py`):
+a result's source stays `splits/v3 test (...)`, so results measured before and after v4
+compare with each other. Changing a locked part means a new file and every number
+measured again.
+
+The training-only sets have no test part: they are never measured on, so their videos
+go 90 % to train and 10 % to val (`RATIOS_TRAIN_ONLY` in `splits.py`, saved as
+`ratios` in their entry). Their val videos join HERIDAL's and KIOS's val pictures in
+`just train-detector`'s choice of the best epoch, which keeps the epoch whose weakest
+dataset AP50 is highest; a model is still kept or dropped on the land test part alone.
+A sequence is a video for both: KIOS car/person's `DJI_<time>_<n>_D`, SeaDronesSee's
+`source.folder_name` (`DJI_0032`, `NorthSea_Fri_DJI_0110`, and two collections of
+stills named `rgb` and `multispectral`), and UIT-Drone4's video, the start of the file
+name (`DJI_0606`, `363`, `AIUit000061`; the archive's own train, val and test_all
+folders hold frames of the same videos, so they are pooled).
 
 `splits/mini_v1.json` is the mini bank: 64 pictures of the HERIDAL test part (about 330
 MB) with the SHA-256 of each picture and label. The nightly CI job `bench-mini` reads
@@ -90,6 +177,12 @@ sizes count by area). At that threshold the result gives:
 
 - **recall per size class** of the person box's longest side: under 16 px, 16–32 px and
   over 32 px, with a 95 % interval, and per dataset;
+- **recall by person size** in finer bins of the longest side (0-16, 16-24, 24-32,
+  32-48, 48-64, 64-96, 96-128, 128-192 and 192+ px), pooled and per dataset, printed as
+  a table after the per-dataset lines (`recall_by_size` and `by_size` in the result).
+  Our wide camera sees a standing person at about 30-35 px, the tele at about 100 px,
+  so this shows where a change helps, for example training at our cameras' scales
+  (`just train-detector scales=`, `tools/train/README.md`);
 - AP50, precision at score 0.25 (an assumed on-board score floor), time per picture
   (median and 95th percentile);
 - the score distributions of hits and false alarms (for the simulator's stand-in).
@@ -162,14 +255,18 @@ Run these from the repository folder in WSL (Ubuntu).
    per dataset (`heridal`, `kios`, ...); `sets=heridal` measures one set alone.
 
 Keys of `just bench-fetch`: `yes=1` (required to download), `sets=heridal,kios` (which
-sets; default every set whose SHA-256 is pinned), `mini=1` (the mini bank), `keep=1`
+sets; default every measured set whose SHA-256 is pinned, so not the training-only
+`kios_carperson` and `seadronessee`), `mini=1` (the mini bank), `keep=1`
 (keep the archive after unpacking), `data=<folder>` (another data folder).
 
 Keys of `just bench-detector`: `model=`, `part=test|val`, `sets=`, `mini=1`, `limit=N`
 (the first N pictures, for a quick look), `data=`, `out=`, `compare=<earlier result>`
 (fails if recall over 32 px drops more than 2 points for the weakest dataset or for any
 one dataset, each at its own threshold, or if a dataset of the earlier result was not
-measured; an earlier result without per-dataset rows is compared pooled against pooled).
+measured; an earlier result without per-dataset rows is compared pooled against pooled). A
+result written with `out=` inside the repository but outside `build/` gets a warning when
+it covers a dataset with `publish_results = false` (or one no longer in `datasets.toml`):
+such numbers must not be committed.
 
 ## For maintainers
 
@@ -186,4 +283,20 @@ $m list kios labels=1 > /tmp/kios_labels.txt
 $m extend version=v2 base=v1 kios=/tmp/kios.txt kios_labels=/tmp/kios_labels.txt
 ```
 
+`v3.json` was drawn from the two sets' indexes after fetching them (`<set>=index` reads
+`<data_dir>/datasets/<set>/index.json`; SeaDronesSee's sequences are in its labels, not
+its file names, so a member listing is not enough):
+
+```bash
+just bench-fetch yes=1 sets=kios_carperson,seadronessee
+$m extend version=v3 base=v2 kios_carperson=index seadronessee=index
+```
+
 Archive checksums in `datasets.toml` are filled in by downloading the archive once and running `sha256sum` on it.
+A share's checksum (SeaDronesSee) is the SHA-256 of the `sha256sum` lines of its files,
+sorted by path, made in the set's `raw/` folder after downloading every file once:
+
+```bash
+cd "$(just data-dir)/datasets/seadronessee/raw"
+find annotations images/train images/val -type f | LC_ALL=C sort | xargs -d '\n' sha256sum | sha256sum
+```

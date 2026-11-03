@@ -186,6 +186,37 @@ describe("VehicleActionMachine", () => {
     expect(m.snapshot.state).toBe("acked");
   });
 
+  it("stays sent for 3 s without an outcome, then unconfirmed (literal times, not TIMING)", async () => {
+    const { m } = setup([json(202, DISPATCHED)], () =>
+      json(200, outcome({ result: "dispatched" })),
+    );
+    m.trigger();
+    await flush();
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(m.snapshot.state).toBe("sent");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(m.snapshot.state).toBe("unconfirmed");
+  });
+
+  it("polls first 1 s after the 202, then every 500 ms (literal times, not TIMING)", async () => {
+    const { m, calls } = setup([json(202, DISPATCHED)], () =>
+      json(200, outcome({ result: "dispatched" })),
+    );
+    const gets = () => calls.filter((c) => !c.init?.method || c.init.method === "GET").length;
+    m.trigger();
+    await flush();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(gets()).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(gets()).toBe(1);
+    await vi.advanceTimersByTimeAsync(499);
+    expect(gets()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(gets()).toBe(2);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(gets()).toBe(3);
+  });
+
   it("outcome failed → failed with the server text", async () => {
     const { m } = setup([json(202, DISPATCHED)], () =>
       json(200, outcome({ result: "dispatched" })),

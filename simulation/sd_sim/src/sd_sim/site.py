@@ -132,6 +132,8 @@ class Site:
     # Where ``just ortho-fetch`` puts the site's orthophoto (ortho.npy); not committed. A
     # public site's committed folder is never searched for it.
     ortho_folder: Path | None = None
+    # Real trees this close to home get the detailed model (``site.toml``: trees.near_m).
+    trees_near_m: float = 150.0
 
     @property
     def plane(self) -> Plane:
@@ -343,6 +345,7 @@ def load(name: str, repo: Path = paths.REPO) -> Site:
         raw_toml=raw,
         trees_folder=folder if not public else repo / "build" / "trees" / name,
         ortho_folder=ortho_folder(name, folder, public, repo),
+        trees_near_m=float(data.get("trees", {}).get("near_m", 150.0)),
     )
 
 

@@ -32,6 +32,12 @@ class SimConfig:
     belief_p_det: float = 0.75
     belief_diffusion_m: float = 15.0  # Gaussian spread per sqrt(minute)
     track_weight: float = 2.0  # prior weight near a track: 1 + track_weight * exp(-d / 50 m)
+    # How much of the canopy's hiding lasts from one sweep of a cell to the next (0..1),
+    # for the truth and the belief alike. Someone hidden under trees on one pass is likely
+    # still hidden on the next, so a repeat sweep is worth less than the first (env.py). 0
+    # makes every sweep a fresh chance, the model before this setting: same numbers bit for
+    # bit. 0.8 is a guess, not a measured value.
+    miss_correlation: float = 0.8
     # "synthetic": made-up terrain (no data needed). "real": places in Sweden from
     # ``just rl-maps`` and lost-person statistics (``realworld.py``).
     world: str = "synthetic"
@@ -63,6 +69,8 @@ class SimConfig:
             raise ValueError("grid_cells must be a multiple of sector_cells")
         if self.world not in WORLDS:
             raise ValueError(f"world must be one of {WORLDS}")
+        if not 0.0 <= self.miss_correlation <= 1.0:
+            raise ValueError("miss_correlation must be between 0 and 1")
         if self.belief_motion not in BELIEF_MOTIONS:
             raise ValueError(f"belief_motion must be one of {BELIEF_MOTIONS}")
         if self.belief_motion == "lpb" and self.world != "real":

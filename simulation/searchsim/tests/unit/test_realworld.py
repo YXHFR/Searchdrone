@@ -4,13 +4,14 @@ place files (no data, no network)."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from sd_searchsim.config import EVAL_SEED_BASE, VAL_SEED_BASE, SimConfig
-from sd_searchsim.env import run_episode
+from sd_searchsim.env import Episode, run_episode
 from sd_searchsim.policies import BASELINES
 from sd_searchsim.realworld import (
     CATEGORIES,
@@ -124,6 +125,34 @@ def test_lpb_belief_runs_and_repeats(sites_dir: Path) -> None:
         b = run_episode(make_scenario(EVAL_SEED_BASE + 3, cfg), make(), cfg)
         assert a == b
         assert 0.0 <= a.score <= 1.0
+
+
+@pytest.mark.parametrize("belief_motion", ["diffuse", "lpb"])
+def test_real_world_misses(
+    sites_dir: Path, belief_motion: str, independent_episode: type[Episode]
+) -> None:
+    flat = SimConfig(
+        world="real", sites_dir=str(sites_dir), belief_motion=belief_motion, miss_correlation=0.0
+    )
+    sc = make_scenario(EVAL_SEED_BASE + 1, flat)
+    for make in BASELINES.values():
+        # No correlation: the numbers from before miss_correlation, bit for bit.
+        old = independent_episode(sc, flat)
+        choose_old = make()
+        while not old.done:
+            old.step(choose_old(old.observe()))
+        assert run_episode(sc, make(), flat) == old.result()
+        # The default: probabilities stay probabilities and the belief stays a map.
+        cfg = replace(flat, miss_correlation=SimConfig().miss_correlation)
+        ep = Episode(sc, cfg)
+        choose = make()
+        while not ep.done:
+            ep.step(choose(ep.observe()))
+            # lpb keeps the mass that walked off the map outside ``belief``.
+            total = ep.motion.total() if ep.motion is not None else float(ep.belief.sum())
+            assert total == pytest.approx(1.0, abs=1e-5)
+            assert (ep.belief >= 0).all()
+        assert 0.0 <= ep.result().score <= 1.0
 
 
 def test_lpb_needs_the_real_world() -> None:

@@ -1,0 +1,1 @@
+{"step": 0, "call": 0, "reply": {"content": "Avbryter sökningen och flyger hem.", "tool_calls": [{"name": "return_home", "arguments": {"reason": "Operatören bad mig flyga hem.", "rationale_sv": "Operatören bad mig flyga hem nu."}}]}}

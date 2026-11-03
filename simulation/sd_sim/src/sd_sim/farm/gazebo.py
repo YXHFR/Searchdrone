@@ -54,8 +54,7 @@ def flight_env(
     spec_path: Path, work: Path, base: Mapping[str, str] | None = None
 ) -> dict[str, str]:
     env = dict(os.environ if base is None else base)
-    parts = [str(people.assets_dir()), env.get("GZ_SIM_RESOURCE_PATH", "")]
-    env["GZ_SIM_RESOURCE_PATH"] = ":".join(p for p in dict.fromkeys(parts) if p)
+    env["GZ_SIM_RESOURCE_PATH"] = ":".join(str(d) for d in people.search_dirs(env))
     env[SPEC_ENV], env[WORK_ENV] = str(spec_path), str(work)
     return env
 
@@ -89,7 +88,9 @@ class GazeboRunner:
         """What a round needs before anything starts."""
         if not paths.arducopter_bin().is_file():
             raise RoundError("ArduPilot SITL saknas. Kör: just sim-setup")
-        missing = people.missing(self.repo)
+        # The models count where the flight's Gazebo finds them: a round runs in the farm's
+        # own checkout, with the owner's assets on GZ_SIM_RESOURCE_PATH (loop.round_env).
+        missing = people.missing(self.repo, os.environ)
         if missing:
             raise RoundError(
                 f"personmodellerna saknas ({', '.join(missing)}). Kör: just sim-farm-setup"

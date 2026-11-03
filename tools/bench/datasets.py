@@ -9,6 +9,7 @@ boxes. The training and the measurement both read only the index, never the arch
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +27,20 @@ USES: tuple[Use, ...] = ("train", "measure", "pretrain")
 OPEN_LICENCES = frozenset({"CC0-1.0", "CC-BY-3.0", "CC-BY-4.0", "MIT", "Apache-2.0"})
 # Non-commercial licences: only for measuring on the owner's computer, never trained on.
 NC_PREFIXES = ("CC-BY-NC",)
+# No grant to build on (GPL, or no data licence at all: "NONE"): only measured on, on the
+# owner's computer, never trained on, and no weights or results published (the owner's
+# decision of 2026-11-01).
+NO_GRANT_PREFIXES = ("GPL-",)
+NO_GRANT_LICENCES = frozenset({"NONE"})
+
+
+@dataclass(frozen=True)
+class Archive:
+    """One more picture archive of a set published as several (``more_archives``)."""
+
+    url: str
+    size_bytes: int
+    sha256: str
 
 
 @dataclass(frozen=True)
@@ -38,6 +53,8 @@ class Dataset:
     use: tuple[Use, ...]
     publish_weights: bool
     local_only: bool
+    # whether numbers measured on it may leave this computer (a profile, a README figure)
+    publish_results: bool = True
     url: str | None = None
     size_bytes: int | None = None
     sha256: str | None = None
@@ -53,6 +70,27 @@ class Dataset:
     labels_url: str | None = None
     labels_size_bytes: int | None = None
     labels_sha256: str | None = None
+    # more picture archives, for a set published as several (fetched and unpacked with
+    # the first, each checked against its own size and SHA-256)
+    more_archives: tuple[Archive, ...] = ()
+    # a set published as loose files on a WebDAV share, not as an archive: ``url`` is the
+    # share's folder, ``share_folders`` the folders under it that are fetched,
+    # ``share_files`` how many files they hold, ``size_bytes`` their total size and
+    # ``sha256`` the SHA-256 of their ``sha256sum`` lines sorted by path (fetch.py)
+    share_folders: tuple[str, ...] = ()
+    share_files: int | None = None
+    # the ground scale of every picture, pixels per metre, when the source states one for
+    # the whole set (``tools/train/tiles.py`` otherwise reads it off the person boxes)
+    px_per_m: float | None = None
+
+    @property
+    def is_share(self) -> bool:
+        return bool(self.share_folders)
+
+    @property
+    def no_grant(self) -> bool:
+        """GPL or no data licence: measured on locally, never trained on or published."""
+        return self.licence.startswith(NO_GRANT_PREFIXES) or self.licence in NO_GRANT_LICENCES
 
     @property
     def archive_name(self) -> str:
@@ -68,10 +106,17 @@ def licence_problems(ds: Dataset) -> list[str]:
     problems: list[str] = []
     is_open = ds.licence in OPEN_LICENCES
     is_nc = ds.licence.startswith(NC_PREFIXES)
-    if not (is_open or is_nc):
+    if not (is_open or is_nc or ds.no_grant):
         problems.append(f"{ds.name}: licence {ds.licence!r} is not allowed")
     if is_nc and (set(ds.use) != {"measure"} or not ds.local_only or ds.publish_weights):
         problems.append(f"{ds.name}: a non-commercial set may only be measured on, locally")
+    if ds.no_grant and (
+        set(ds.use) != {"measure"} or not ds.local_only or ds.publish_weights or ds.publish_results
+    ):
+        problems.append(
+            f"{ds.name}: a GPL or unlicensed set may only be measured on, locally, "
+            "with publish_weights and publish_results false"
+        )
     if "train" in ds.use and not ds.licence_confirmed:
         problems.append(f"{ds.name}: never trained on until the data licence is confirmed")
     if "pretrain" in ds.use and len(ds.use) > 1:
@@ -86,7 +131,38 @@ def licence_problems(ds: Dataset) -> list[str]:
         ds.url is None or not ds.labels_url.startswith("https://") or not ds.labels_size_bytes
     ):
         problems.append(f"{ds.name}: labels_url must be https, with url and labels_size_bytes")
+    for extra in ds.more_archives:
+        if ds.url is None or not extra.url.startswith("https://") or extra.size_bytes <= 0:
+            problems.append(f"{ds.name}: more_archives must be https, with url and a size")
+    if ds.is_share and (
+        ds.url is None
+        or not ds.url.endswith("/")
+        or ds.labels_url is not None
+        or ds.more_archives
+        or not ds.share_files
+        or not ds.size_bytes
+    ):
+        problems.append(
+            f"{ds.name}: a share needs url (a folder, ending in /), share_files and "
+            "size_bytes, and no labels_url or more_archives"
+        )
+    for folder in ds.share_folders:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*", folder):
+            problems.append(f"{ds.name}: share folder {folder!r} is not a plain relative path")
+    if ds.px_per_m is not None and not 1.0 <= ds.px_per_m <= 5000.0:
+        problems.append(f"{ds.name}: px_per_m must be between 1 and 5000")
     return problems
+
+
+def _flag(row: dict[str, Any], key: str, default: bool | None = None) -> bool:
+    """A yes/no field: only TOML's true or false (``bool("false")`` would be True)."""
+    value = row[key] if default is None else row.get(key, default)
+    if not isinstance(value, bool):
+        raise BenchError(
+            f"datasets.toml: {key} i {row.get('name')} ska vara true eller false, inte {value!r}",
+            2,
+        )
+    return value
 
 
 def _dataset(row: dict[str, Any]) -> Dataset:
@@ -99,22 +175,30 @@ def _dataset(row: dict[str, Any]) -> Dataset:
             attribution=row["attribution"],
             layout=row["layout"],
             use=use,  # type: ignore[arg-type]
-            publish_weights=bool(row["publish_weights"]),
-            local_only=bool(row["local_only"]),
+            publish_weights=_flag(row, "publish_weights"),
+            local_only=_flag(row, "local_only"),
+            publish_results=_flag(row, "publish_results", True),
             url=row.get("url"),
             size_bytes=row.get("size_bytes"),
             sha256=row.get("sha256"),
-            ranges=bool(row.get("ranges", False)),
+            ranges=_flag(row, "ranges", False),
             local_path=row.get("local_path"),
             licence_note=row.get("licence_note"),
             source_page=row.get("source_page"),
             checked=row.get("checked"),
-            licence_confirmed=bool(row.get("licence_confirmed", False)),
+            licence_confirmed=_flag(row, "licence_confirmed", False),
             labels_url=row.get("labels_url"),
             labels_size_bytes=row.get("labels_size_bytes"),
             labels_sha256=row.get("labels_sha256"),
+            more_archives=tuple(
+                Archive(url=str(a["url"]), size_bytes=int(a["size_bytes"]), sha256=str(a["sha256"]))
+                for a in row.get("more_archives", [])
+            ),
+            share_folders=tuple(str(f) for f in row.get("share_folders", [])),
+            share_files=row.get("share_files"),
+            px_per_m=float(row["px_per_m"]) if "px_per_m" in row else None,
         )
-    except (KeyError, TypeError) as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         raise BenchError(f"datasets.toml: felaktig rad ({exc})", 2) from exc
     if ds.layout not in LAYOUTS or any(u not in USES for u in use):
         raise BenchError(f"datasets.toml: okänd layout eller användning i {ds.name}", 2)
@@ -147,6 +231,9 @@ class Image:
     width: int
     height: int
     boxes: tuple[Box, ...]
+    # regions that hold people who are not boxed (a set's motorcycles with their riders):
+    # never trained on, never measured on
+    ignore: tuple[Box, ...] = ()
 
     @property
     def local_id(self) -> str:
@@ -181,6 +268,7 @@ def write_index(
                 "height": im.height,
                 "boxes": [[round(v, 2) for v in b] for b in im.boxes],
             }
+            | ({"ignore": [[round(v, 2) for v in b] for b in im.ignore]} if im.ignore else {})
             for im in images
         ],
     }
@@ -207,6 +295,9 @@ def read_index(data: Path, name: str, mini: bool = False) -> list[Image]:
             width=int(row["width"]),
             height=int(row["height"]),
             boxes=tuple((float(b[0]), float(b[1]), float(b[2]), float(b[3])) for b in row["boxes"]),
+            ignore=tuple(
+                (float(b[0]), float(b[1]), float(b[2]), float(b[3])) for b in row.get("ignore", [])
+            ),
         )
         for row in body["images"]
     ]

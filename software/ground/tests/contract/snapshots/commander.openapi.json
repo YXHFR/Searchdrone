@@ -1764,6 +1764,7 @@
           "TAKEOFF",
           "TRANSIT",
           "SURVEY",
+          "INSPECT",
           "HOLD",
           "RTL",
           "LAND",
@@ -2301,6 +2302,30 @@
             ],
             "title": "Fence Hash"
           },
+          "floor_pack_id": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Pack Id"
+          },
+          "floor_pack_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Pack Sha256"
+          },
           "geofence_buffer_m": {
             "default": 20,
             "maximum": 50.0,
@@ -2350,6 +2375,27 @@
             ],
             "title": "On Ai Silent",
             "type": "string"
+          },
+          "operation_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "sim",
+                  "exercise",
+                  "live"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Mode"
+          },
+          "overflight_allowed": {
+            "default": false,
+            "title": "Overflight Allowed",
+            "type": "boolean"
           },
           "pilot_position": {
             "$ref": "#/components/schemas/LatLon"

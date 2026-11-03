@@ -1,4 +1,4 @@
-"""The locked splits (tools/bench/splits/v1.json, v2.json) and the mini bank."""
+"""The locked splits (tools/bench/splits/v1.json, v2.json, v3.json, v4.json) and the mini bank."""
 
 from __future__ import annotations
 
@@ -8,21 +8,32 @@ from typing import Any
 
 import pytest
 from bench.common import BenchError
+from bench.datasets import load_register
 from bench.layouts import LAYOUTS, sequence_of
 from bench.splits import (
     CURRENT,
+    GROWING,
+    MEASURED,
     PARTS,
     RATIOS,
+    RATIOS_TRAIN_ONLY,
     SPLITS,
     Split,
     extend_split_file,
+    hashed_part,
     ids_digest,
     load_mini,
     load_split,
     make_split,
 )
 
-VERSIONS = ("v1", "v2")
+VERSIONS = ("v1", "v2", "v3", "v4")
+
+
+def _ratios(version: str, ds: str) -> dict[str, float]:
+    """A dataset's target shares: its own (a training-only set) or the split's."""
+    body = json.loads((SPLITS / f"{version}.json").read_text(encoding="utf-8"))
+    return body["datasets"][ds].get("ratios", RATIOS)
 
 
 def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -44,7 +55,8 @@ def test_split_no_leakage(version: str) -> None:
         train = {s for s, r in entry["sequences"].items() if r["part"] == "train"}
         test = {s for s, r in entry["sequences"].items() if r["part"] == "test"}
         val = {s for s, r in entry["sequences"].items() if r["part"] == "val"}
-        assert train and test and val, ds
+        assert train and val, ds
+        assert bool(test) == (_ratios(version, ds)["test"] > 0), ds
         assert not train & test and not train & val and not val & test
         for seq in entry["sequences"]:
             assert split.part_of(ds, seq) in PARTS
@@ -82,6 +94,25 @@ def test_split_check_refuses_other_pictures() -> None:
         split.check("d", [("a", "s"), ("c", "s")])
 
 
+def test_a_growing_set_is_drawn_by_hash_not_listed() -> None:
+    split = load_split()
+    names = [f"20261102T{i:06d}Z-hellasgarden-s{i}" for i in range(2000)]
+    parts = [split.part_of("simstills", n) for n in names]
+    # the same scene always lands in the same part, however many come after it
+    assert parts == [split.part_of("simstills", n) for n in names]
+    assert set(parts) == {"train", "val"}  # trained on only: never a test part
+    assert 0.07 < parts.count("val") / len(parts) < 0.13
+    assert hashed_part("simstills", names[0], GROWING["simstills"]) == parts[0]
+    split.check("simstills", [("a", "new-scene")])  # not listed, not refused
+
+
+def test_only_training_sets_grow() -> None:
+    register = load_register()
+    for name, ratios in GROWING.items():
+        assert register[name].use == ("train",)
+        assert ratios["test"] == 0.0
+
+
 @pytest.mark.parametrize("version", VERSIONS)
 def test_split_covers_every_part_near_its_share(version: str) -> None:
     split = load_split(version)
@@ -91,9 +122,10 @@ def test_split_covers_every_part_near_its_share(version: str) -> None:
             if d == ds:
                 n[part] += split.counts[(d, _)]
         total = sum(n.values())
+        ratios = _ratios(version, ds)
         for part in PARTS:
             # whole sequences: the share is only near the target
-            assert abs(n[part] / total - RATIOS[part]) < 0.15, (ds, part, n)
+            assert abs(n[part] / total - ratios[part]) < 0.15, (ds, part, n)
 
 
 @pytest.mark.parametrize("version", VERSIONS)
@@ -101,7 +133,8 @@ def test_split_is_reproducible_from_its_sizes(version: str) -> None:
     body = json.loads((SPLITS / f"{version}.json").read_text(encoding="utf-8"))
     for ds, entry in body["datasets"].items():
         sizes = {s: [f"{s}/{i}" for i in range(r["images"])] for s, r in entry["sequences"].items()}
-        again = make_split(sizes, entry.get("seed", f"{body['seed']}/{ds}"))
+        seed = entry.get("seed", f"{body['seed']}/{ds}")
+        again = make_split(sizes, seed, entry.get("ratios", RATIOS))
         assert again == {s: r["part"] for s, r in entry["sequences"].items()}
 
 
@@ -157,15 +190,99 @@ def test_v2_keeps_every_v1_dataset_as_it_was() -> None:
         assert new.sequences[key] == part
 
 
-def test_the_current_split_is_v2_with_kios_by_site() -> None:
+def test_the_current_split_has_kios_by_site() -> None:
     from bench.layouts import KIOS_SITES
 
-    assert CURRENT == "v2"
     split = load_split()
     sites = {seq: part for (ds, seq), part in split.sequences.items() if ds == "kios"}
     assert set(sites) == set(KIOS_SITES.values())  # a site is a sequence: never cut
     assert set(sites.values()) == set(PARTS)
     assert sum(split.counts[("kios", s)] for s in sites) == 3136  # the record's 3,136 pictures
+
+
+# --- v3: v2 as it was, plus the training-only sets by video ---------------------------
+
+
+def test_v3_keeps_every_v2_dataset_as_it_was() -> None:
+    """The locked land test part (HERIDAL, KIOS) and every val part stay exactly as in
+    v2: the owner keeps a model trained on the new sets only if it beats the current one
+    there."""
+    v2 = json.loads((SPLITS / "v2.json").read_text(encoding="utf-8"))
+    v3 = json.loads((SPLITS / "v3.json").read_text(encoding="utf-8"))
+    assert v3["base"] == "v2"
+    assert set(v3["datasets"]) == {*v2["datasets"], "kios_carperson", "seadronessee"}
+    for ds, entry in v2["datasets"].items():
+        assert v3["datasets"][ds] == entry, ds
+    old, new = load_split("v2"), load_split("v3")
+    for key, part in old.sequences.items():
+        assert new.sequences[key] == part
+        assert new.counts[key] == old.counts[key] and new.digests[key] == old.digests[key]
+
+
+def test_v3_adds_training_sets_that_are_never_measured() -> None:
+    from bench.datasets import load_register
+
+    split = load_split("v3")
+    register = load_register()
+    for ds in ("kios_carperson", "seadronessee"):
+        assert "measure" not in register[ds].use
+        parts = {part for (d, _), part in split.sequences.items() if d == ds}
+        assert parts == {"train", "val"}, ds  # no test part: never measured on
+        assert _ratios("v3", ds) == RATIOS_TRAIN_ONLY
+
+
+# --- v4: v3 as it was, plus UIT-Drone4 by video -----------------------------------------
+
+
+def test_v4_keeps_every_v3_dataset_as_it_was() -> None:
+    v3 = json.loads((SPLITS / "v3.json").read_text(encoding="utf-8"))
+    v4 = json.loads((SPLITS / "v4.json").read_text(encoding="utf-8"))
+    assert v4["base"] == "v3"
+    assert set(v4["datasets"]) == {*v3["datasets"], "uit_drone4"}
+    for ds, entry in v3["datasets"].items():
+        assert v4["datasets"][ds] == entry, ds
+
+
+def test_the_current_split_is_v4_and_the_measure_reads_v3() -> None:
+    """v4 only adds a training set, so the measured parts (and every result's source,
+    ``splits/v3 test``) stay as they were."""
+    from bench.datasets import load_register
+
+    assert CURRENT == "v4"
+    assert MEASURED == "v3"
+    current, measured = load_split(CURRENT), load_split(MEASURED)
+    register = load_register()
+    for (ds, seq), part in current.sequences.items():
+        if "measure" in register[ds].use:
+            assert measured.sequences[(ds, seq)] == part
+            assert measured.digests[(ds, seq)] == current.digests[(ds, seq)]
+    parts = {part for (d, _), part in current.sequences.items() if d == "uit_drone4"}
+    assert parts == {"train", "val"}  # no test part: never measured on
+    assert "measure" not in register["uit_drone4"].use
+    assert _ratios("v4", "uit_drone4") == RATIOS_TRAIN_ONLY
+    seqs = {s for (d, s) in current.sequences if d == "uit_drone4"}
+    assert len(seqs) == 25 and {"DJI_0606", "363", "AIUit000061", "VIS06"} <= seqs
+    n = sum(c for (d, _), c in current.counts.items() if d == "uit_drone4")
+    assert n == 1523  # every tenth of the 15,370 frames
+
+
+def test_the_new_sets_are_split_by_video() -> None:
+    split = load_split("v3")
+    kcp = {s for (d, s) in split.sequences if d == "kios_carperson"}
+    assert len(kcp) == 11 and all(s.startswith("DJI_2025032611") for s in kcp)
+    sds = {s for (d, s) in split.sequences if d == "seadronessee"}
+    assert {"DJI_0032", "NorthSea_Fri_DJI_0110", "rgb", "multispectral"} <= sds
+
+
+def test_a_training_only_set_is_drawn_with_no_test_part() -> None:
+    seqs = {f"v{i}": [f"v{i}/{j}" for j in range(10 + i)] for i in range(12)}
+    parts = make_split(seqs, "t", RATIOS_TRAIN_ONLY)
+    assert set(parts.values()) == {"train", "val"}
+    val = sum(len(seqs[s]) for s, p in parts.items() if p == "val")
+    assert 0.05 < val / sum(len(v) for v in seqs.values()) < 0.2
+    base = {"schema": "bench.split/v1", "version": "v1", "seed": "v1", "datasets": {}}
+    body = extend_split_file("v2", "v2", base, {"b": seqs}, {"b": RATIOS_TRAIN_ONLY})
+    assert body["datasets"]["b"]["ratios"] == RATIOS_TRAIN_ONLY  # type: ignore[index]
 
 
 def test_extend_never_redraws_a_locked_dataset() -> None:

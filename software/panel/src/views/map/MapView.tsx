@@ -25,6 +25,7 @@ import { useIsPilot, useSessionStore } from "../../state/sessionStore";
 import { useShellStore } from "../../state/shellStore";
 import { useUiStore } from "../../state/uiStore";
 import { useTheme } from "../../theme/theme";
+import { Picker } from "../../ui/Picker";
 import { findNumbers } from "../candidates/queue";
 import type { ViewProps } from "../registry";
 import { FindCard } from "./FindCard";
@@ -50,7 +51,6 @@ import {
   targetData,
   trackData,
 } from "./mapData";
-import { Picker } from "./Picker";
 import { ProbabilityLegend } from "./ProbabilityLegend";
 import { ProfileCard } from "./ProfileCard";
 import { formatLength, lengthM, nextPathLabel, pathProblem } from "./pathData";

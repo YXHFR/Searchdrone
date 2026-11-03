@@ -80,6 +80,41 @@ just e2e-search detector=model    # the search demo with your model, report in r
 stops the start; it never falls back to the stand-in. Details in
 [`tools/train/README.md`](tools/train/README.md#try-your-trained-detector-in-the-simulator).
 
+### Height map for a closer look (floor pack)
+
+Before the drone goes down for a closer look at a possible person, it needs to know how
+high the ground, the trees and the known power lines are, without internet. `just
+floor-fetch` makes that map (a *floor pack*) for an area of at most 10 x 10 km from
+Lantmäteriet's forest laser scan and ground model, plus power lines from OpenStreetMap.
+Every user fetches their own data with their own login; no map data is ever in this
+repository.
+
+1. Create a free account at Lantmäteriet's [Geotorget](https://geotorget.lantmateriet.se)
+   and order (free of charge) **Laserdata Nedladdning, skog** and **Markhöjdmodell
+   Nedladdning, grid 1**.
+2. Put your login in `config/geotorget.local.toml` (copy `config/geotorget.example.toml`,
+   then `chmod 600`), or set `SD_LM_USER` and `SD_LM_PASSWORD`. Without either, the tool
+   asks.
+3. Draw your area as one polygon in a GeoJSON file outside the repository
+   (`config/floor_area.example.geojson` shows the format), then:
+
+```bash
+just floor-fetch area=~/areas/lake.geojson name=lake       # to ${SD_DATA_DIR}/floor/lake/
+just floor-push name=lake host=pi@drone.local dir=/srv/sd/onboard/sd1  # its state_dir
+```
+
+The tool downloads only the tiles that cover the area (about 70-130 MB of point cloud
+per 2.5 km square and 250-300 MB of ground model per 10 km square, cached in
+`${SD_DATA_DIR}/floor/.cache/`), deletes the point clouds when it has read them (they
+may hold personal data under Lantmäteriet's terms) and prints the pack's
+`floor_pack_sha256` for the mission. `lines=0` skips OpenStreetMap and says so.
+
+The data is CC BY 4.0. A pack carries its attribution, and the panel shows it: "©
+Lantmäteriet, Laserdata Nedladdning, skog och Markhöjdmodell (grid 1), CC BY 4.0.
+Bearbetad (trädhöjd) av Searchdrone." Power lines are © OpenStreetMap contributors,
+ODbL 1.0. The map only plans how low the drone may go; it does not show every wire,
+mast or tree that grew since the scan.
+
 ## Repository layout
 
 ```

@@ -1,27 +1,45 @@
 """Fine-tune a person detector on the image bank: ``just train-detector model=yolox_s``.
 
-    just train-detector model=yolox_s          # or model=damoyolo_s
+    just train-detector model=yolox_s          # or model=yolox_m, model=damoyolo_s
     just train-detector model=yolox_s simfarm=1   # first a few epochs on the sim farm
     just train-detector model=yolox_s init=<old>/best.pt out=<new folder>   # go on from
                                                   # earlier weights, in a new folder
 
-Keys: ``model`` (yolox_s, damoyolo_s), ``epochs`` (default 20), ``batch`` (default 8,
-fits an 8 GB graphics card), ``sets`` (default heridal,kios,wisard: the fetched ones
-that may be trained on, mixed), ``init`` (a ``best.pt`` of the same model to start from
-instead of the COCO weights; it must lie outside ``out``), ``simfarm`` (1: pre-train on
-the synthetic pictures first, ``simfarm_epochs`` of them, default 3), ``device`` (auto,
-cuda, cpu), ``data``, ``out`` (default ``<data>/train/<model>``), ``limit`` (only the
-first pictures: for trying it out), ``workers`` (picture loaders, default 4), ``seed``.
+Keys: ``model`` (yolox_s, yolox_m, damoyolo_s), ``epochs`` (default 20), ``batch``
+(default 8, 4 for yolox_m: what fits an 8 GB graphics card with room to spare), ``sets`` (default
+heridal,kios,wisard: the fetched ones that may be trained on, mixed), ``init`` (a
+``best.pt`` of the same model to start from instead of the COCO weights; it must lie
+outside ``out``; one of another size, say a yolox_s run for yolox_m, is refused: the
+layers differ in width), ``simfarm`` (1: pre-train on the synthetic pictures first,
+``simfarm_epochs`` of them, default 3), ``device`` (auto, cuda, cpu), ``data``, ``out``
+(default ``<data>/train/<model>``), ``limit`` (only the first pictures: for trying it
+out), ``workers`` (picture loaders, default 4), ``seed``,
+``balance`` (``sets``, the default: each epoch draws as many tiles from every set, so a
+big set does not drown the others; ``tiles``: every tile once, so a set counts by its
+size; or weights, ``balance=heridal:2,kios:2,kios_carperson:1,seadronessee:1``, naming
+every set), ``pick`` (the sets whose val AP50 picks the best epoch; default the sets in
+``sets`` that are measured on, HERIDAL and KIOS, or all of them if none is),
+``upscale`` (1, the default, or 2-4: each tile covers ``tile / upscale`` picture pixels
+and is enlarged to ``tile``, so a small person is seen larger; the exported manifest
+carries it, so the drone enlarges its tiles the same way, and a 12 MP still takes about
+``upscale``² times as many tiles), ``scales`` (``native``, the default, or a list such as
+``native,wide,tele``: each training picture is also resampled so its people are as many
+pixels as our wide camera, about 30-35 px, or tele camera, about 100 px, sees them at
+the search heights; a number is pixels per metre; the val and test parts are never
+resampled; see ``tiles.py``), ``max_up`` (default 2: the most a picture is enlarged to
+reach a scale, since an enlarged person is blurred, not sharper).
 
 Stops and goes on: the state is saved to ``last.pt`` every few minutes and after every
 epoch. Run the same command again and it carries on from there (a different command,
 say another ``batch``, starts afresh in a new folder with ``fresh=1``). The best epoch
 on the val part goes to ``best.pt``; ``just export-detector`` makes the ONNX file from it.
-The val AP50 is printed per dataset; the best epoch is the one whose lowest dataset AP50
-is highest, so a gain on the set with the most people never hides a loss on another.
+The val AP50 is printed per dataset; the best epoch is the one whose lowest AP50 over the
+``pick`` sets is highest, so a gain on the set with the most people never hides a loss on
+another.
 
 Never trained on: the test part (locked in ``tools/bench/splits/``) and every set whose
-licence allows measuring only. The weights stay on this computer.
+licence allows measuring only (a GPL or unlicensed one in ``sets`` is refused). The
+weights stay on this computer.
 """
 
 from __future__ import annotations
@@ -42,14 +60,27 @@ import numpy as np
 import torch
 from bench.common import BenchError, parse_args, say, warn
 from evaluate import ap50
-from tiles import TILE_PX, Tile, build_cache, load_tile, pictures
+from tiles import (
+    MAX_UP,
+    MAX_UPSCALE,
+    NATIVE,
+    TILE_PX,
+    Tile,
+    build_cache,
+    check_upscale,
+    load_tile,
+    parse_scales,
+    pictures,
+)
 from torch.utils.data import DataLoader, Dataset
 
 KEYS = (
     "model", "epochs", "batch", "sets", "simfarm", "simfarm_epochs", "device", "data",
     "out", "limit", "workers", "seed", "fresh", "lr", "save_minutes", "tile", "init",
+    "balance", "pick", "upscale", "scales", "max_up",
 )  # fmt: skip
 SAVE_MINUTES = 10.0
+BALANCE_MODES = ("sets", "tiles")
 
 
 @dataclass(frozen=True)
@@ -64,12 +95,101 @@ class Settings:
     limit: int = 0
     tile: int = TILE_PX
     init: str = ""  # a best.pt to start from instead of COCO ("": COCO)
+    balance: str = "sets"  # sets, tiles, or weights "heridal:2,kios:1"
+    pick: tuple[str, ...] = ()  # the sets that pick the best epoch (): all
+    upscale: int = 1  # each tile covers tile / upscale picture pixels, enlarged to tile
+    # the scales the training pictures are resampled to (tiles.parse_scales): native, our
+    # cameras (wide, tele) or pixels per metre; and the most a picture is enlarged
+    scales: tuple[str, ...] = (NATIVE,)
+    max_up: float = MAX_UP
 
     def key(self) -> dict[str, Any]:
         body = json.loads(json.dumps(asdict(self)))  # as saved: lists, not tuples
         if not self.init:
             del body["init"]  # a run started before init= existed carries on
+        # a run started before balance= and pick= existed did what these say: it carries on
+        if self.balance == "tiles":
+            del body["balance"]
+        if not self.pick or set(self.pick) == set(self.sets):
+            del body["pick"]
+        if self.upscale == 1:
+            del body["upscale"]  # a run started before upscale= carries on
+        if self.scales == (NATIVE,):
+            del body["scales"], body["max_up"]  # a run started before scales= carries on
         return body
+
+
+def parse_balance(text: str, sets: Sequence[str]) -> dict[str, float] | None:
+    """Each set's share of an epoch's tiles (``None``: ``tiles``, every tile once)."""
+    if text == "tiles":
+        return None
+    if text == "sets":
+        return dict.fromkeys(sets, 1.0)
+    weights: dict[str, float] = {}
+    for part in text.split(","):
+        name, _, value = part.partition(":")
+        try:
+            weight = float(value)
+        except ValueError:
+            weight = -1.0
+        if not (weight > 0 and math.isfinite(weight)):
+            raise BenchError(
+                f"balance= ska vara sets, tiles eller vikter som heridal:2,kios:1 (fick {part})",
+                2,
+            )
+        weights[name] = weight
+    if set(weights) != set(sets):
+        raise BenchError(
+            f"balance= ska ge en vikt till varje set i sets= ({', '.join(sets)}), inga andra.", 2
+        )
+    return weights
+
+
+def epoch_order(sources: Sequence[str], balance: str, seed: int, epoch: int) -> list[int]:
+    """The tiles of one epoch, in order (``sources``: each tile's set). As many as there
+    are tiles, so an epoch has as many steps whatever the balance. ``tiles``: each once.
+    Otherwise each set gets its share of them: a smaller set is gone through whole, as
+    often as it fits, and the rest drawn at random; a bigger one is drawn from. The same
+    seed and epoch give the same order, so a stopped run carries on where it was."""
+    rng = random.Random(seed * 1000 + epoch)  # noqa: S311 - repeatable order
+    if balance == "tiles":
+        order = list(range(len(sources)))
+        rng.shuffle(order)
+        return order
+    by_set: dict[str, list[int]] = {}
+    for i, name in enumerate(sources):
+        by_set.setdefault(name, []).append(i)
+    names = sorted(by_set)
+    if balance == "sets":
+        weights = dict.fromkeys(names, 1.0)
+    else:  # weights for sets with no tiles here (limit=) are left out
+        given = parse_balance(balance, balance_sets(balance))
+        assert given is not None  # noqa: S101 - not tiles
+        weights = {n: given.get(n, 0.0) for n in names}
+        if not any(weights.values()):
+            raise BenchError("balance= ger ingen vikt till något set som har rutor.", 2)
+    total, share = len(sources), sum(weights.values())
+    exact = {n: total * weights[n] / share for n in names}
+    quota = {n: math.floor(exact[n]) for n in names}
+    # the tiles rounding left over go to the sets that lost the most to it
+    for n in sorted(names, key=lambda n: (quota[n] - exact[n], n))[: total - sum(quota.values())]:
+        quota[n] += 1
+    order: list[int] = []
+    for n in names:
+        whole, rest = divmod(quota[n], len(by_set[n]))
+        order.extend(by_set[n] * whole)
+        order.extend(rng.sample(by_set[n], rest))
+    rng.shuffle(order)
+    return order
+
+
+def balance_sets(balance: str) -> list[str]:
+    """The sets weights ``heridal:2,kios:1`` name."""
+    return [part.partition(":")[0] for part in balance.split(",")]
+
+
+def set_of(tile: Tile) -> str:
+    return tile.source.split(":", 1)[0]
 
 
 class TileSet(Dataset[tuple[np.ndarray, np.ndarray]]):
@@ -161,10 +281,26 @@ def evaluate_val(
     }
 
 
-def val_score(per_set: dict[str, float]) -> float:
-    """The best epoch's measure: the lowest per-dataset AP50, so a gain on one set never
-    makes up for a loss on another (``pick-detector`` ranks models the same way)."""
-    return min(per_set.values()) if per_set else 0.0
+def picked(per_set: dict[str, float], pick: Sequence[str] = ()) -> list[str]:
+    """The sets of ``per_set`` that pick the best epoch: those in ``pick``, or all of
+    them if none of those has val tiles (or ``pick`` is empty)."""
+    return [s for s in per_set if s in pick] or list(per_set)
+
+
+def val_score(per_set: dict[str, float], pick: Sequence[str] = ()) -> float:
+    """The best epoch's measure: the lowest per-dataset AP50 of the ``pick`` sets, so a
+    gain on one set never makes up for a loss on another (``pick-detector`` ranks models
+    the same way)."""
+    return min(per_set[s] for s in picked(per_set, pick)) if per_set else 0.0
+
+
+def default_pick(sets: Sequence[str]) -> tuple[str, ...]:
+    """The sets of ``sets`` that are measured on (the land sets), or all if none is."""
+    from bench.datasets import load_register
+
+    register = load_register()
+    measured = tuple(s for s in sets if s in register and "measure" in register[s].use)
+    return measured or tuple(sets)
 
 
 def save(path: Path, state: dict[str, Any]) -> None:
@@ -197,6 +333,9 @@ def run_stage(
     folder, tiles = train_tiles
     if not tiles:
         raise BenchError("Inga träningsrutor. Är bilderna hämtade? Kör: just bench-fetch yes=1", 2)
+    sources = [set_of(t) for t in tiles]
+    # the simulator's pictures are one set: nothing to balance, so its order stays as it was
+    balance = settings.balance if stage == "train" else "tiles"
     steps_per_epoch = max(1, len(tiles) // settings.batch)
     total = steps_per_epoch * epochs
     warmup = min(total // 10, 3 * steps_per_epoch) if stage == "train" else 0
@@ -231,6 +370,13 @@ def run_stage(
             batch_size=settings.batch,
             **loader_kw,
         )
+    if stage == "train":
+        drawn = [sources[i] for i in epoch_order(sources, balance, settings.seed, 0)]
+        say(
+            f"{stage}: rutor per epok (balance={balance}): "
+            + ", ".join(f"{n} {drawn.count(n)} av {sources.count(n)}" for n in sorted(set(sources)))
+            + f"; bästa epoken väljs på {', '.join(settings.pick) or 'alla'}"
+        )
     last_save = time.monotonic()
     dataset = TileSet(folder, tiles, settings.tile, fam.pad, augment=True)
 
@@ -249,8 +395,7 @@ def run_stage(
         }
 
     while epoch < epochs:
-        order = list(range(len(tiles)))
-        random.Random(settings.seed * 1000 + epoch).shuffle(order)  # noqa: S311 - repeatable order
+        order = epoch_order(sources, balance, settings.seed, epoch)
         order = order[step_in_epoch * settings.batch : steps_per_epoch * settings.batch]
         loader = DataLoader(
             torch.utils.data.Subset(dataset, order),
@@ -295,7 +440,7 @@ def run_stage(
             assert val_tiles is not None  # noqa: S101 - val_loader is made from it
             sets = [t.source.split(":", 1)[0] for t in val_tiles[1]]
             per_set = evaluate_val(ema.net, settings.model, val_loader, device, sets)
-            score = val_score(per_set)
+            score = val_score(per_set, settings.pick)
             if score > best:
                 best = score
                 save(
@@ -306,6 +451,8 @@ def run_stage(
                         "ema": ema.net.state_dict(),
                         "val_ap50": score,
                         "val_ap50_by_dataset": per_set,
+                        "val_ap50_pick": picked(per_set, settings.pick),
+                        "balance": settings.balance,
                         "epoch": epoch,
                         "stage": stage,
                         **lineage,
@@ -334,6 +481,36 @@ def run_stage(
         )
 
 
+def _int_key(args: dict[str, str], key: str, default: int) -> int:
+    raw = args.get(key, str(default))
+    try:
+        return int(raw)
+    except ValueError:
+        raise BenchError(f"{key}= ska vara ett heltal, inte {raw!r}", 2) from None
+
+
+def _scales_key(args: dict[str, str]) -> tuple[str, ...]:
+    try:
+        return parse_scales(args.get("scales", NATIVE))
+    except ValueError as exc:
+        raise BenchError(
+            f"scales= ska vara native, wide, tele eller bildpunkter per meter, "
+            f"kommaseparerade ({exc})",
+            2,
+        ) from None
+
+
+def _max_up_key(args: dict[str, str]) -> float:
+    raw = args.get("max_up", f"{MAX_UP:g}")
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    if not 1.0 <= value <= 8.0:
+        raise BenchError(f"max_up= ska vara ett tal från 1 till 8, inte {raw!r}", 2)
+    return value
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = parse_args(sys.argv[1:] if argv is None else argv, KEYS, "train-detector")
@@ -347,7 +524,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         settings = Settings(
             model=model,
             epochs=int(args.get("epochs", "20")),
-            batch=int(args.get("batch", "8")),
+            batch=_int_key(args, "batch", families.FAMILIES[model].batch),
             sets=tuple(s for s in args.get("sets", "heridal,kios,wisard").split(",") if s),
             simfarm_epochs=int(args.get("simfarm_epochs", "3")) if simfarm else 0,
             lr=float(args.get("lr", "0.01")),
@@ -355,9 +532,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             limit=int(args.get("limit", "0")),
             tile=int(args.get("tile", str(TILE_PX))),
             init=str(Path(args["init"]).expanduser().resolve()) if args.get("init") else "",
+            balance=args.get("balance", "sets"),
+            pick=tuple(s for s in args.get("pick", "").split(",") if s),
+            upscale=_int_key(args, "upscale", 1),
+            scales=_scales_key(args),
+            max_up=_max_up_key(args),
         )
+        parse_balance(settings.balance, settings.sets)  # a typo stops here, not hours later
+        stray = [s for s in settings.pick if s not in settings.sets]
+        if stray:
+            raise BenchError(f"pick= får bara nämna set i sets= (inte {', '.join(stray)}).", 2)
         if settings.tile % 32 or not 64 <= settings.tile <= 1280:
             raise BenchError("tile= ska vara delbart med 32 och mellan 64 och 1280", 2)
+        try:
+            span = check_upscale(settings.tile, settings.upscale)
+        except ValueError:
+            raise BenchError(
+                f"upscale= ska vara 1-{MAX_UPSCALE} och dela tile= ({settings.tile})", 2
+            ) from None
+        if span < 32:
+            raise BenchError(f"tile= / upscale= ska vara minst 32 bildpunkter, inte {span}", 2)
         out = Path(args.get("out") or data / "train" / model).expanduser().resolve()
         if settings.init and Path(settings.init).is_relative_to(out):
             raise BenchError(
@@ -406,6 +600,21 @@ def trained_sets(sets: Sequence[str]) -> list[str]:
     return [s for s in sets if s not in register or "train" in register[s].use]
 
 
+def refuse_no_grant(sets: Sequence[str]) -> None:
+    """A GPL or unlicensed set is refused outright, not left out quietly: asking to train
+    on one is a mistake to see, and not even its val part may pick the best epoch."""
+    from bench.datasets import load_register
+
+    register = load_register()
+    refused = [s for s in sets if s in register and register[s].no_grant]
+    if refused:
+        raise BenchError(
+            f"{', '.join(refused)} får bara mätas på, aldrig tränas på (licensen ger ingen "
+            "rätt att bygga vidare). Ta bort dem ur sets=.",
+            2,
+        )
+
+
 def seen_by(ck: dict[str, Any]) -> tuple[list[str], list[str]]:
     """What a ``best.pt``'s weights have seen: (``trained_on``, ``pretrained_on``). A
     checkpoint from before those fields gets them from its settings: the sets that may be
@@ -423,9 +632,19 @@ def load_init(net: torch.nn.Module, model: str, path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise BenchError(f"init={path} finns inte.", 2)
     ck: dict[str, Any] = torch.load(path, map_location="cpu", weights_only=True)
-    if ck.get("model") != model or "ema" not in ck:
+    if "ema" not in ck:
         raise BenchError(f"init={path} är inte en best.pt för {model}.", 2)
-    net.load_state_dict(ck["ema"])
+    if ck.get("model") != model:
+        raise BenchError(
+            f"init={path} är tränad som {ck.get('model')}, inte {model}. De är olika "
+            "nätverk (yolox_s och yolox_m har olika bredd) och kan inte ta varandras vikter. "
+            f"Ta bort init= så startar {model} från COCO-vikterna.",
+            2,
+        )
+    try:
+        net.load_state_dict(ck["ema"])
+    except RuntimeError:  # same name, other shapes: never half-loaded
+        raise BenchError(f"init={path} passar inte nätverket {model}.", 2) from None
     trained_on, pretrained_on = seen_by(ck)
     seen: dict[str, Any] = {
         "trained_on": trained_on,
@@ -451,6 +670,7 @@ def train(
     save_minutes: float,
     fresh: bool,
 ) -> int:
+    refuse_no_grant(settings.sets)
     weights = data / "models" / "pretrained" / families.PRETRAINED[settings.model]
     if not weights.is_file():
         raise BenchError(
@@ -459,7 +679,13 @@ def train(
     sets = _available(data, settings.sets)
     if not sets:
         raise BenchError("Inga bilder att träna på. Kör: just bench-fetch yes=1", 2)
-    settings = replace(settings, sets=tuple(sets))  # what is really trained on
+    # what is really trained on, and the sets among them that pick the best epoch
+    pick = tuple(s for s in sets if s in settings.pick) or default_pick(sets)
+    balance = settings.balance
+    if balance not in BALANCE_MODES:  # weights: only for the sets really there
+        weights = dict(zip(balance_sets(balance), balance.split(","), strict=True))
+        balance = ",".join(weights[s] for s in sets)
+    settings = replace(settings, sets=tuple(sets), pick=pick, balance=balance)
     state_file = out / "settings.json"
     last = out / "last.pt"
     resume: dict[str, Any] | None = None
@@ -518,19 +744,39 @@ def train(
             items = pictures(data, "pretrain", ["simfarm"], settings.limit)
             train_tiles = (
                 out / "tiles" / "simfarm",
-                build_cache(items, out / "tiles" / "simfarm", settings.tile),
+                build_cache(
+                    items, out / "tiles" / "simfarm", settings.tile, upscale=settings.upscale
+                ),
             )
             val = None
         else:
             items = pictures(data, "train", sets, settings.limit)
+            if settings.scales != (NATIVE,):
+                say(
+                    f"train: bilderna skalas om till {', '.join(settings.scales)} "
+                    f"(högst {settings.max_up:g} gånger större)"
+                )
             train_tiles = (
                 out / "tiles" / "train",
-                build_cache(items, out / "tiles" / "train", settings.tile),
+                build_cache(
+                    items,
+                    out / "tiles" / "train",
+                    settings.tile,
+                    upscale=settings.upscale,
+                    scales=settings.scales,
+                    max_up=settings.max_up,
+                ),
             )
             val_items = pictures(data, "val", sets, settings.limit)
             val = (
                 out / "tiles" / "val",
-                build_cache(val_items, out / "tiles" / "val", settings.tile, empty_share=0.1),
+                build_cache(
+                    val_items,
+                    out / "tiles" / "val",
+                    settings.tile,
+                    empty_share=0.1,
+                    upscale=settings.upscale,
+                ),
             )
         say(f"{stage}: {len(train_tiles[1])} rutor från {len(items)} bilder")
         run_stage(

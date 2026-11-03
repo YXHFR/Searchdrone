@@ -61,6 +61,7 @@ if TYPE_CHECKING:
     from sd_ground.link import GroundLink
     from sd_ground.services.link_loss import LinkWatch
     from sd_ground.services.vehicle_actions import VehicleActions
+    from sd_ground.services.wind import BatteryDrain
     from sd_link.session import Expired, Inbound
 
 __all__ = [
@@ -153,6 +154,8 @@ class MavCaller(Protocol):
 
     def stop_tlog(self) -> None: ...
 
+    def battery_drain(self, vehicle_id: str) -> BatteryDrain | None: ...
+
     async def call[T](
         self, work: Callable[[Vehicle], Awaitable[T]], timeout_s: float = 30.0
     ) -> T: ...
@@ -189,6 +192,8 @@ class MissionFlow:
     finds: dict[str, Any] = field(default_factory=dict[str, Any])  # mission id -> Finds
     reports: dict[str, Any] = field(default_factory=dict[str, Any])  # vehicle id -> ReportQueue
     link_watch: dict[str, LinkWatch] = field(default_factory=dict[str, "LinkWatch"])
+    looks: dict[str, Any] = field(default_factory=dict[str, Any])  # command id -> Look
+    permit: Any = None  # the pilot's overflight permit; None: the config's
     _watch: dict[str, _VehicleWatch] = field(default_factory=dict[str, _VehicleWatch])
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _tasks: set[asyncio.Task[Any]] = field(default_factory=set[asyncio.Task[Any]])
@@ -229,11 +234,19 @@ class MissionFlow:
             topic, type_, data, ts=self.now(), vehicle_id=vehicle_id, mission_id=mission_id
         )
 
-    def _keepout_hold_alert(self, vehicle_id: str, mission: Any, data: dict[str, Any]) -> None:
+    def _keepout_hold_alert(
+        self,
+        vehicle_id: str,
+        mission: Any,
+        data: dict[str, Any],
+        sent_utc: dt.datetime | None = None,
+    ) -> None:
         """The drone hovers for a keep-out cylinder (``executor.keepout_hold``): short of
         one (orange), or inside one over a person with no safe way out (red), after
         climbing straight up when it could (``climb_to_m``). One held back by a lost link
-        that comes after its mission closed is only logged: that hover is over."""
+        that comes after its mission closed is only logged: that hover is over.
+        ``sent_utc`` (the onboard clock) goes into the details, so the alert's record shows
+        when a late one was sent. Nothing acts on it, and the panel does not show it yet."""
         if mission is not None and mission.status is MissionState.CLOSED:
             log.info(
                 "missions.keepout_hold_after_close",
@@ -246,6 +259,8 @@ class MissionFlow:
         climb = _climb_to_m(data)
         if climb is not None:
             details[str(KeepoutHoldField.CLIMB_TO_M)] = climb
+        if sent_utc is not None:
+            details[str(KeepoutHoldField.SENT_UTC)] = sent_utc.isoformat()
         self.alert(
             str(AlertCode.KEEPOUT_HOLD),
             "critical" if inside else "warning",
@@ -652,6 +667,7 @@ class MissionFlow:
     async def on_inbound(self, vehicle_id: str, inbound: Inbound) -> None:
         from sd_ground.services import approvals as approvals_service
         from sd_ground.services import commands as commands_service
+        from sd_ground.services import inspections as inspections_service
         from sd_ground.services import link_loss as link_loss_service
         from sd_ground.services import perception as perception_service
         from sd_schemas.link import Ack, CharterAck, CropData, OnboardEvent, PerceptionReport
@@ -673,8 +689,10 @@ class MissionFlow:
                 vehicle_id=vehicle_id,
                 payload={"source": "onboard", **body.data},
             )
+            if body.type.startswith("inspect."):
+                await inspections_service.on_event(self, body.type, dict(body.data))
             if body.type == "executor.keepout_hold":
-                self._keepout_hold_alert(vehicle_id, mission, body.data)
+                self._keepout_hold_alert(vehicle_id, mission, body.data, inbound.envelope.sent_utc)
             if body.type in _PANEL_EVENTS:  # the pilot's log line, after the link is back
                 self.publish(
                     "vehicle",
@@ -692,6 +710,7 @@ class MissionFlow:
 
     async def _on_snapshot(self, vehicle_id: str, snap: StateSnapshot) -> None:
         from sd_ground.services import commands as commands_service
+        from sd_ground.services import inspections as inspections_service
 
         watch = self._watch.setdefault(vehicle_id, _VehicleWatch())
         mission = await self.repo.open_mission(vehicle_id)
@@ -737,6 +756,8 @@ class MissionFlow:
                 await commands_service.cancel_open(self, vehicle_id, "BATTERY_RTL")
         watch.battery_rtl = snap.battery_rtl_active
         await commands_service.on_snapshot(self, mission, snap)
+        if snap.inspect is not None:
+            await inspections_service.on_progress(self, mission, snap.inspect)
 
     # --- the run task ------------------------------------------------------------------
 
@@ -779,6 +800,7 @@ class MissionFlow:
         if not self.g.db_ok:
             return  # the mission lives in the database; STOP / FLY HOME do not need it
         from sd_ground.services import coverage as coverage_service
+        from sd_ground.services import inspections as inspections_service
         from sd_ground.services import link_loss as link_loss_service
 
         await approvals_service.expire(self)
@@ -792,6 +814,7 @@ class MissionFlow:
             await self._follow_landing(vid, mission)
             await coverage_service.tick(self, mission)
             await link_loss_service.tick(self, mission)
+            await inspections_service.tick(self, mission)
             self._follow_tlog(mission)
 
     def _follow_tlog(self, mission: Mission) -> None:
@@ -990,6 +1013,7 @@ class MissionFlow:
             now_ms=self.now_ms(),
             latch=self.latch(mission.vehicle_id),
             mav=mav,
+            drain=None if self.mav is None else self.mav.battery_drain(mission.vehicle_id),
             snapshot=snapshot,
             sdlink_up=self.sdlink_up(mission.vehicle_id),
             active_command=await commands_service.active_command(self, mission),

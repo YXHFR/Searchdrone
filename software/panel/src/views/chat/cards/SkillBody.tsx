@@ -9,6 +9,14 @@ export function SkillBody({ approval }: { approval: PanelApproval }) {
   const { t } = useTranslation();
   const c = approval.command;
   if (!c) return <p className="muted">{t("common.loading")}</p>;
+  // The closer look: the card's text names the candidate; its ids and position are the
+  // ground's, not something the pilot reads.
+  if (c.skill === "inspect_detection")
+    return (
+      <p className="skill-body" data-testid="skill-inspect">
+        {t("inspect.ai.body")}
+      </p>
+    );
   const p = c.params as Record<string, unknown>;
   const lat = typeof p.lat === "number" ? p.lat : null;
   const lon = typeof p.lon === "number" ? p.lon : null;

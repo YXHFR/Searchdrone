@@ -72,7 +72,10 @@ def test_gazebo_finds_the_fetched_models_first(tmp_path: Path) -> None:
     assert resource_path({}, tmp_path) == str(people.assets_dir(tmp_path))
 
 
-def test_the_stack_asks_for_the_models_before_it_starts(tmp_path: Path) -> None:
+def test_the_stack_asks_for_the_models_before_it_starts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GZ_SIM_RESOURCE_PATH", raising=False)
     cfg = config.SimConfig(physics="gz", world=world.WORLD_NAME, vehicle=world.MODEL_NAME)
     scene = PeopleScene(search_world.load("SK01", 1))
     st = launch.Stack(cfg, tmp_path / "run", repo=tmp_path, scene=scene)

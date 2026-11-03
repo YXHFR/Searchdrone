@@ -1,4 +1,4 @@
-"""What the drone does when the SD-link goes quiet: the usual rule or the find hover.
+"""What the drone does when the SD-link goes quiet: the usual rule, the find hover, a climb.
 
 :func:`choose_mode` is pure and shared: the onboard executor (``sd_onboard.executor.
 link_loss``) acts on it, and the ground station runs the same function on the same inputs
@@ -10,6 +10,11 @@ to tell the panel what to expect (``VehicleLive.link_loss_plan``).
   ``FIND_ENGAGE_RADIUS_M``: fly to the edge of its cylinder + ``FIND_HOVER_EDGE_MARGIN_M``
   on the line from the find towards the drone, face the find, hover until
   ``LINK_LOSS_DETECT_S + FIND_HOVER_S`` (123 s), then home.
+* **Inspect climb**, before the other two: a closer look is under way (flying, or hovering
+  for the pilot's decision, ``sd_schemas.inspect``). The look ends and the drone climbs
+  straight up to the height the look started at; then the usual rule's times apply from
+  the same clock: hover at 23 s (a climb still under way goes on first), home at 53 s, or
+  at the latest ``KEEPOUT_CLIMB_LINK_ALLOWANCE_S`` later while it still climbs.
 
 Every time counts from the last inbound SD-link message.
 """
@@ -26,6 +31,7 @@ from sd_safety.constants import (
     FIND_HOVER_EDGE_MARGIN_M,
     FIND_HOVER_S,
     FIND_MOVE_DEADLINE_S,
+    KEEPOUT_CLIMB_LINK_ALLOWANCE_S,
     LINK_LOSS_DETECT_S,
     SDLINK_GRACE_S,
     SDLINK_HOLD_S,
@@ -50,6 +56,8 @@ HOLD_MS = round((LINK_LOSS_DETECT_S + SDLINK_GRACE_S) * 1000)
 HOME_MS = round((LINK_LOSS_DETECT_S + SDLINK_GRACE_S + SDLINK_HOLD_S) * 1000)
 FIND_MOVE_DEADLINE_MS = round((LINK_LOSS_DETECT_S + FIND_MOVE_DEADLINE_S) * 1000)
 FIND_HOVER_UNTIL_MS = round((LINK_LOSS_DETECT_S + FIND_HOVER_S) * 1000)
+# Home regardless, also while the keep-out climb is still under way (113 s).
+HOME_CLIMBING_MS = HOME_MS + round(KEEPOUT_CLIMB_LINK_ALLOWANCE_S * 1000)
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +84,15 @@ class FindPlan:
     mode: Literal["find"] = "find"
 
 
-Plan = NormalPlan | FindPlan
+@dataclass(frozen=True, slots=True)
+class InspectClimbPlan:
+    """A closer look under way: straight up to ``alt_m`` (above home), then the usual rule."""
+
+    alt_m: float
+    mode: Literal["inspect_climb"] = "inspect_climb"
+
+
+Plan = NormalPlan | FindPlan | InspectClimbPlan
 
 
 def inside_charter(lat: float, lon: float, charter: MissionCharter) -> bool:
@@ -139,13 +155,21 @@ def choose_mode(
     nav_ok: bool,
     keepouts: Sequence[Keepout],
     charter: MissionCharter,
+    inspect_start_alt_m: float | None = None,
 ) -> Plan:
-    """Normal (the usual 23/53 s) or the find hover. No side effects.
+    """Normal (the usual 23/53 s), the find hover or the inspect climb. No side effects.
+
+    ``inspect_start_alt_m``: a closer look is under way and started at this height above
+    home. Then the drone climbs straight up to it, whatever else holds
+    (``InspectClimbPlan``): never above the charter's ceiling, never down.
 
     The find hover needs all four: a state in ``FIND_STATES``; good navigation
     (``nav_ok``: 3D fix, EKF fine, neither the GPS nor the spoofing guard active); a
     confirmed find within ``FIND_ENGAGE_RADIUS_M``; and a hover point inside the charter.
     """
+    if inspect_start_alt_m is not None:
+        up_to = min(inspect_start_alt_m, charter.alt_max_agl_m)
+        return InspectClimbPlan(alt_m=max(alt_rel_home_m, up_to))
     if state not in FIND_STATES or not nav_ok:
         return NormalPlan()
     plane = Plane(charter.home.lat, charter.home.lon)

@@ -136,9 +136,15 @@ class FakeFlightController:
         self.intervals_us: dict[int, int] = {}
         self.refuse_modes: set[int] = set()
         self.drop_acks = 0  # the next n COMMAND_ACKs are lost (the command still acts)
+        # Called with the command right after its COMMAND_ACK is sent: what the flight
+        # controller sends next (a ground station's mode, a HEARTBEAT) is queued behind it.
+        self.after_ack: Callable[[int], None] | None = None
         self.drop_commands = 0  # the next n COMMAND_LONGs are lost on the way
         self.drop_mission_items = 0  # the next n mission item answers are lost (a slow read)
         self.silent = False  # no heartbeat or telemetry, no answers
+        # No HEARTBEAT goes out (the rest does): a mode it takes shows later, as
+        # ArduCopter's once-a-second HEARTBEAT does. ``release_heartbeat`` ends it.
+        self.heartbeat_held = False
         self.sticks: Any | None = None  # last MANUAL_CONTROL
         self.rc_mode_pwm: int | None = None  # an RC receiver's mode channel (None: no RC)
         self.attitude_rad = (0.0, 0.0, 0.0)  # roll, pitch, yaw sent in ATTITUDE
@@ -151,6 +157,12 @@ class FakeFlightController:
         self.ekf_source_set = 1  # MAV_CMD_SET_EKF_SOURCE_SET
         self.wind: tuple[float, float] | None = None  # WIND (from deg, m/s); None: not sent
         self.rc_link = False  # an RC transmitter is on and its receiver is healthy
+        # A laser rangefinder: DISTANCE_SENSOR every tick with this distance (m), or None
+        # for no laser. Its range (min, max) in m, signal quality and orientation.
+        self.laser_m: float | None = None
+        self.laser_range_m: tuple[float, float] = (0.1, 13.0)
+        self.laser_quality = 0
+        self.laser_orientation = mavlink.MAV_SENSOR_ROTATION_PITCH_270  # down
         self._upload: _Upload | None = None
         self._task: asyncio.Task[None] | None = None
 
@@ -175,7 +187,7 @@ class FakeFlightController:
                 self._handle(link, msg)
 
     def _send(self, msg: Any, link: FakeLink | None = None) -> None:
-        if self.silent:
+        if self.silent or (self.heartbeat_held and msg.get_type() == "HEARTBEAT"):
             return
         data = bytes(msg.pack(self._encoder))
         for target in [link] if link is not None else self.links:
@@ -200,6 +212,8 @@ class FakeFlightController:
             self.step(_TICK_S)
             self._send(self._position())
             self._send(self._attitude())
+            if self.laser_m is not None:
+                self._send(self._distance_sensor(self.laser_m))
             if tick % 2 == 0:
                 self._send(self.heartbeat())
                 if self.rc_mode_pwm is not None or self.rc_link:
@@ -246,6 +260,11 @@ class FakeFlightController:
             self.target = None
 
     # --- what the fake sends ---------------------------------------------------------
+
+    def release_heartbeat(self) -> None:
+        """End ``heartbeat_held`` and send a HEARTBEAT at once."""
+        self.heartbeat_held = False
+        self._send(self.heartbeat())
 
     def heartbeat(self) -> Any:
         base = mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED
@@ -360,6 +379,21 @@ class FakeFlightController:
             rc, rc, rc, 0, 16000, -1, round(self.battery_pct), 0, 0, 0, 0, 0, 0
         )
 
+    def _distance_sensor(self, distance_m: float) -> Any:
+        low, high = self.laser_range_m
+        boot_ms = int(self.clock.monotonic_ms()) - self.boot_mono_ms
+        return mavlink.MAVLink_distance_sensor_message(
+            boot_ms & 0xFFFFFFFF,
+            round(low * 100),
+            round(high * 100),
+            round(distance_m * 100),
+            mavlink.MAV_DISTANCE_SENSOR_LASER,
+            0,
+            self.laser_orientation,
+            0,
+            signal_quality=self.laser_quality,
+        )
+
     def _home_position(self) -> Any:
         return mavlink.MAVLink_home_position_message(
             round(self.home[0] * 1e7),
@@ -394,6 +428,8 @@ class FakeFlightController:
             ),
             link,
         )
+        if self.after_ack is not None:
+            self.after_ack(command)
 
     def _handle(self, link: FakeLink, msg: Any) -> None:
         kind = msg.get_type()

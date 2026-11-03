@@ -24,6 +24,8 @@ from sd_sim.farm import gazebo as farm_gazebo
 from sd_sim.farm import round as farm_round
 from sd_sim.farm.scenario import sample
 
+_REAL_MISSING = people.missing
+
 CLEAR = {
     "sun_intensity": 0.9,
     "ambient": 0.35,
@@ -40,7 +42,7 @@ def _ready(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     sitl = tmp_path / "arducopter"
     sitl.write_text("")
     monkeypatch.setattr(paths, "arducopter_bin", lambda: sitl)
-    monkeypatch.setattr(people, "missing", lambda _repo=None: [])
+    monkeypatch.setattr(people, "missing", lambda *_a: [])
 
 
 def _spec(tmp_path: Path, commander: str = "script") -> Path:
@@ -115,12 +117,52 @@ def test_a_flight_that_hangs_is_stopped(tmp_path: Path) -> None:
 
 def test_missing_pieces_say_what_to_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runner = farm_gazebo.GazeboRunner(run=FakeFlight(), repo=tmp_path)
-    monkeypatch.setattr(people, "missing", lambda _repo=None: ["sd_person_walking"])
+    monkeypatch.setattr(people, "missing", lambda *_a: ["sd_person_walking"])
     with pytest.raises(farm_round.RoundError, match="just sim-farm-setup"):
         runner.check()
     monkeypatch.setattr(paths, "arducopter_bin", lambda: tmp_path / "none")
     with pytest.raises(farm_round.RoundError, match="just sim-setup"):
         runner.check()
+
+
+def _fetch_all(assets: Path) -> None:
+    """Every catalog model as ``fetch`` leaves it: its folder with the hash stamp."""
+    for m in people.CATALOG:
+        (assets / m.id).mkdir(parents=True)
+        (assets / m.id / ".sha256").write_text(f"{m.sha256}\n", encoding="utf-8")
+
+
+def test_a_round_finds_the_models_on_the_resource_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A farm round runs in the farm's own checkout, which has no assets; Gazebo finds the
+    models under the owner's checkout through GZ_SIM_RESOURCE_PATH, so the check does too."""
+    monkeypatch.setattr(people, "missing", _REAL_MISSING)
+    round_repo, owner = tmp_path / "round", tmp_path / "owner"
+    runner = farm_gazebo.GazeboRunner(run=FakeFlight(), repo=round_repo)
+    _fetch_all(people.assets_dir(owner))
+    monkeypatch.setenv("GZ_SIM_RESOURCE_PATH", f"{people.assets_dir(owner)}:/elsewhere")
+    runner.check()
+    monkeypatch.delenv("GZ_SIM_RESOURCE_PATH")
+    with pytest.raises(farm_round.RoundError, match="personmodellerna saknas"):
+        runner.check()
+
+
+def test_the_models_gazebo_would_load_must_carry_their_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(people, "missing", _REAL_MISSING)
+    round_repo, owner = tmp_path / "round", tmp_path / "owner"
+    _fetch_all(people.assets_dir(owner))
+    env = {"GZ_SIM_RESOURCE_PATH": str(people.assets_dir(owner))}
+    assert people.missing(round_repo, env) == []
+    # Without the env only the checkout's own assets count (what fetch fills).
+    assert people.missing(round_repo) == [m.id for m in people.CATALOG]
+    # A wrong stamp in the folder Gazebo reaches first shadows the good copy behind it.
+    first = people.CATALOG[0]
+    (people.assets_dir(round_repo) / first.id).mkdir(parents=True)
+    (people.assets_dir(round_repo) / first.id / ".sha256").write_text("old\n")
+    assert people.missing(round_repo, env) == [first.id]
 
 
 def test_only_the_exam_may_leave_loopback() -> None:

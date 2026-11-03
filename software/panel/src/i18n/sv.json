@@ -95,7 +95,8 @@
     "label": "Meny",
     "logout": "Logga ut",
     "status": "Status och gränser",
-    "manual": "Styr själv"
+    "manual": "Styr själv",
+    "settings": "Inställningar"
   },
   "views": {
     "chat": {
@@ -182,7 +183,10 @@
       "title": "Styr själv"
     },
     "crashed": "Vyn kunde inte visas.",
-    "reload": "Ladda om vyn"
+    "reload": "Ladda om vyn",
+    "settings": {
+      "title": "Inställningar"
+    }
   },
   "chat": {
     "empty": "Inga meddelanden ännu. Skriv till AI-befälhavaren nedan.",
@@ -349,6 +353,9 @@
     "HOLD_CLIMB": "Drönaren är över en person och har ingen säker väg ut ur förbudszonen. Den stiger rakt upp till {{alt}} m och svävar där. Ta över med RC, ge en ny order eller tryck FLYG HEM.",
     "HOLD_INSIDE": "Drönaren är över en person och har ingen säker väg ut ur förbudszonen. Den kan inte stiga högre och svävar där den är. Ta över med RC, ge en ny order eller tryck FLYG HEM."
   },
+  "onboard": {
+    "MISSION_FALLBACK": "Ombordsdatorn styr inte drönaren längre. Flygkontrollen avslutar uppdraget själv: den svävar en kort stund och flyger sedan rakt hem, även genom förbudszoner runt personer. Tryck STOPP eller ta över med RC om vägen hem inte är säker."
+  },
   "gnss": {
     "GPS_WEAK": "GPS är svag ({{sats}} satelliter). Drönaren flyger vidare men kan bli osäker på var den är.",
     "GPS_LOST": "GPS är borta. Drönaren gissar sin position och flyger mot hem i högst {{dr}} s, sedan landar den. Ta över med RC om du kan.",
@@ -461,7 +468,9 @@
       "ai_silent_timeout_s": "Tid innan AI:n räknas som tyst",
       "allowed_skills": "Tillåtna färdigheter",
       "no_personal_data": "Personuppgifter",
-      "notes": "Anteckning"
+      "notes": "Anteckning",
+      "operation_mode": "Driftläge",
+      "floor_pack_id": "Höjdkarta"
     },
     "key": {
       "area": "Område",
@@ -469,7 +478,10 @@
       "speed": "Fart",
       "rtl": "Hem vid",
       "rtlValue": "{{pct}} % batteri"
-    }
+    },
+    "overflightYes": "Titta närmare får flyga rakt över kandidaten",
+    "overflightNo": "Titta närmare tittar från sidan, ingen överflygning",
+    "noFloorPack": "Ingen höjdkarta: Titta närmare sjunker inte under nuvarande höjd"
   },
   "limits": {
     "cannotApprove": "Kan inte godkännas",
@@ -550,7 +562,20 @@
     "find_me": "Hitta mig",
     "follow_path": "Flyg längs väg"
   },
-  "reasons": {},
+  "reasons": {
+    "INSPECT_NEEDS_PILOT": "Bara piloten kan starta Titta närmare.",
+    "INSPECT_BUSY": "En annan titt pågår eller väntar på beslut.",
+    "INSPECT_TARGET_CLOSED": "Kandidaten finns inte eller är redan avgjord.",
+    "FLOOR_ABOVE_CEILING": "Lägsta tillåtna höjd på platsen ligger över uppdragsramens tak.",
+    "FLOOR_VIOLATION": "Vägen går lägre än höjdgolvet tillåter (träd, mark och marginaler).",
+    "OVERFLIGHT_NOT_ALLOWED": "I skarpt läge får drönaren inte flyga över en möjlig person utan tillstånd.",
+    "POWERLINE_ZONE": "Drönaren får inte sjunka nära en känd kraftledning.",
+    "ONB_INSPECT_TIMEOUT": "Titten tog för lång tid och avslutades.",
+    "ONB_FLOOR_PACK_MISSING": "Ingen höjdkarta ombord: tittar bara från nuvarande höjd.",
+    "ONB_FLOOR_PACK_MISMATCH": "Höjdkartan ombord är inte samma som i uppdraget.",
+    "ONB_LASER_LOST": "Lasern tappade marken: drönaren steg till säker höjd.",
+    "ONB_OPERATION_MODE_MISMATCH": "Uppdragets driftläge passar inte drönarens profil."
+  },
   "draw": {
     "polygon": "Rita område",
     "rectangle": "Rita rektangel",
@@ -867,11 +892,11 @@
       "confirmLocked": "Visa en bild större innan du kan bekräfta.",
       "reject": "Inte hen",
       "inspect": "Titta närmare",
-      "inspectLater": "Kommer i en senare version.",
       "unsure": "Osäker",
       "decided": "Beslutet är sparat.",
       "superseded": "Kandidaten ändrades medan du tittade. Den nya versionen visas nu.",
-      "error": "Beslutet gick inte igenom: {{msg}}"
+      "error": "Beslutet gick inte igenom: {{msg}}",
+      "picturesNewest": "Bilder, nyast först"
     },
     "dialog": {
       "title": "Bekräfta K{{seq}} som personen ni söker?",
@@ -897,6 +922,143 @@
       "cancel": "Avbryt",
       "reopen": "Öppna igen"
     },
-    "toastConfirmed": "Fynd bekräftat: K{{seq}}"
+    "toastConfirmed": "Fynd bekräftat: K{{seq}}",
+    "toastNoted": "K{{seq}} markerad som bekräftad under titten. Piloten bestämmer."
+  },
+  "floorPack": {
+    "legend": "Höjdkarta för Titta närmare",
+    "loading": "Hämtar höjdkartorna …",
+    "failed": "Kunde inte hämta höjdkartorna. Ramen behåller höjdkartan som gäller nu.",
+    "size": "{{e}} × {{n}} km",
+    "source": "Källa: {{source}}",
+    "none": "Ingen höjdkarta",
+    "noneWhat": "Titta närmare tittar bara från nuvarande höjd.",
+    "gone": "Höjdkartan {{name}} som gäller nu finns inte längre oförändrad på markstationen. Välj en karta, annars gäller Ingen höjdkarta."
+  },
+  "opMode": {
+    "legend": "Driftläge",
+    "pick": "Välj driftläge innan du godkänner ramen.",
+    "choice": {
+      "sim": "Simulator",
+      "exercise": "Övning: alla på platsen vet om det",
+      "live": "Skarp sökning"
+    },
+    "badge": {
+      "sim": "SIM",
+      "exercise": "ÖVNING",
+      "live": "SKARPT"
+    }
+  },
+  "inspect": {
+    "block": {
+      "notPilot": "Bara piloten kan starta Titta närmare.",
+      "notOpen": "Kandidaten är inte klar att titta på än.",
+      "busy": "En annan titt pågår.",
+      "noLink": "Ingen länk till drönaren.",
+      "notFlying": "Drönaren är inte i luften."
+    },
+    "dialog": {
+      "title": "Titta närmare på K{{seq}}?",
+      "over": "Drönaren lämnar sökningen, flyger dit och sjunker så långt höjdreglerna tillåter ({{mode}}: rakt över).",
+      "side": "Drönaren lämnar sökningen och tittar från sidan, utanför skyddsavståndet till kandidaten. I skarpt läge utan tillstånd flyger den inte över.",
+      "noMap": "Ingen höjdkarta i ramen: drönaren tittar bara från nuvarande höjd.",
+      "refused": "Det går inte just nu: {{why}}",
+      "yes": "Ja, titta närmare",
+      "cancel": "Avbryt"
+    },
+    "mode": {
+      "sim": "SIM",
+      "exercise": "ÖVNING",
+      "live": "SKARPT med tillstånd"
+    },
+    "strip": {
+      "title": "Tittar närmare på K{{seq}}",
+      "step": "steg {{n}}",
+      "phase": {
+        "approach": "flyger dit",
+        "step": "tar bilder",
+        "lower_offer": "väntar på svar om att gå lägre",
+        "await": "väntar på beslut",
+        "return": "flyger tillbaka",
+        "flying": "flyger",
+        "ended": "klar"
+      },
+      "agl": "{{m}} m över mark",
+      "floor": "golv {{m}} m ({{why}})",
+      "laserOn": "laser: ser marken",
+      "laserOff": "laser: ingen",
+      "over": {
+        "sim": "Överflygning tillåten i SIM",
+        "exercise": "Överflygning tillåten i ÖVNING",
+        "live": "Överflygning tillåten med tillstånd"
+      }
+    },
+    "floorReason": {
+      "map": "karta",
+      "unknown": "okänd terräng",
+      "powerline": "ledning",
+      "laser": "laser",
+      "no_map": "ingen höjdkarta",
+      "laser_lost": "lasern tappad"
+    },
+    "lower": {
+      "question": "Gå lägre, ned till {{m}} m över mark?",
+      "now": "Nu {{m}} m över mark",
+      "left": "svar inom {{left}}",
+      "yes": "Ja, gå lägre",
+      "no": "Nej, stanna här",
+      "pilotOnly": "Piloten avgör om drönaren får gå lägre."
+    },
+    "await": {
+      "title": "Titten klar. Beslut inom {{left}}, annars fortsätter sökningen och K{{seq}} ligger kvar i kön.",
+      "steps": "{{n}} steg"
+    },
+    "end": {
+      "clear": "Tydlig bild tagen",
+      "floor": "Lägsta tillåtna höjd nådd ({{m}} m över mark)",
+      "lower_declined": "Stannade på 30 m över mark",
+      "steps_max": "Max antal steg",
+      "timeout": "Tidsgräns",
+      "keepout": "En annan möjlig person spärrar vägen ned",
+      "laser_lost": "Lasern tappade marken: drönaren steg till säker höjd",
+      "side_look": "Tittade från sidan (skarpt läge utan tillstånd)"
+    },
+    "card": {
+      "flying": "Titta närmare pågår",
+      "lower_offer": "Titta närmare: drönaren frågar om den får gå lägre",
+      "await": "Titta närmare klar: väntar på beslut",
+      "ended": "Titta närmare klar"
+    },
+    "ai": {
+      "title": "AI:n föreslår: titta närmare",
+      "body": "Drönaren lämnar sökningen, flyger dit och sjunker så långt höjdreglerna tillåter. Ja är samma sak som knappen Titta närmare.",
+      "yes": "Ja",
+      "no": "Nej"
+    },
+    "toast": {
+      "lower": "K{{seq}}: drönaren frågar om den får gå lägre. Svara under Granska.",
+      "lowerObserver": "K{{seq}}: drönaren frågar om den får gå lägre. Piloten svarar.",
+      "done": "Titten på K{{seq}} är klar. Beslut inom 2 minuter under Granska."
+    },
+    "observerNote": "Under titten avgör piloten. Ditt beslut sparas som en anteckning till piloten.",
+    "resume": "Fortsätt söka nu",
+    "morePictures": "Ta fler bilder",
+    "morePicturesSent": "Drönaren tar fler bilder.",
+    "failed": "Det gick inte. Försök igen."
+  },
+  "settings": {
+    "permit": {
+      "title": "Tillstånd för överflygning",
+      "about": "I skarpt läge får Titta närmare flyga rakt över en möjlig person bara med tillstånd i kategorin specifik från Transportstyrelsen. Utan tillstånd tittar drönaren från sidan.",
+      "ref": "Tillståndsnummer (kategorin specifik)",
+      "allow": "Tillåt överflygning i skarpt läge",
+      "needRef": "Fyll i tillståndsnumret först.",
+      "when": "Att slå på gäller från nästa godkända ram. Att slå av gäller direkt. Inställningen gäller tills markstationen startas om; den varaktiga står i markstationens inställningsfil."
+    },
+    "save": "Spara",
+    "saved": "Sparat.",
+    "failed": "Kunde inte spara.",
+    "loadFailed": "Kunde inte hämta inställningen från markstationen.",
+    "pilotOnly": "Bara piloten kan ändra."
   }
 }
