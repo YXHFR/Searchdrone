@@ -7,7 +7,7 @@ export type Viewport = "desktop" | "medium" | "phone";
 /** What fills the stage; the other one is the picture-in-picture. */
 export type Main = "map" | "video";
 /** A full view laid over the stage until it is closed. */
-export type Overlay = "manual" | "status";
+export type Overlay = "manual" | "status" | "settings";
 /** Flyg is the live view; Granska (finds review) comes with the finds flow. */
 export type Mode = "fly" | "review";
 /** The side column's (or sheet's) tabs. "mission" is the left column when it has no room. */

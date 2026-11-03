@@ -22,7 +22,12 @@ every set), ``pick`` (the sets whose val AP50 picks the best epoch; default the 
 ``upscale`` (1, the default, or 2-4: each tile covers ``tile / upscale`` picture pixels
 and is enlarged to ``tile``, so a small person is seen larger; the exported manifest
 carries it, so the drone enlarges its tiles the same way, and a 12 MP still takes about
-``upscale``² times as many tiles).
+``upscale``² times as many tiles), ``scales`` (``native``, the default, or a list such as
+``native,wide,tele``: each training picture is also resampled so its people are as many
+pixels as our wide camera, about 30-35 px, or tele camera, about 100 px, sees them at
+the search heights; a number is pixels per metre; the val and test parts are never
+resampled; see ``tiles.py``), ``max_up`` (default 2: the most a picture is enlarged to
+reach a scale, since an enlarged person is blurred, not sharper).
 
 Stops and goes on: the state is saved to ``last.pt`` every few minutes and after every
 epoch. Run the same command again and it carries on from there (a different command,
@@ -55,13 +60,24 @@ import numpy as np
 import torch
 from bench.common import BenchError, parse_args, say, warn
 from evaluate import ap50
-from tiles import MAX_UPSCALE, TILE_PX, Tile, build_cache, check_upscale, load_tile, pictures
+from tiles import (
+    MAX_UP,
+    MAX_UPSCALE,
+    NATIVE,
+    TILE_PX,
+    Tile,
+    build_cache,
+    check_upscale,
+    load_tile,
+    parse_scales,
+    pictures,
+)
 from torch.utils.data import DataLoader, Dataset
 
 KEYS = (
     "model", "epochs", "batch", "sets", "simfarm", "simfarm_epochs", "device", "data",
     "out", "limit", "workers", "seed", "fresh", "lr", "save_minutes", "tile", "init",
-    "balance", "pick", "upscale",
+    "balance", "pick", "upscale", "scales", "max_up",
 )  # fmt: skip
 SAVE_MINUTES = 10.0
 BALANCE_MODES = ("sets", "tiles")
@@ -82,6 +98,10 @@ class Settings:
     balance: str = "sets"  # sets, tiles, or weights "heridal:2,kios:1"
     pick: tuple[str, ...] = ()  # the sets that pick the best epoch (): all
     upscale: int = 1  # each tile covers tile / upscale picture pixels, enlarged to tile
+    # the scales the training pictures are resampled to (tiles.parse_scales): native, our
+    # cameras (wide, tele) or pixels per metre; and the most a picture is enlarged
+    scales: tuple[str, ...] = (NATIVE,)
+    max_up: float = MAX_UP
 
     def key(self) -> dict[str, Any]:
         body = json.loads(json.dumps(asdict(self)))  # as saved: lists, not tuples
@@ -94,6 +114,8 @@ class Settings:
             del body["pick"]
         if self.upscale == 1:
             del body["upscale"]  # a run started before upscale= carries on
+        if self.scales == (NATIVE,):
+            del body["scales"], body["max_up"]  # a run started before scales= carries on
         return body
 
 
@@ -467,6 +489,28 @@ def _int_key(args: dict[str, str], key: str, default: int) -> int:
         raise BenchError(f"{key}= ska vara ett heltal, inte {raw!r}", 2) from None
 
 
+def _scales_key(args: dict[str, str]) -> tuple[str, ...]:
+    try:
+        return parse_scales(args.get("scales", NATIVE))
+    except ValueError as exc:
+        raise BenchError(
+            f"scales= ska vara native, wide, tele eller bildpunkter per meter, "
+            f"kommaseparerade ({exc})",
+            2,
+        ) from None
+
+
+def _max_up_key(args: dict[str, str]) -> float:
+    raw = args.get("max_up", f"{MAX_UP:g}")
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    if not 1.0 <= value <= 8.0:
+        raise BenchError(f"max_up= ska vara ett tal från 1 till 8, inte {raw!r}", 2)
+    return value
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = parse_args(sys.argv[1:] if argv is None else argv, KEYS, "train-detector")
@@ -491,6 +535,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             balance=args.get("balance", "sets"),
             pick=tuple(s for s in args.get("pick", "").split(",") if s),
             upscale=_int_key(args, "upscale", 1),
+            scales=_scales_key(args),
+            max_up=_max_up_key(args),
         )
         parse_balance(settings.balance, settings.sets)  # a typo stops here, not hours later
         stray = [s for s in settings.pick if s not in settings.sets]
@@ -705,10 +751,20 @@ def train(
             val = None
         else:
             items = pictures(data, "train", sets, settings.limit)
+            if settings.scales != (NATIVE,):
+                say(
+                    f"train: bilderna skalas om till {', '.join(settings.scales)} "
+                    f"(högst {settings.max_up:g} gånger större)"
+                )
             train_tiles = (
                 out / "tiles" / "train",
                 build_cache(
-                    items, out / "tiles" / "train", settings.tile, upscale=settings.upscale
+                    items,
+                    out / "tiles" / "train",
+                    settings.tile,
+                    upscale=settings.upscale,
+                    scales=settings.scales,
+                    max_up=settings.max_up,
                 ),
             )
             val_items = pictures(data, "val", sets, settings.limit)

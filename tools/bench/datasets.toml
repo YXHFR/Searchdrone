@@ -23,6 +23,9 @@
 #   publish_weights  whether weights trained on it may be published (false until the
 #                 rights holder confirms it in writing)
 #   publish_results  whether numbers measured on it may leave this computer (default true)
+#   px_per_m      the ground scale of every picture in pixels per metre, for a set whose
+#                 source states one for the whole set; without it the training reads the
+#                 scale off the person boxes (tools/train/tiles.py, `scales=`)
 #
 # tools/tests/test_bench_datasets.py holds the licence rule: only open licences
 # (CC0, CC BY, MIT, Apache) may be trained on; a non-commercial licence may only ever be
@@ -42,6 +45,11 @@ url = "https://zenodo.org/api/records/5662351/files/heridal_keras_retinanet_voc.
 size_bytes = 8311735812
 sha256 = "63ea51b29d67f9b95cc600674c6ccfa719688594404b5311a9164fb41a0448a3"
 layout = "heridal_voc"
+# about 2 cm per pixel (Pyrrö et al. 2021, arXiv 2111.09406: "approximate 2 cm ground
+# resolution", 4000x3000 pictures from 40-65 m). Its boxes
+# hold many lying and sitting people (median longest side 71 px, about 1.4 m), so the
+# boxes would put the scale three times too high
+px_per_m = 50.0
 use = ["train", "measure"]
 licence_confirmed = true  # the Zenodo record licenses the dataset itself
 ranges = true
@@ -109,6 +117,27 @@ sha256 = "bc63f218bb8d50ba407a41b3a40d67076c34c756d3b48aeeeb52b4396d7e493d"
 layout = "seadronessee_coco"
 use = ["train"]
 licence_confirmed = true  # the authors' README licenses the dataset itself
+ranges = true
+publish_weights = true
+local_only = false
+
+[[dataset]]
+name = "uit_drone4"
+title = "UIT-Drone4 (city traffic filmed from drones, Vietnam National University Ho Chi Minh City)"
+licence = "CC-BY-4.0"
+checked = "2026-11-03"
+licence_note = "Trained on only: the locked test part stays HERIDAL and KIOS. Pedestrians are the persons; motorcycles (boxed with their riders) are ignore regions, so no tile with a rider is trained on. Every tenth video frame is taken."
+attribution = "UIT-Drone4, University of Information Technology, Vietnam National University Ho Chi Minh City; Zenodo record 14862652 (doi:10.5281/zenodo.14862652), CC BY 4.0"
+source_page = "https://zenodo.org/records/14862652"
+url = "https://zenodo.org/api/records/14862652/files/images.zip/content"
+size_bytes = 36889299643
+sha256 = "0c367f9d3a1d7e986747a2e949ae1474f3bddb98713c2e1e561dde19ebe9f90f"
+labels_url = "https://zenodo.org/api/records/14862652/files/labels.zip/content"
+labels_size_bytes = 12803217
+labels_sha256 = "307849a2278a51ce37e0a2b6db6564db757e4cadb44b5be72e2fb3f7db361379"
+layout = "uit_drone_yolo"
+use = ["train"]
+licence_confirmed = true  # the Zenodo record licenses the dataset itself
 ranges = true
 publish_weights = true
 local_only = false

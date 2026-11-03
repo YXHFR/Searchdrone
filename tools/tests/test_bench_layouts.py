@@ -337,6 +337,7 @@ def test_seadronessee_refuses_broken_labels() -> None:
         "simfarm_stills",
         "kios_carperson",
         "seadronessee_coco",
+        "uit_drone_yolo",
     ],
 )
 def test_members_use_the_one_sequence_rule(layout: str) -> None:
@@ -353,8 +354,62 @@ def test_members_use_the_one_sequence_rule(layout: str) -> None:
             "simfarm": ["r9/images/a.png"],
             "simfarm_stills": ["s9/images/a.jpg"],
             "kios_carperson": [_kcp(40), _kcp_label(40)],
+            "uit_drone_yolo": [
+                _uit("DJI_0606_0p40_1p00_000140"),
+                _uit_label("DJI_0606_0p40_1p00_000140"),
+            ],
         }[layout]
         members = LAYOUTS[layout].members(names)
     assert members
     for m in members:
         assert m.seq == sequence_of(layout, m.image_id)
+
+
+# --- UIT-Drone4: pedestrians are persons, motorcycles (with riders) are ignored ----------
+
+
+def _uit(stem: str, part: str = "train") -> str:
+    return f"images/{part}/{stem}.jpg"
+
+
+def _uit_label(stem: str, part: str = "train") -> str:
+    return f"labels/{part}/{stem}.txt"
+
+
+def test_uit_drone_takes_every_tenth_frame_pooled_by_video() -> None:
+    stems = [
+        ("DJI_0606_0p40_1p00_000140", "train"),
+        ("DJI_0606_0p40_1p00_000141", "train"),
+        ("DJI_0606_2p00_3p00_000150", "test_all"),
+        ("363_0p00s_1p00s_350", "val"),
+        ("VIS06_336_000210", "test_all"),
+        ("VIS_0359_1p00s_2p00s_80", "train"),
+        ("AIUit000004_000213", "train"),
+        ("DJI_0063_0130", "val"),
+    ]
+    names = [n for stem, part in stems for n in (_uit(stem, part), _uit_label(stem, part))]
+    members = LAYOUTS["uit_drone_yolo"].members([*names, "images/", "images/train/"])
+    assert [(m.image_id, m.seq) for m in members] == [
+        ("DJI_0606_0p40_1p00_000140", "DJI_0606"),
+        ("DJI_0606_2p00_3p00_000150", "DJI_0606"),
+        ("363_0p00s_1p00s_350", "363"),
+        ("VIS06_336_000210", "VIS06"),
+        ("VIS_0359_1p00s_2p00s_80", "VIS_0359"),
+        ("DJI_0063_0130", "DJI_0063"),
+    ]
+    assert members[2].label == _uit_label("363_0p00s_1p00s_350", "val")
+
+
+def test_uit_drone_reads_pedestrians_and_ignores_motorcycles_not_cars() -> None:
+    label = b"0 0.5 0.5 0.01 0.02\n1 0.25 0.25 0.02 0.04\n2 0.1 0.1 0.05 0.05\n3 0.9 0.9 0.1 0.1\n"
+    layout = LAYOUTS["uit_drone_yolo"]
+    assert layout.boxes(label, 3840, 2160) == [pytest.approx((1900.8, 1058.4, 1939.2, 1101.6))]
+    assert layout.ignore is not None
+    assert layout.ignore(label, 3840, 2160) == [pytest.approx((921.6, 496.8, 998.4, 583.2))]
+
+
+def test_uit_drone_refuses_a_frame_without_labels_or_with_an_unknown_name() -> None:
+    with pytest.raises(BenchError, match="saknar etikettfil"):
+        LAYOUTS["uit_drone_yolo"].members([_uit("DJI_0606_0p40_1p00_000140")])
+    with pytest.raises(BenchError, match="okänt namn"):
+        LAYOUTS["uit_drone_yolo"].members(["images/train/frame.jpg"])

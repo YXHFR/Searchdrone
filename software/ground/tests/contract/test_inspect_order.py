@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "helpers"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from flow_rig import H, Rig, rig  # pyright: ignore[reportMissingImports]
-from test_candidates import person, send  # pyright: ignore[reportMissingImports]
+from test_candidates import person, post, revision, send  # pyright: ignore[reportMissingImports]
 from test_orders import (  # pyright: ignore[reportMissingImports]
     driver,
     no_rate_limit,
@@ -46,12 +46,31 @@ def look(det: Any) -> dict[str, Any]:
     return {"candidate_id": str(det.detection_id)}
 
 
-async def flying_with(r: Rig, *dets: Any) -> tuple[str, Any]:
+async def flying_with(r: Rig, *dets: Any, **proposal: Any) -> tuple[str, Any]:
+    """In the air, each detection sent and made a ``ready`` candidate (K1, K2 ...) the way
+    the search service writes it: its id is the detection's."""
     skills = [*charters.default_skills(SKILL_REGISTRY), "inspect_detection"]
-    mid = await r.ready_mission(allowed_skills=skills)
+    mid = await r.ready_mission(allowed_skills=skills, **proposal)
     d = driver(r, mid)
     await take_off(r, mid, d)
     await send(r, *dets)
+    for det in dets:
+        found = {"detection_id": str(det.detection_id), "distance_m": 0.0}
+        res = await post(
+            r,
+            mid,
+            revision(
+                r,
+                candidate_id=str(det.detection_id),
+                state="ready",
+                lat=det.lat,
+                lon=det.lon,
+                sigma95_m=det.sigma95_m,
+                priority=0.7,
+                observations=[found],
+            ),
+        )
+        assert res.status_code == 200, res.text
     return mid, d
 
 
@@ -90,11 +109,20 @@ async def test_the_ground_fills_in_the_target(r: Rig) -> None:
 
 
 async def test_the_ais_look_is_only_a_proposal(r: Rig) -> None:
+    """The AI names the candidate by its number; the card says which, how important it
+    is and where ("ska jag titta närmare på K1?")."""
     seen = person(r, 0, 100)
-    _, d = await flying_with(r, seen)
-    out = await order(r, d, "inspect_detection", look(seen), want="PENDING_APPROVAL")
+    mid, d = await flying_with(r, seen)
+    out = await order(r, d, "inspect_detection", {"candidate_id": "K1"}, want="PENDING_APPROVAL")
     assert out["reason_codes"] == ["NEEDS_APPROVAL_SKILL"], out
     assert not [o for o in r.onboard.orders if o.skill == "inspect_detection"]
+    cards = (await r.panel.get(f"/api/v1/missions/{mid}/approvals")).json()
+    (card,) = [c for c in cards if c["status"] == "pending"]
+    assert card["summary_sv"].startswith("Titta närmare på K1 (hög prioritet, sedd i 1 bild, ")
+    assert card["summary_sv"].endswith(" m N)"), card["summary_sv"]
+    # A number no candidate has is refused as a closed target.
+    out = await order(r, d, "inspect_detection", {"candidate_id": "K9"}, want="REJECT")
+    assert "INSPECT_TARGET_CLOSED" in out["reason_codes"], out
 
 
 async def test_an_order_naming_a_detection_is_read_as_its_candidate(r: Rig) -> None:
@@ -141,9 +169,9 @@ async def test_an_unknown_candidate_or_a_bad_order_is_refused_as_such(r: Rig) ->
     # The panel's own lat/lon are dropped: the ground alone says where the target is.
     unknown = {"candidate_id": str(new_id()), "lat": 1.0, "lon": 1.0, "sigma95_m": 1.0}
     gate = await pilot(r, mid, unknown, want="REJECT")
-    assert gate["reason_codes"] == ["SCHEMA_INVALID"], gate
+    assert gate["reason_codes"] == ["SCHEMA_INVALID", "INSPECT_TARGET_CLOSED"], gate
     gate = await pilot(r, mid, {"standoff_m": 20}, want="REJECT")
-    assert gate["reason_codes"] == ["SCHEMA_INVALID"], gate
+    assert gate["reason_codes"][0] == "SCHEMA_INVALID", gate
 
 
 async def test_the_geometry_check_needs_a_target_and_a_vehicle(r: Rig) -> None:

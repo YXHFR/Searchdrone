@@ -79,6 +79,7 @@ GROUND_TO_VEHICLE: Final = frozenset(
         "KeepoutInstall",
         "InspectOutcome",
         "InspectLower",
+        "InspectStay",
         "Ack",
         "Heartbeat",
     }
