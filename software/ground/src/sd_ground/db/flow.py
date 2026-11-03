@@ -1266,6 +1266,24 @@ class FlowRepo:
         )
         return [dict(r) for r in rows]
 
+    async def released_detections(self, mission_id: str, score_min: float, limit: int) -> list[str]:
+        """The detections (at least ``score_min`` sure, the ones the drone may have made a
+        cylinder of) of the mission's candidates a person rejected (the newest revision is
+        ``rejected``), newest first."""
+        rows = await self._all(
+            "SELECT d.detection_id::text AS detection_id FROM candidate_observations o "
+            "JOIN (SELECT DISTINCT ON (candidate_id) candidate_id, state FROM candidates "
+            "WHERE mission_id = :m ORDER BY candidate_id, rev DESC) c "
+            "ON c.candidate_id = o.candidate_id "
+            "JOIN detections d ON d.detection_id = o.detection_id "
+            "WHERE c.state = 'rejected' AND d.score >= :s "
+            "ORDER BY d.seq DESC LIMIT :n",
+            m=mission_id,
+            s=score_min,
+            n=limit,
+        )
+        return [str(r["detection_id"]) for r in rows]
+
     # --- the search profile ------------------------------------------------------------
 
     _PROFILE_COLS = (
