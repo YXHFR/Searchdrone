@@ -30,7 +30,7 @@ import urllib.request
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pymavlink.dialects.v20 import ardupilotmega as mavlink
@@ -542,6 +542,126 @@ def test_executor_silent_mid_search_holds_clear_of_the_keepout(sim: Sim, how: st
                 assert "alarm.MISSION_FALLBACK" in e.events
                 if how == "tick_hung":
                     assert not e.onboard_dead and all(not t.done() for t in e.executor_tasks)
+            finally:
+                watcher.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await watcher
+            clear()
+            assert closest[0] >= r, closest[0]
+
+    asyncio.run(run())
+
+
+# The search for the mission-end test: the same box; the lawnmower from home ends at its
+# north-west corner (20 E, 130 N), and a person's cylinder stands just outside it there.
+_END_LAST = (20.0, 130.0)  # east, north: the last search point (the mission's hover)
+_END_PERSON = (5.0, 145.0, 10.0)  # east, north, radius (m): 11 m past the hover point
+
+
+class _NoEndSwitch:
+    """The executor's io with the switch to LOITER at the last search point lost: the
+    onboard computer stays alive (its tick and heartbeat run on), but nobody steers when
+    the flight controller reaches the mission's own end."""
+
+    def __init__(self, io: Any) -> None:
+        self._io = io
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._io, name)
+
+    async def set_mode(self, mode: CopterMode) -> bool:
+        if mode == CopterMode.LOITER:
+            await asyncio.Event().wait()  # never answered
+        return bool(await self._io.set_mode(mode))
+
+
+@pytest.mark.budget_s(330)
+def test_mission_end_without_onboard_hovers_clear_of_the_keepout(
+    sim: Sim, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Option A, the mission's own end: the onboard computer stays alive but never takes
+    over at the last search point, so the flight controller flies the mission's end in
+    AUTO. That end is a hover without end: MISSION_FALLBACK, then it stands there for
+    40 s in AUTO on the last item, never flies home, never enters the person's cylinder
+    11 m away, and the companion watchdog (the heartbeat runs on) never acts."""
+    from sd_onboard.skills.survey_sector import SurveyRun
+
+    fly = SurveyRun.fly
+
+    async def fly_without_end(self: SurveyRun, plan: Any, io: Any, home: Any) -> None:
+        await fly(self, plan, cast(Any, _NoEndSwitch(io)), home)
+
+    monkeypatch.setattr(SurveyRun, "fly", fly_without_end)
+
+    async def run() -> None:
+        async with emergency(sim) as e:
+            f = e.f
+            await _install(f)
+            await _takeoff(f, 25)
+            await f.until(lambda: f.ex.state == S.HOLD, 60, "takeoff done")
+            east, north, r = _END_PERSON
+            lat, lon = f.at(east, north)
+            person = Keepout(
+                keepout_id=new_id(),
+                lat=lat,
+                lon=lon,
+                radius_m=r,
+                source="candidate",
+                source_id=new_id(),
+            )
+            f.ex.on_keepouts(
+                KeepoutInstall(install_seq=f.ex.keepout_seq + 1, keepouts=[person]), new_id()
+            )
+            assert person in f.ex.keepouts
+            box = f.square(*_SILENT_BOX_M)
+            await f.order("survey_sector", {"polygon": box, "spacing_m": 20, "speed_ms": 5})
+            await f.until(lambda: f.ex.state == S.SURVEY and e.mode() == "AUTO", 20, "search")
+            active = f.ex.active
+            assert active is not None
+            run = getattr(active.handler, "run", None)
+            assert isinstance(run, SurveyRun)
+            last = run.waypoints[-1]
+            end_lat, end_lon = f.at(*_END_LAST)
+            # The case this test is about: the hover point is the planned last point, near
+            # the cylinder (if the pattern changes, this fails instead of testing nothing).
+            assert distance_m(last.lat, last.lon, end_lat, end_lon) <= 2.0
+            gap = distance_m(last.lat, last.lon, lat, lon) - r
+            assert 5.0 <= gap <= 15.0, gap
+            closest = [float("inf")]
+
+            def clear() -> None:
+                t = e.fc
+                d = distance_m(lat, lon, t.lat, t.lon)
+                closest[0] = min(closest[0], d)
+                assert d >= r, f"inside the cylinder: {d:.1f} m from its centre"
+
+            async def watch() -> None:
+                while True:
+                    clear()
+                    await asyncio.sleep(0.1)
+
+            watcher = asyncio.ensure_future(watch())
+            try:
+                await e.wait(lambda: "alarm.MISSION_FALLBACK" in e.events, 240, "fallback alarm")
+                total = e.fc.mission_total
+                assert e.mode() == "AUTO" and total is not None
+                assert e.fc.mission_seq_current == total  # on the hover at the end
+                await e.wait(lambda: e.fc.groundspeed_ms < 0.5, 10, "standing")
+                stood = (e.fc.lat, e.fc.lon)
+                end = time.monotonic() + _HOLD_S
+                while time.monotonic() < end:
+                    if watcher.done():
+                        watcher.result()  # the cylinder check failed: raise it here
+                    assert e.mode() == "AUTO", f"{e.mode()} at the mission's end"
+                    assert e.fc.mission_seq_current == total
+                    await asyncio.sleep(0.2)
+                t = e.fc
+                assert distance_m(stood[0], stood[1], t.lat, t.lon) <= 3.0
+                assert distance_m(end_lat, end_lon, t.lat, t.lon) <= 5.0
+                assert e.core.watchdog.phase == "idle"
+                assert e.actions.latches.get(VID) is None
+                assert "alarm.ONBOARD_SILENT" not in e.events
+                assert all(not t.done() for t in e.executor_tasks)  # alive throughout
             finally:
                 watcher.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
