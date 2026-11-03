@@ -117,6 +117,7 @@ async def test_a_resync_on_the_stream_forgets_the_ends_that_never_come() -> None
                 if len(mock.hellos) >= 2:
                     break
                 await asyncio.sleep(0.02)
+            assert len(mock.hellos) >= 2  # reconnected in the same epoch
             await asyncio.sleep(0.1)
             assert "order-1" in b.loop._unended  # pyright: ignore[reportPrivateUsage]
             # A new epoch: no replay, so the end of order-1 never comes.
@@ -126,6 +127,7 @@ async def test_a_resync_on_the_stream_forgets_the_ends_that_never_come() -> None
                 if not b.loop._unended:  # pyright: ignore[reportPrivateUsage]
                     break
                 await asyncio.sleep(0.02)
+            assert len(mock.hellos) >= 3  # reconnected in the new epoch
             assert b.loop._unended == {}  # pyright: ignore[reportPrivateUsage]
         finally:
             task.cancel()

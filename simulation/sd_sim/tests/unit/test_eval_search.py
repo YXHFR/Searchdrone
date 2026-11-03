@@ -87,11 +87,14 @@ def _sk04(tops: list[list[str]]) -> list:
 
 
 def test_sk04_counts_the_hikers_verdicts_that_saw_the_top() -> None:
-    # 8 conflict and 2 match among the verdicts that saw the top; not_visible is left out.
+    # 8 conflict and 2 match among the runs that saw the top; not_visible is left out.
     tops = [["conflict", "not_visible"]] * 8 + [["match"], ["match", "not_visible"]]
     first, hiker = _sk04(tops)
     assert first.ok and hiker.ok and not hiker.too_few
     assert hiker.value == "8/10 = 0.80 (19 kort)"
+    # One verdict per run: a run's many cards of the hiker are one draw, not many.
+    first, hiker = _sk04([["conflict"] * 5] * 7 + [["match"]] * 3)
+    assert not hiker.ok and hiker.value == "7/10 = 0.70 (38 kort)"
     first, hiker = _sk04([["conflict"]] * 7 + [["match"]] * 3)
     assert not hiker.ok and not hiker.too_few  # 0.70
 

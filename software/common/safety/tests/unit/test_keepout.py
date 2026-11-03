@@ -345,6 +345,49 @@ def test_reroute_from_inside() -> None:
     assert reroute([(0.0, -200.0)], cyl) == [(0.0, -200.0)]
 
 
+def test_the_way_out_keeps_room_past_its_end() -> None:
+    """A way out ends at least ``_EXIT_EDGE_M`` short of the charter's edge along its
+    leg, and a caller's reserve (``inspect_detection``'s ``EXIT_CLEAR_M``) is room past
+    it clear of cylinders and inside the charter: a direction without it is not taken."""
+    cyl = [((0.0, 0.0), 40.0)]
+    exit_r = 40.0 + KEEPOUT_ARC_MARGIN_M + keepout._EXIT_EPS_M  # pyright: ignore[reportPrivateUsage]
+    edge = Polygon(
+        ((-400.0, -400.0), (exit_r + 1.0, -400.0), (exit_r + 1.0, 400.0), (-400.0, 400.0))
+    )
+    here = (10.0, 0.0)  # straight out from the centre is east, 1 m short of the edge
+    assert reroute([here], cyl, area=BOX) == [here, (exit_r, 0.0)]
+    way = reroute([here], cyl, area=edge)
+    assert way is not None and len(way) == 2 and way[1][0] < exit_r - 1.0  # turned
+    room = 12.0
+    other = [((0.0, 0.0), 40.0), ((exit_r + 10.0, 0.0), 5.0)]  # 5 m of room east
+    way = reroute([here], other, area=BOX)
+    assert way is not None and math.isclose(way[1][1], 0.0, abs_tol=1e-9)
+    way = reroute([here], other, area=BOX, exit_reserve_m=room)
+    assert way is not None and abs(way[1][1]) > 1.0  # not east: too little room there
+    u = (
+        (way[1][0] - here[0]) / math.dist(here, way[1]),
+        (way[1][1] - here[1]) / math.dist(here, way[1]),
+    )
+    far = (way[1][0] + room * u[0], way[1][1] + room * u[1])
+    assert not any(leg_enters(here, far, c, r) for c, r in other)
+
+
+def test_reroute_tries_the_next_way_out_when_the_rest_finds_no_way(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first way out can leave the rest of the route with no way around; a later one
+    may not (``_EXIT_TRIES``)."""
+    cyl = [((0.0, 0.0), 40.0), ((-67.5, 38.4), 28.4), ((-17.3, 76.8), 28.7)]
+    area = Polygon(((-150.0, -150.0), (150.0, -150.0), (150.0, 150.0), (-150.0, 150.0)))
+    route: list[Xy] = [(-10.3, 27.3), (47.1, -110.4)]
+    out = reroute(route, cyl, area=area)
+    assert out is not None and out[0] == route[0] and out[-1] == route[1]
+    assert xy_route_violation(out[1:], cyl) is None
+    assert all(area.leg_outside_by(a, b) == 0.0 for a, b in pairwise(out))
+    monkeypatch.setattr(keepout, "_EXIT_TRIES", 1)
+    assert reroute(route, cyl, area=area) is None  # the first way out alone: none
+
+
 def test_reroute_checks_the_way_out_against_the_area() -> None:
     """The leg out of a cylinder counts too: it never crosses the area's edge. When the
     leg flown would, the way out turns; when every way out would, there is no route."""

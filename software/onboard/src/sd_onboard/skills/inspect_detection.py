@@ -103,8 +103,9 @@ class _Leg:
 def _way_out(here: Xy, cyl: Sequence[tuple[Xy, float]], area: Polygon) -> Xy | None:
     """Out of the cylinders ``here`` lies in, ``EXIT_CLEAR_M`` past the last edge along
     the same straight leg (``sd_safety.keepout.reroute``'s way out); None when there is
-    none, or no room for the extra metres before another cylinder or the charter's edge."""
-    way = reroute([here], cyl, area=area)
+    none, or no room for the extra metres before another cylinder or the charter's edge
+    (the way out is chosen with that room reserved, so this is a backstop)."""
+    way = reroute([here], cyl, area=area, exit_reserve_m=EXIT_CLEAR_M)
     if way is None or len(way) < 2:
         return None
     out = way[1]

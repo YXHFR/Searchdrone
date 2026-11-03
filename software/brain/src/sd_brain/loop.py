@@ -351,7 +351,10 @@ class CommanderLoop:
 
     async def health_recovered(self) -> None:
         """Out of the degraded state. Like a reconnect it keeps the record of orders whose
-        end is unseen: only ``stream_resynced`` or a new mission forgets it."""
+        end is unseen. An entry leaves that record when its end event arrives, when its
+        submit fails or is not allowed (no end comes), when it has waited out
+        ``idle_airborne_tick_s`` (``_end_unseen``), or all at once on ``stream_resynced``
+        or a new mission."""
         self.health.recovered()
         await self.connected(True)
 

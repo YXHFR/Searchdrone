@@ -14,8 +14,10 @@ the oracle draws an answer the way a measured (or, for now, modelled) model woul
 A field's verdict on a known thing is drawn from its own stream, keyed by the seed, the
 thing and the field: the same thing gets the same verdict on that field however many
 assessments ran before it and in what order (that follows the SITL clock). The rates
-hold over seeds and things. The person verdict, the latency and fields of a request
-with no known thing still come from the oracle's shared stream.
+hold over seeds and things. The key has no scenario: a thing id that several scenarios
+share (``target``) gets the same verdicts in each for one seed, so the nightly results of
+those scenarios are correlated on it. The person verdict, the latency and fields of a
+request with no known thing still come from the oracle's shared stream.
 
 It never makes a network call and refuses to start outside the simulator (``SD_SIM=1``):
 an oracle's answers must never pass for a model's on a real search. Its assessments say

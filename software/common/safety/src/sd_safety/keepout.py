@@ -16,15 +16,19 @@ than the margin (an end already inside it: no closer than that end) and stay ins
 charter. A leg of a way around that comes closer than the margin to another cylinder
 gets a way around that one too, so every way around keeps the margin from every
 cylinder, not only from the ones it was made for. A route that starts inside cylinders
-first leaves them along a straight leg that goes deeper into none of them and enters no
-other: the given direction (the leg being flown), away from their centres, or the
-nearest direction that works. Pure functions in the plane of ``sd_safety.targets.Plane``.
+first leaves them along a straight leg that goes deeper into none of them, enters no
+other and stays inside the charter, ending at least ``_EXIT_EDGE_M`` (or the caller's
+reserve) short of its edge along that leg: the given direction (the leg being flown),
+away from their centres, or the nearest direction that works. When the rest of the
+route has no way around after that way out, the next ways out are tried
+(``_EXIT_TRIES`` at most). Pure functions in the plane of ``sd_safety.targets.Plane``.
 """
 
 from __future__ import annotations
 
+import itertools
 import math
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from itertools import pairwise
 from typing import Final
 
@@ -58,6 +62,8 @@ _GROUP_WORK_MAX: Final = 50_000
 _MARGIN_EPS_M: Final = 1e-6  # a leg along a margin polygon's edge touches the margin
 _EXIT_EPS_M: Final = 0.5  # past the circle when leaving a cylinder
 _EXIT_STEP: Final = math.radians(5.0)  # the directions tried when leaving cylinders
+_EXIT_EDGE_M: Final = 2.0  # a way out ends at least this far short of the charter's edge
+_EXIT_TRIES: Final = 4  # ways out tried in turn when the rest of the route finds no way
 
 Circle = tuple[Xy, float]  # centre, radius
 
@@ -109,6 +115,7 @@ def reroute(
     *,
     area: Polygon | None = None,
     exit_dir: Xy | None = None,
+    exit_reserve_m: float = 0.0,
 ) -> list[Xy] | None:
     """``route`` (current position first) with every crossing of a cylinder replaced by
     a way around it, or None when there is none that stays inside ``area``.
@@ -117,21 +124,32 @@ def reroute(
     When the position is inside cylinders and the first leg would go deeper, the route
     first leaves them (``_exit``): along ``exit_dir`` when given (the leg being flown)
     if that works, else away from their centres, never by a way that leaves ``area``
-    (near the charter's edge the way out turns back in). Every leg after that is clear
-    of the cylinders, and the whole route must lie inside ``area``."""
+    (near the charter's edge the way out turns back in). The way out's leg keeps
+    ``exit_reserve_m`` (at least ``_EXIT_EDGE_M``) of room past its end, clear of every
+    cylinder and inside ``area``, for a caller that flies on past it. Every leg after
+    that is clear of the cylinders, and the whole route must lie inside ``area``; when
+    the rest finds no way around, the next way out is tried (``_EXIT_TRIES`` at most)."""
     if not route:
         return []
     here = route[0]
-    out = [here]
-    way_out = _exit(here, route[1] if len(route) > 1 else None, cyl, exit_dir, area)
-    if way_out is None:
-        return None
-    out += way_out
-    out += [p for p in route[1:] if not any(math.dist(p, c) < r for c, r in cyl)]
+    rest = [p for p in route[1:] if not any(math.dist(p, c) < r for c, r in cyl)]
+    nxt = route[1] if len(route) > 1 else None
+    work = [_GROUP_WORK_MAX]  # what the grouped ways around may still check, every try
+    ways = _exits(here, nxt, cyl, exit_dir, area, exit_reserve_m)
+    for way_out in itertools.islice(ways, _EXIT_TRIES):
+        out = _around_all([here, *way_out, *rest], len(way_out), cyl, area, work)
+        if out is not None:
+            return out
+    return None
+
+
+def _around_all(
+    out: list[Xy], start: int, cyl: Sequence[Circle], area: Polygon | None, work: list[int]
+) -> list[Xy] | None:
+    """``out`` with every leg from ``start`` on that crosses a cylinder replaced by a way
+    around it; None when there is none inside ``area``."""
     made = [False] * len(out)  # a corner of a way around (its legs keep the margin)
-    start = len(way_out)  # the leg out of the cylinders is clear already (``_exit``)
-    i, detours = start, 0
-    work = [_GROUP_WORK_MAX]  # what the grouped ways around may still check
+    i, detours = start, 0  # the leg out of the cylinders is clear already (``_exits``)
     while i < len(out) - 1:
         a, b = out[i], out[i + 1]
         hit = _first_hit(a, b, cyl, margin=made[i] or made[i + 1])
@@ -161,26 +179,30 @@ def reroute(
     return out
 
 
-def _exit(
+def _exits(
     here: Xy,
     nxt: Xy | None,
     cyl: Sequence[Circle],
     exit_dir: Xy | None,
-    area: Polygon | None = None,
-) -> list[Xy] | None:
-    """The way out of the cylinders ``here`` is in: no corner when it is in none or the
-    first leg leaves without going deeper, else one corner past all of them; None when
-    no straight way out goes deeper into none of them, enters no other and stays inside
-    ``area``.
+    area: Polygon | None,
+    reserve_m: float,
+) -> Iterator[list[Xy]]:
+    """The ways out of the cylinders ``here`` is in, best first: no corner when it is in
+    none or the first leg leaves without going deeper, else one corner past all of them
+    along a straight leg that goes deeper into none of them, enters no other and stays
+    inside ``area`` with ``max(reserve_m, _EXIT_EDGE_M)`` of room past its end. None at
+    all when there is no such leg.
 
-    The direction is the first that works of: ``exit_dir``, away from the centres
-    together, straight out from each centre, square to each (nearest the next corner
-    first), then every ``_EXIT_STEP`` around, nearest the first of these first."""
+    The directions in turn: ``exit_dir``, away from the centres together, straight out
+    from each centre, square to each (nearest the next corner first), then every
+    ``_EXIT_STEP`` around, nearest the first of these first."""
     inside = [(c, r) for c, r in cyl if math.dist(here, c) < r]
     if not inside:
-        return []
+        yield []
+        return
     if nxt is not None and not any(leg_enters(here, nxt, c, r) for c, r in inside):
-        return []
+        yield []
+        return
     away = [u for c, _ in inside if (u := _unit((here[0] - c[0], here[1] - c[1])))]
     # Square to a centre the distance grows too: between two centres the only way out.
     ahead = _unit((nxt[0] - here[0], nxt[1] - here[1])) if nxt is not None else None
@@ -199,14 +221,19 @@ def _exit(
     for k in sorted(range(steps), key=lambda k: min(k, steps - k)):
         a = heading + k * _EXIT_STEP
         candidates.append((math.cos(a), math.sin(a)))
+    room = max(reserve_m, _EXIT_EDGE_M)
+    seen: list[Xy] = []
     for u in candidates:
+        if any(u[0] * v[0] + u[1] * v[1] > 1.0 - 1e-9 for v in seen):
+            continue  # the same direction again
+        seen.append(u)
         p = _leave(here, u, inside)
-        if any(leg_enters(here, p, c, r) for c, r in cyl):
+        far = (p[0] + room * u[0], p[1] + room * u[1])
+        if any(leg_enters(here, far, c, r) for c, r in cyl):
             continue
-        if area is not None and area.leg_outside_by(here, p) > 0.0:
+        if area is not None and area.leg_outside_by(here, far) > 0.0:
             continue
-        return [p]
-    return None
+        yield [p]
 
 
 def _unit(v: Xy) -> Xy | None:
