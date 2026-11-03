@@ -80,6 +80,7 @@ class FollowPathHandler:
             params.alt_m,
             speed,
             target_state=S.TRANSIT,
+            skill=self.name,
         )
         self._home = ctx.charter.home
         self._plane = ctx.plane

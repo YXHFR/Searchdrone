@@ -64,6 +64,9 @@ class GateRequest(SdModel):
     phase: Literal["submit", "approve", "estimate", "onboard"]
     approval_confirmations: list[str] = Field(default_factory=list[str])  # phase approve: ticked
     planned_path: list[LatLonAlt] | None = None  # onboard: the handler's path; ground: None
+    # onboard: the speed the handler flies the path at (a search route's passage through
+    # unconfirmed cylinders is counted at it, ``sd_safety.keepout.passage_for``); ground: None
+    planned_speed_ms: float | None = Field(default=None, gt=0, le=100)
 
 
 class ClearanceState(SdModel):

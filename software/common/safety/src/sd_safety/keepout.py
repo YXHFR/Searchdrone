@@ -22,6 +22,21 @@ reserve) short of its edge along that leg: the given direction (the leg being fl
 away from their centres, or the nearest direction that works. When the rest of the
 route has no way around after that way out, the next ways out are tried
 (``_EXIT_TRIES`` at most). Pure functions in the plane of ``sd_safety.targets.Plane``.
+
+**Passage** (owner decision 2026-11-03): a cylinder has no top; it is a vertical cylinder
+of any height. A search route (``KEEPOUT_PASS_SKILLS``) of a charter that allows overflight
+may cross the cylinder of an UNCONFIRMED person (``UNCONFIRMED_SOURCES``: a detection, an
+open candidate) straight through (:func:`passes`): no corner inside it (no hover, turn or
+end of a leg), no descent while inside, and at most ``Passage.max_chord_m`` of the leg
+inside it (``KEEPOUT_PASS_MAX_S`` at the route's speed). Only the first leg, from where the
+drone is, may start inside one (the cylinder came around the drone). Confirmed finds, and
+every cylinder without a passage (live without the permit, every other move), are never
+entered. :func:`reroute` with a passage first drops the corners inside unconfirmed
+cylinders and joins their neighbours straight; a cylinder that a leg then may not pass is
+gone around like a confirmed one. :func:`escape` is the way out of a drone boxed in: the
+shortest straight leg to a point clear of every cylinder that enters no confirmed one
+(an unconfirmed one may be crossed even without a passage: staying over a possible person
+is worse).
 """
 
 from __future__ import annotations
@@ -29,22 +44,34 @@ from __future__ import annotations
 import itertools
 import math
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from itertools import pairwise
 from typing import Final
 
+from sd_safety.constants import GOTO_ALT_STEP_TOL_M, KEEPOUT_PASS_MAX_S
+from sd_safety.policy import KEEPOUT_PASS_SKILLS
 from sd_safety.targets import Plane, Polygon, Xy, point_segment_distance
-from sd_schemas.base import LatLon
+from sd_schemas.base import LatLon, LatLonAlt
+from sd_schemas.charter import MissionCharter
 from sd_schemas.keepout import Keepout, leg_enters
 from sd_schemas.skills import OrbitRing
 
 __all__ = [
     "KEEPOUT_ARC_MARGIN_M",
     "ORBIT_KEEPOUT_MARGIN_M",
+    "UNCONFIRMED_SOURCES",
     "Circle",
+    "Passage",
+    "chord_m",
     "circles",
+    "escape",
+    "passage_for",
+    "passes",
     "reroute",
     "ring_violation",
     "route_violation",
+    "split",
+    "unconfirmed",
     "xy_route_violation",
 ]
 
@@ -68,35 +95,146 @@ _EXIT_EDGE_M: Final = 2.0  # room along a way out's leg past its end, inside the
 # the grouped ways around share one _GROUP_WORK_MAX. The slowest call fuzzing found
 # took about 0.1 s on the reference fuzz machine (a measurement, not a bound).
 _EXIT_TRIES: Final = 4
+# A reroute with a passage plans again with the unconfirmed cylinders its legs may not pass
+# counted as confirmed ones, at most this many times (each try is one ``reroute``).
+_PROMOTE_TRIES: Final = 4
+_ESCAPE_STEP: Final = math.radians(5.0)  # the directions an escape tries
+
+# The sources of a cylinder around a person nobody has confirmed: a search route may pass
+# through them (with a passage). Any other source (a confirmed find, and any source added
+# later, such as an operator's marking) keeps the full cylinder.
+UNCONFIRMED_SOURCES: Final = frozenset({"detection", "candidate"})
 
 Circle = tuple[Xy, float]  # centre, radius
+
+
+@dataclass(frozen=True, slots=True)
+class Passage:
+    """How a search route may cross unconfirmed cylinders: straight through, at most
+    ``max_chord_m`` of a leg inside each."""
+
+    max_chord_m: float
+
+    @classmethod
+    def at(cls, speed_ms: float) -> Passage:
+        """``KEEPOUT_PASS_MAX_S`` at the route's speed."""
+        return cls(max_chord_m=max(0.0, speed_ms) * KEEPOUT_PASS_MAX_S)
+
+
+def passage_for(
+    skill: str, charter: MissionCharter | None, speed_ms: float | None
+) -> Passage | None:
+    """The passage of a ``skill`` flown at ``speed_ms`` under ``charter``: only for the
+    search routes (``KEEPOUT_PASS_SKILLS``) of a charter that allows overflight, with a
+    known speed; None (no cylinder may be entered) otherwise."""
+    if charter is None or not charter.overflight_allowed or skill not in KEEPOUT_PASS_SKILLS:
+        return None
+    if speed_ms is None or not math.isfinite(speed_ms) or speed_ms <= 0.0:
+        return None
+    return Passage.at(speed_ms)
+
+
+def unconfirmed(k: Keepout) -> bool:
+    return k.source in UNCONFIRMED_SOURCES
+
+
+def split(keepouts: Sequence[Keepout]) -> tuple[list[Keepout], list[Keepout]]:
+    """(the confirmed cylinders, the unconfirmed ones)."""
+    return [k for k in keepouts if not unconfirmed(k)], [k for k in keepouts if unconfirmed(k)]
 
 
 def circles(keepouts: Sequence[Keepout], plane: Plane) -> list[Circle]:
     return [(plane.xy(k.lat, k.lon), k.radius_m) for k in keepouts]
 
 
-def xy_route_violation(route: Sequence[Xy], cyl: Sequence[Circle]) -> int | None:
-    """The index into ``cyl`` of the first cylinder the route enters, or None. A route of
-    one point is a point: inside a cylinder is a violation."""
+def chord_m(a: Xy, b: Xy, c: Xy, r: float) -> float:
+    """How much of the straight leg ``a`` -> ``b`` lies inside the circle (``c``, ``r``)."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    seg = math.hypot(dx, dy)
+    if seg == 0.0:
+        return 0.0
+    ux, uy = dx / seg, dy / seg
+    ox, oy = a[0] - c[0], a[1] - c[1]
+    bq = ox * ux + oy * uy
+    disc = bq * bq - (ox * ox + oy * oy - r * r)
+    if disc <= 0.0:
+        return 0.0
+    root = math.sqrt(disc)
+    return max(0.0, min(seg, -bq + root) - max(0.0, -bq - root))
+
+
+def passes(a: Xy, b: Xy, c: Xy, r: float, passage: Passage, *, first: bool) -> bool:
+    """Whether a search route may fly the leg ``a`` -> ``b`` past the unconfirmed circle
+    (``c``, ``r``): it ends outside it (no corner, hover or turn inside), starts outside it
+    unless it is the ``first`` leg (from where the drone is), and has at most
+    ``passage.max_chord_m`` inside it. A leg that never comes inside passes."""
+    if math.dist(b, c) < r:
+        return False
+    if not first and math.dist(a, c) < r:
+        return False
+    return chord_m(a, b, c, r) <= passage.max_chord_m
+
+
+def xy_route_violation(
+    route: Sequence[Xy],
+    cyl: Sequence[Circle],
+    soft: Sequence[Circle] = (),
+    passage: Passage | None = None,
+    *,
+    descends: Sequence[bool] = (),
+) -> int | None:
+    """The index into ``[*cyl, *soft]`` of the first cylinder the route enters, or None. A
+    route of one point is a point: inside a cylinder is a violation. ``soft`` are the
+    unconfirmed cylinders: with a ``passage`` a leg may pass through them (:func:`passes`),
+    except a leg that ``descends`` (by index); without one they are like ``cyl``."""
     if len(route) == 1:
         p = route[0]
-        return next((i for i, (c, r) in enumerate(cyl) if math.dist(p, c) < r), None)
-    for a, b in pairwise(route):
+        return next((i for i, (c, r) in enumerate([*cyl, *soft]) if math.dist(p, c) < r), None)
+    for j, (a, b) in enumerate(pairwise(route)):
         for i, (c, r) in enumerate(cyl):
             if leg_enters(a, b, c, r):
                 return i
+        full = passage is None or (j < len(descends) and descends[j])
+        for i, (c, r) in enumerate(soft):
+            if full:
+                if leg_enters(a, b, c, r):
+                    return len(cyl) + i
+            elif passage is not None and not passes(a, b, c, r, passage, first=j == 0):
+                return len(cyl) + i
     return None
 
 
+def _descends(route: Sequence[LatLon]) -> list[bool]:
+    """Per leg: whether it ends lower than it starts (by more than the altitude's step)."""
+    out: list[bool] = []
+    for a, b in pairwise(route):
+        if isinstance(a, LatLonAlt) and isinstance(b, LatLonAlt):
+            out.append(b.alt_amsl_m < a.alt_amsl_m - GOTO_ALT_STEP_TOL_M)
+        else:
+            out.append(False)
+    return out
+
+
 def route_violation(
-    route: Sequence[LatLon], keepouts: Sequence[Keepout], plane: Plane
+    route: Sequence[LatLon],
+    keepouts: Sequence[Keepout],
+    plane: Plane,
+    passage: Passage | None = None,
 ) -> Keepout | None:
-    """The first cylinder the route (corners, current position first) enters, or None."""
+    """The first cylinder the route (corners, current position first) enters, or None.
+    With a ``passage`` its legs may pass through unconfirmed cylinders (:func:`passes`),
+    never while descending (a route with heights)."""
     if not route or not keepouts:
         return None
-    found = xy_route_violation([plane.point(p) for p in route], circles(keepouts, plane))
-    return None if found is None else keepouts[found]
+    pts = [plane.point(p) for p in route]
+    if passage is None:
+        found = xy_route_violation(pts, circles(keepouts, plane))
+        return None if found is None else keepouts[found]
+    hard, soft = split(keepouts)
+    found = xy_route_violation(
+        pts, circles(hard, plane), circles(soft, plane), passage, descends=_descends(route)
+    )
+    return None if found is None else [*hard, *soft][found]
 
 
 def ring_violation(ring: OrbitRing, keepouts: Sequence[Keepout], plane: Plane) -> Keepout | None:
@@ -120,9 +258,17 @@ def reroute(
     area: Polygon | None = None,
     exit_dir: Xy | None = None,
     exit_reserve_m: float = 0.0,
+    soft: Sequence[Circle] = (),
+    passage: Passage | None = None,
 ) -> list[Xy] | None:
     """``route`` (current position first) with every crossing of a cylinder replaced by
     a way around it, or None when there is none that stays inside ``area``.
+
+    ``soft`` are the unconfirmed cylinders. Without a ``passage`` they count as ``cyl``.
+    With one, the corners inside them are dropped and the route is planned around ``cyl``
+    alone; each unconfirmed cylinder one of its legs may not pass (:func:`passes`) then
+    counts as confirmed and the route is planned again (``_PROMOTE_TRIES`` at most), so the
+    result is clear by :func:`xy_route_violation` with the same passage.
 
     Corners inside a cylinder are dropped (the rest of the route never goes back in).
     When the position is inside cylinders and the first leg would go deeper, the route
@@ -133,6 +279,36 @@ def reroute(
     cylinder and inside ``area``, for a caller that flies on past it. Every leg after
     that is clear of the cylinders, and the whole route must lie inside ``area``; when
     the rest finds no way around, the next way out is tried (``_EXIT_TRIES`` at most)."""
+    if passage is None or not soft:
+        return _reroute(route, [*cyl, *soft], area, exit_dir, exit_reserve_m)
+    if not route:
+        return []
+    hard, left = list(cyl), list(soft)
+    pts = [route[0], *(p for p in route[1:] if not any(math.dist(p, c) < r for c, r in soft))]
+    for _ in range(_PROMOTE_TRIES):
+        out = _reroute(pts, hard, area, exit_dir, exit_reserve_m)
+        if out is None:
+            return None
+        legs = list(pairwise(out))
+        bad = [
+            s
+            for s in left
+            if not all(passes(a, b, *s, passage, first=j == 0) for j, (a, b) in enumerate(legs))
+        ]
+        if not bad:
+            return out
+        hard += bad
+        left = [s for s in left if s not in bad]
+    return None
+
+
+def _reroute(
+    route: Sequence[Xy],
+    cyl: Sequence[Circle],
+    area: Polygon | None,
+    exit_dir: Xy | None,
+    exit_reserve_m: float,
+) -> list[Xy] | None:
     if not route:
         return []
     here = route[0]
@@ -383,3 +559,54 @@ def _arc(a: Xy, b: Xy, circle: Circle, sign: float) -> list[Xy]:
         t = first + sign * sweep * k / n
         out.append((c[0] + corner_r * math.cos(t), c[1] + corner_r * math.sin(t)))
     return out
+
+
+# --- boxed in ---------------------------------------------------------------------------
+
+
+def escape(
+    here: Xy, hard: Sequence[Circle], soft: Sequence[Circle], area: Polygon | None
+) -> Xy | None:
+    """The way out of a drone boxed in over a possible person: the nearest point clear of
+    every cylinder by ``KEEPOUT_ARC_MARGIN_M`` along a straight leg from ``here`` that goes
+    deeper into no confirmed cylinder (``hard``) and enters none, and stays inside
+    ``area``. The leg may cross unconfirmed cylinders (``soft``) with or without a passage:
+    flying through one is shorter over a possible person than hovering in it. None when
+    ``here`` lies in no cylinder, or no such leg exists (the caller flies home)."""
+    every = [*hard, *soft]
+    if not any(math.dist(here, c) < r for c, r in every):
+        return None
+    best: tuple[float, Xy] | None = None
+    for k in range(round(2 * math.pi / _ESCAPE_STEP)):
+        u = (math.cos(k * _ESCAPE_STEP), math.sin(k * _ESCAPE_STEP))
+        t = _clear_along(here, u, every)
+        if best is not None and t >= best[0]:
+            continue
+        p = (here[0] + t * u[0], here[1] + t * u[1])
+        if any(leg_enters(here, p, c, r) for c, r in hard):
+            continue
+        if area is not None and area.leg_outside_by(here, p) > 0.0:
+            continue
+        best = (t, p)
+    return None if best is None else best[1]
+
+
+def _clear_along(here: Xy, u: Xy, cyl: Sequence[Circle]) -> float:
+    """How far along the unit direction ``u`` from ``here`` the first point lies that is
+    clear of every circle (c, r + ``KEEPOUT_ARC_MARGIN_M``), plus ``_EXIT_EPS_M``."""
+    spans: list[tuple[float, float]] = []
+    for c, r in cyl:
+        ox, oy = here[0] - c[0], here[1] - c[1]
+        big_r = r + KEEPOUT_ARC_MARGIN_M
+        bq = ox * u[0] + oy * u[1]
+        disc = bq * bq - (ox * ox + oy * oy - big_r * big_r)
+        if disc > 0.0:
+            root = math.sqrt(disc)
+            spans.append((-bq - root, -bq + root))
+    t = 0.0
+    for lo, hi in sorted(spans):
+        if lo > t:
+            break
+        if hi > t:
+            t = hi + _EXIT_EPS_M
+    return t

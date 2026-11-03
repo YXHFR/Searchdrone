@@ -30,11 +30,12 @@ from sd_safety.constants import (
     STATE_MAX_AGE_MS,
     TAKEOFF_BATTERY_MARGIN_PCT,
 )
-from sd_safety.keepout import ring_violation, route_violation
+from sd_safety.keepout import passage_for, ring_violation, route_violation
 from sd_safety.limits import area_reach_from_home_m, fc_area_max_from_home_m
 from sd_safety.policy import (
     ALLOWED_OUTSIDE_CHARTER_SKILLS,
     ALWAYS_REQUIRE_APPROVAL,
+    BASED_ON_EXEMPT,
     CLEARANCE_EXEMPT,
     GROUND_UNCHECKED_TARGETS,
     KEEPOUT_EXEMPT,
@@ -371,7 +372,9 @@ def _stale(f: Facts) -> list[Finding]:
 
 
 def _based_on(f: Facts) -> list[Finding]:
-    if not f.moves:
+    """An order built on a picture from before the last state change is refused, except
+    going home and hovering (``BASED_ON_EXEMPT``): they do no harm on an old picture."""
+    if not f.moves or f.req.skill in BASED_ON_EXEMPT:
         return []
     ref, ctx = f.req.based_on, f.ctx
     changed = (
@@ -612,7 +615,10 @@ def _keepout(f: Facts) -> list[Finding]:
 
     The targets of ``KEEPOUT_TARGET_SKILLS`` are checked on both sides; onboard, the
     handler's path is checked for every other move as well (``KEEPOUT_EXEMPT`` aside).
-    The cylinders a closer look flies over (``suspended_keepout_ids``) are left out."""
+    The cylinders a closer look flies over (``suspended_keepout_ids``) are left out.
+    Onboard, the planned path of a search route under a charter that allows overflight
+    may pass straight through unconfirmed cylinders at its planned speed
+    (``sd_safety.keepout.passage_for``, ``GateRequest.planned_speed_ms``)."""
     suspended = set(f.ctx.suspended_keepout_ids)
     keepouts = tuple(k for k in f.ctx.keepouts if k.keepout_id not in suspended)
     plane = f.plane
@@ -622,10 +628,13 @@ def _keepout(f: Facts) -> list[Finding]:
     routes: list[list[LatLon]] = []
     if t is not None and f.req.skill in KEEPOUT_TARGET_SKILLS and t.path:
         routes.append(list(t.path))
-    if f.req.planned_path:
-        routes.append([LatLon(lat=p.lat, lon=p.lon) for p in f.req.planned_path])
     for route in routes:
         hit = route_violation(route, keepouts, plane)
+        if hit is not None:
+            return _keepout_finding(hit.keepout_id, "route")
+    if f.req.planned_path:
+        passage = passage_for(f.req.skill, f.ctx.charter, f.req.planned_speed_ms)
+        hit = route_violation(f.req.planned_path, keepouts, plane, passage)
         if hit is not None:
             return _keepout_finding(hit.keepout_id, "route")
     ring = t.ring if t is not None and f.req.skill in KEEPOUT_TARGET_SKILLS else None
