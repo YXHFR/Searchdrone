@@ -32,8 +32,9 @@ FALLBACK_GRACE_MS: Final = 10_000
 
 MISSION_FALLBACK_SV: Final = (
     "Ombordsdatorn styr inte drönaren längre. Sökningen har avbrutits och drönaren svävar där "
-    "den är. Den flyger inte hem av sig själv. Tryck FLYG HEM för att flyga hem (rakt, även "
-    "genom förbudszoner runt personer) eller ta över med RC."
+    "den är. Den flyger hem bara om du trycker FLYG HEM eller om flygkontrollerns eget skydd "
+    "slår till (lågt batteri, tappad länk till marken, geostängslet). Tryck FLYG HEM för att "
+    "flyga hem (rakt, även genom förbudszoner runt personer) eller ta över med RC."
 )
 
 

@@ -117,7 +117,8 @@ describe("alertView", () => {
     expect(say(v)).toContain("Ombordsdatorn styr inte drönaren längre.");
     // The flight controller hovers at the mission's end and does not fly home by itself.
     expect(say(v)).toContain("svävar där den är");
-    expect(say(v)).toContain("Den flyger inte hem av sig själv.");
+    expect(say(v)).toContain("Den flyger hem bara om du trycker FLYG HEM");
+    expect(say(v)).toContain("lågt batteri, tappad länk till marken, geostängslet");
     expect(say(v)).toContain("Tryck FLYG HEM");
     expect(say(v)).toContain("ta över med RC");
   });
