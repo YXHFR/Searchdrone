@@ -267,8 +267,9 @@ def _sk04(runs: list[dict[str, Any]]) -> list[Requirement]:
     tops = [v for vs in by_run for v in vs]
     # One verdict per run: the oracle draws a thing's field once per run (keyed by seed,
     # thing and field), so its cards in one run say the same and are not separate draws.
+    # A run with both counts as conflict: the operator is shown the conflict either way.
     seen = [
-        next(v for v in vs if v in ("conflict", "match"))
+        "conflict" if "conflict" in vs else "match"
         for vs in by_run
         if any(v in ("conflict", "match") for v in vs)
     ]

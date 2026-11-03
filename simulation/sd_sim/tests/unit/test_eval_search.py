@@ -97,6 +97,9 @@ def test_sk04_counts_the_hikers_verdicts_that_saw_the_top() -> None:
     assert not hiker.ok and hiker.value == "7/10 = 0.70 (38 kort)"
     first, hiker = _sk04([["conflict"]] * 7 + [["match"]] * 3)
     assert not hiker.ok and not hiker.too_few  # 0.70
+    # A run with both counts as conflict, whichever came first.
+    first, hiker = _sk04([["match", "conflict"]] * 8 + [["match"]] * 2)
+    assert hiker.ok and hiker.value == "8/10 = 0.80 (18 kort)"
 
 
 def test_sk04_with_too_few_sightings_says_so_and_never_passes(tmp_path: Path) -> None:

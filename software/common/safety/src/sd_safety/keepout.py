@@ -63,7 +63,11 @@ _MARGIN_EPS_M: Final = 1e-6  # a leg along a margin polygon's edge touches the m
 _EXIT_EPS_M: Final = 0.5  # past the circle when leaving a cylinder
 _EXIT_STEP: Final = math.radians(5.0)  # the directions tried when leaving cylinders
 _EXIT_EDGE_M: Final = 2.0  # a way out ends at least this far short of the charter's edge
-_EXIT_TRIES: Final = 4  # ways out tried in turn when the rest of the route finds no way
+# Ways out tried in turn when the rest of the route finds no way. The ways around single
+# cylinders and the checks against the area run once per try (up to _EXIT_TRIES times);
+# the grouped ways around share one _GROUP_WORK_MAX. The slowest call fuzzing found
+# took about 0.1 s.
+_EXIT_TRIES: Final = 4
 
 Circle = tuple[Xy, float]  # centre, radius
 
@@ -122,7 +126,7 @@ def reroute(
 
     Corners inside a cylinder are dropped (the rest of the route never goes back in).
     When the position is inside cylinders and the first leg would go deeper, the route
-    first leaves them (``_exit``): along ``exit_dir`` when given (the leg being flown)
+    first leaves them (``_exits``): along ``exit_dir`` when given (the leg being flown)
     if that works, else away from their centres, never by a way that leaves ``area``
     (near the charter's edge the way out turns back in). The way out's leg keeps
     ``exit_reserve_m`` (at least ``_EXIT_EDGE_M``) of room past its end, clear of every
