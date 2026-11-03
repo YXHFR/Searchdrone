@@ -19,6 +19,7 @@ from sd_brain.loop import BACK_TEXT, DEADLINE_TEXT, RATE_TEXT, STOP_FALLBACK
 from sd_brain.memory import mission_request, pending_request
 from sd_brain.turn import AiAction, OutMessage, TurnDiagnostics, TurnInput, TurnOutput
 from sd_schemas.base import new_id
+from sd_schemas.commander import SkillRequest, SkillSubmitResult
 from sd_schemas.decide import ChatIntentReport, ChoiceAnswer, DecideRequest, DecisionEngine
 
 REJECT = {
@@ -501,6 +502,64 @@ async def test_an_end_that_never_comes_holds_the_idle_tick_one_period_only() -> 
     await loop.settle()
     assert [t.trigger for t in backend.turns] == ["idle_tick", "idle_tick"]
     assert len(fg.commands) == 1
+
+
+async def test_an_end_that_comes_during_the_submit_is_not_waited_for() -> None:
+    """The ground can publish an order's end before its HTTP answer (a ground skill such
+    as report is done on insert, a dispatch can fail fast). The skill_event turn has then
+    run already; the next idle turn does not wait for an end that came."""
+    backend = Steps(act("goto", pin="P1"), say("Framme vid P1."), say("Inget nytt."))
+    loop, fg, _ = make_loop(backend)
+    orig = fg.submit
+
+    async def submit(mission_id: str, req: SkillRequest) -> SkillSubmitResult:
+        result = await orig(mission_id, req)
+        body = {"command_id": str(req.command_id), "skill": req.skill, "status": "done"}
+        evt = {"type": "event.skill", "body": body}
+        fg.apply_event(evt)
+        loop.handle_event(evt)
+        return result
+
+    fg.submit = submit
+    loop.idle_tick(force=True)
+    await loop.settle()
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["idle_tick", "skill_event", "idle_tick"]
+
+
+@pytest.mark.parametrize("decision", ["REJECT", "error"])
+async def test_an_order_that_did_not_go_through_is_not_waited_for(decision: str) -> None:
+    backend = Steps(act("goto", pin="P1"), say("Inget nytt."), say("Inget nytt."))
+    loop, fg, _ = make_loop(backend)
+    if decision == "error":
+        orig = fg.submit
+
+        async def submit(mission_id: str, req: SkillRequest) -> SkillSubmitResult:
+            fg.submit = orig
+            raise GroundError("sd-ground svarar inte", 503)
+
+        fg.submit = submit
+    else:
+        fg.responses = [{"match": {"skill": "goto"}, "result": {"decision": "REJECT"}}]
+    loop.idle_tick(force=True)
+    await loop.settle()  # a REJECT also runs its retry turn (a plain say here)
+    assert not loop._unended
+    turns = len(backend.turns)
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert len(backend.turns) == turns + 1 and backend.turns[-1].trigger == "idle_tick"
+
+
+async def test_a_new_mission_from_an_event_forgets_the_old_orders() -> None:
+    backend = Steps(act("goto", pin="P1"))
+    loop, _, _ = make_loop(backend)
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert loop._unended
+    new = "01a150c5-0000-7000-8000-0000000000ff"
+    loop.handle_event({"type": "event.mission", "mission_id": new, "body": {"created": True}})
+    assert not loop._unended
 
 
 @pytest.mark.parametrize(("kind", "waits"), [("charter", False), ("command", True)])
