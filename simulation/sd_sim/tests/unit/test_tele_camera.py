@@ -52,8 +52,9 @@ def test_the_tele_camera_is_the_hq_camera_behind_a_20_degree_lens() -> None:
     sensor_w, sensor_h = cameras.TELE_SENSOR_PX
     assert (sensor_w, sensor_h) == (4056, 3040)
     assert tele.width / tele.height == pytest.approx(sensor_w / sensor_h, rel=0.005)
-    # Rendered at the main camera's scale (1280 of Camera Module 3's 4608 px), so the zoom
-    # between them is the real one: 4056 px / 20 deg against 4608 px / 66 deg, about 2.9x.
+    # Rendered at the main camera's scale (both at full size), so the zoom between them is
+    # the real one: 4056 px / 20 deg against 4608 px / 66 deg, about 2.9x.
+    assert (tele.width, tele.height) == (sensor_w, sensor_h)
     real = (sensor_w / 20.0) / (4608 / 66.0)
     assert tele.px_per_deg / world.MAIN_STILLS.px_per_deg == pytest.approx(real, rel=0.01)
 
@@ -62,9 +63,9 @@ def test_the_tele_camera_is_the_hq_camera_behind_a_20_degree_lens() -> None:
 def test_a_person_is_about_three_times_larger_in_the_tele_still(height_m: float) -> None:
     main, tele = world.MAIN_STILLS, cameras.tele()
     ratio = _person_px(tele, height_m) / _person_px(main, height_m)
-    assert ratio == pytest.approx(3.24, abs=0.05)  # 1128/tan(10) against 1280/tan(33)
-    if height_m == 40.0:  # the scripted search height: tiny in the main still, clear in tele
-        assert _person_px(main, height_m) < 16 <= 32 <= _person_px(tele, height_m)
+    assert ratio == pytest.approx(3.24, abs=0.05)  # 4056/tan(10) against 4608/tan(33)
+    if height_m == 40.0:  # the scripted search height: about 45 px in the main still
+        assert 32 <= _person_px(main, height_m) < 50 < 140 <= _person_px(tele, height_m)
 
 
 def test_the_model_has_no_tele_camera_by_default() -> None:
@@ -89,7 +90,7 @@ def test_the_tele_camera_sits_beside_the_stills_camera_and_looks_down() -> None:
         hfov = float(s.findtext("camera/horizontal_fov") or 0)
         assert hfov == pytest.approx(math.radians(14.0), abs=1e-6)
     assert sensors["tele_boxes"].findtext("camera/box_type") == "2d"
-    assert main.findtext("camera/image/width") == "1280"  # the stills camera as before
+    assert main.findtext("camera/image/width") == "4608"  # the stills camera as before
     assert main.findtext("topic") == "/sd_i3/stills"
 
 
@@ -114,10 +115,10 @@ def test_tele_is_off_unless_switched_on() -> None:
 
 def test_tele_settings_choose_the_camera() -> None:
     cfg = config.load({"tele": "true", "physics": "gz", "tele_hfov_deg": "14"})
-    assert cfg.tele_camera() == cameras.tele(1128, 846, 14.0)
-    env = {"SD_SIM__TELE": "1", "SD_SIM__TELE_WIDTH": "4056", "SD_SIM__TELE_HEIGHT": "3040"}
-    full = config.load({"physics": "gz"}, environ=env)
-    assert full.tele_camera() == cameras.tele(4056, 3040, 20.0)
+    assert cfg.tele_camera() == cameras.tele(4056, 3040, 14.0)
+    env = {"SD_SIM__TELE": "1", "SD_SIM__TELE_WIDTH": "1128", "SD_SIM__TELE_HEIGHT": "846"}
+    small = config.load({"physics": "gz"}, environ=env)
+    assert small.tele_camera() == cameras.tele(1128, 846, 20.0)
 
 
 @pytest.mark.parametrize(
@@ -202,8 +203,8 @@ def test_sd_onboard_reads_the_tele_stills_as_a_second_camera(tmp_path: Path) -> 
     assert env["SD_ONBOARD__PERCEPTION__HFOV_DEG"] == "66.0"  # the main camera as before
     assert env["SD_ONBOARD__PERCEPTION__TELE__ENABLED"] == "true"
     assert env["SD_ONBOARD__PERCEPTION__TELE__STILL_DIR"] == str(tele_dir)
-    assert env["SD_ONBOARD__PERCEPTION__TELE__WIDTH_PX"] == "1128"
-    assert env["SD_ONBOARD__PERCEPTION__TELE__HEIGHT_PX"] == "846"
+    assert env["SD_ONBOARD__PERCEPTION__TELE__WIDTH_PX"] == "4056"
+    assert env["SD_ONBOARD__PERCEPTION__TELE__HEIGHT_PX"] == "3040"
     assert env["SD_ONBOARD__PERCEPTION__TELE__HFOV_DEG"] == "20.0"
     plain = services.onboard_env(p, _paths(tmp_path), still_dir=tmp_path / "stills")
     assert not any("TELE" in k for k in plain)

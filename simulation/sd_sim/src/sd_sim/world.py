@@ -63,8 +63,9 @@ BLADE_CP_M = 0.084
 CLA = 4.25
 BLADE_A0_RAD = 0.3
 CAMERA = {"width": 640, "height": 480, "fps": 15, "hfov_deg": 80.0}
-# The stills camera a search scenario adds (the real camera's 66 degrees; 1280 x 720 in CI).
-STILLS = {"width": 1280, "height": 720, "hfov_deg": 66.0, "rate_hz": 1}
+# The stills camera a search scenario adds: the real one, a Raspberry Pi Camera Module 3 at
+# its full 4608 x 2592 behind its 66-degree lens.
+STILLS = {"width": 4608, "height": 2592, "hfov_deg": 66.0, "rate_hz": 1}
 MAIN_STILLS = StillsCamera(
     "stills",
     "boxes",

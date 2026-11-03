@@ -244,6 +244,11 @@ class ModelSource:
     def detect_still(self, still: Still) -> list[Detection]:
         return self.tiled.detect(still.frame)
 
+    @property
+    def last_tiles(self) -> int:
+        """Tiles the last still was cut into (for the perception report)."""
+        return self.tiled.last_tiles
+
 
 def _read_manifest(manifest_path: Path) -> dict[str, Any]:
     try:

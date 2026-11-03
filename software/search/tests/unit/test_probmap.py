@@ -365,6 +365,20 @@ def test_a_confirmed_candidate_is_reported() -> None:
     assert built.confirmed
 
 
+def test_the_plan_camera_is_the_full_resolution_camera_module_3() -> None:
+    """4608 px at 66 degrees (2026-11-03). The pixels only make a person larger: the track
+    spacing comes from the field of view, as for any picture size."""
+    from sd_search.probmap.pod import PLAN_CAMERA, plan_pod
+
+    assert (PLAN_CAMERA.width_px, PLAN_CAMERA.hfov_deg) == (4608, 66.0)
+    small = Camera(width_px=1280, hfov_deg=66.0)
+    assert spacing_m(50, PLAN_CAMERA) == pytest.approx(spacing_m(50, small))
+    assert PERSON_WIDTH_M * PLAN_CAMERA.px_per_m(50) > 32  # was about 10 px at 1280
+    canopy = np.zeros((1, 1))
+    detector = DETECTORS["det_oracle_v0"]
+    assert plan_pod(canopy, 50, detector)[0, 0] > plan_pod(canopy, 50, detector, small)[0, 0]
+
+
 def test_a_surveyed_sector_loses_poa_and_gets_a_pod_between_03_and_095() -> None:
     """Sector A (west) is flown at 40 m with the planned spacing; B is left alone."""
     b = MapBuilder(NoTerrain())

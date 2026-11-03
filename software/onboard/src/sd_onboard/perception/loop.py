@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -143,6 +143,12 @@ def pose_from(t: FcTelemetry, now_ms: int) -> Pose | None:
         speed_ms=t.groundspeed_ms,
         source_ts_ms=t.attitude_mono_ms,
     )
+
+
+def _tiles(sources: Iterable[object]) -> int:
+    """Tiles the detector cut the last still into: the most any source took (a tiled
+    model's ``last_tiles``); 1 when every source looks at the whole picture."""
+    return max([1, *(int(getattr(s, "last_tiles", 1)) for s in sources)])
 
 
 def _angle_diff(a: float, b: float) -> float:
@@ -257,7 +263,10 @@ class PerceptionLoop:
         ``captured_utc``: when it was taken (``_poll``); without it the source's time, else
         now, before the detector runs."""
         stamp = captured_utc or captured.taken_utc or self.clock.utc_now()
-        pinhole = self._camera(camera)
+        frame = captured.still.frame
+        # A smaller still of the camera's shape (a sensor mode, the simulator's render) is
+        # placed with the same field of view; one of another shape is refused (ValueError).
+        pinhole = self._camera(camera).scaled(frame.width, frame.height)
         self.stats.stills += 1
         last = self._last_still_ms.get(camera)
         self._last_still_ms[camera] = now_ms
@@ -275,7 +284,7 @@ class PerceptionLoop:
         start = self.clock.monotonic_ms()
         found = detect_all(captured.still, self.built.sources, self.registry)
         out = process(
-            captured.still.frame,
+            frame,
             found,
             pose,
             pinhole,
@@ -286,6 +295,7 @@ class PerceptionLoop:
             sources=sorted(self.built.sources),
             latency_ms=max(0, self.clock.monotonic_ms() - start),
             rate_hz=rate_hz,
+            tiles=_tiles(self.built.sources.values()),
             command_id=command_id,
             inspect_step=inspect_step,
         )

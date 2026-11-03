@@ -276,6 +276,18 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- The wide stills camera takes its stills at full resolution (the owner's decision of
+  2026-11-03): `[perception]` defaults to 4608 x 2592 at 66 degrees, the Raspberry Pi
+  Camera Module 3 with its standard lens, instead of 1280 x 720. At 50 m that is about
+  71 px per metre (a person 30-35 px across) instead of about 20 (about 10 px). The
+  search plan's camera, the simulator's stills camera and, at the same scale, the tele
+  camera's render (now the HQ Camera's full 4056 x 3040) follow. `sd-onboard` places a
+  smaller still of the camera's shape with the camera's field of view, so the ground a
+  still covers never depends on its pixel count; a still of another shape is refused.
+  Each perception report now says how many tiles the detector cut the still into (45
+  at full resolution, 6 at 1280 x 720). A detector slower than the camera skips stills,
+  as before: each round takes the newest still and removes the older ones. The photo
+  farm has a `profile=cm3` for this camera (not drawn unless asked for).
 - The simulator drill (`sd-brain eval --backend sim`), its golden replays, the
   scenario evaluation and `perf-cloud` now ask the cloud model as a real flight does:
   `[llm]`'s sampling (a completion limit of 4096 tokens, not a fixed 512), prompt

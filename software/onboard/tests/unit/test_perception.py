@@ -744,3 +744,129 @@ def test_every_extra_camera_needs_its_own_name(tmp_path: Path) -> None:
     for extra in ([feed, feed], [Feed(feed.source, TELE_CAM, MAIN)]):
         with pytest.raises(ValueError, match="own name"):
             PerceptionLoop(feed.source, FcTelemetry, lambda _r: None, FakeClock(), CAM, extra=extra)
+
+
+# The Camera Module 3 at its full 4608 x 2592 (the configured camera since 2026-11-03).
+FULL_CAM = PinholeCamera(4608, 2592, 66.0)
+
+
+def test_a_smaller_still_of_the_cameras_shape_is_placed_with_its_field_of_view(
+    tmp_path: Path,
+) -> None:
+    """A 1280 x 720 still (the simulator rendering smaller, a smaller sensor mode) under the
+    full-resolution camera lands where it lands under a 1280 x 720 camera: the ground it
+    covers comes from the field of view, the detail from the still's own pixels."""
+    name = "block1_h30"
+    reports = []
+    for cam in (CAM, FULL_CAM):
+        folder = tmp_path / str(cam.width_px)
+        write_still(folder, name)
+        lp = PerceptionLoop(
+            DirStillSource(folder, synthetic=True),
+            FcTelemetry,
+            lambda _r: None,
+            FakeClock(),
+            cam,
+            env={},
+        )
+        captured = lp.source.poll()
+        assert captured is not None
+        out = lp.handle(captured, telemetry(name, 0), 0)
+        assert out is not None
+        reports.append(out.report)
+    small, full = reports
+    assert full.px_per_m == small.px_per_m
+    for a, b in zip(full.footprint, small.footprint, strict=True):
+        assert (a.lat, a.lon) == pytest.approx((b.lat, b.lon), abs=1e-9)
+    assert [(d.lat, d.lon) for d in full.detections] == [(d.lat, d.lon) for d in small.detections]
+    assert any(truth_error_m(d.lat, d.lon) <= 0.5 for d in full.detections)
+
+
+async def test_a_still_of_another_shape_than_the_camera_counts_as_failing(
+    tmp_path: Path,
+) -> None:
+    """A 4:3 camera given a 16:9 still would place it wrongly: the still is refused."""
+    write_still(tmp_path, "block0_h30")  # 1280 x 720
+    lp = PerceptionLoop(
+        DirStillSource(tmp_path, synthetic=True),
+        lambda: telemetry("block0_h30", 0),
+        lambda _r: None,
+        FakeClock(),
+        PinholeCamera(4056, 3040, 66.0),
+        env={},
+    )
+    await lp._round()  # pyright: ignore[reportPrivateUsage]
+    assert lp.stats.failed == 1 and lp.stats.reports == 0
+
+
+class _Tiled:
+    """A detector source that cut the still into 45 tiles (a 12 MP still at 640 px)."""
+
+    source = "model"
+    last_tiles = 45
+
+    def detect_still(self, still: Any) -> list[Any]:
+        del still
+        return []
+
+
+def test_the_report_says_how_many_tiles_the_still_took(tmp_path: Path) -> None:
+    from sd_detect.sources import BuiltSources
+
+    write_still(tmp_path, "block0_h30")
+    lp = PerceptionLoop(
+        DirStillSource(tmp_path, synthetic=True),
+        FcTelemetry,
+        lambda _r: None,
+        FakeClock(),
+        CAM,
+        env={},
+        sources=BuiltSources({"model": _Tiled()}),  # type: ignore[dict-item]  # pyright: ignore[reportArgumentType]
+    )
+    captured = lp.source.poll()
+    assert captured is not None
+    out = lp.handle(captured, telemetry("block0_h30", 0), 0)
+    assert out is not None and out.report.detector.tiles == 45
+    assert loop_module._tiles([]) == 1  # pyright: ignore[reportPrivateUsage]
+    assert loop_module._tiles([object()]) == 1  # pyright: ignore[reportPrivateUsage]
+
+
+def _count_sidecars(folder: Path) -> int:
+    return len(list(folder.glob("*.json")))
+
+
+async def test_a_detector_that_falls_behind_skips_stills_instead_of_queueing_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full-resolution still can take the drone's computer several seconds while the
+    camera writes one a second. Stills written during a detection are never queued: the
+    next round takes only the newest and removes the rest, so the folder never grows."""
+    clock = FakeClock()
+    written = 0
+
+    def slow(*args: Any, **kwargs: Any) -> Any:
+        nonlocal written
+        for _ in range(5):  # the camera goes on writing while the detector works
+            written += 1
+            write_still(tmp_path, "block0_h30", f"{written:06d}")
+        clock.advance(5.0)
+        return detect_all(*args, **kwargs)
+
+    monkeypatch.setattr(loop_module, "detect_all", slow)
+    source = DirStillSource(tmp_path, synthetic=True)
+    lp = PerceptionLoop(
+        source,
+        lambda: telemetry("block0_h30", clock.monotonic_ms()),
+        lambda _r: None,
+        clock,
+        CAM,
+        env={},
+    )
+    write_still(tmp_path, "block0_h30", "000000")
+    waiting = [0, 0, 0]
+    for i in range(3):
+        await lp._round()  # pyright: ignore[reportPrivateUsage]
+        waiting[i] = _count_sidecars(tmp_path)
+    assert waiting == [5, 5, 5]  # only the last detection's stills, never more
+    assert lp.stats.stills == 3 and lp.stats.reports == 3
+    assert source.skipped == 8  # of the 10 stills before the last round, 2 were run
