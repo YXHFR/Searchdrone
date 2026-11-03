@@ -364,7 +364,15 @@ class _IO:
 
     @property
     def vehicle(self) -> VehicleState:
-        return self._ex.vehicle_state()
+        """The vehicle as an order sees it. A switch of ours the flight controller took
+        but no HEARTBEAT shows yet (``Authority.late``: cut short, e.g. a closer look's
+        LOITER by the link-loss climb) is the mode it flies: an order starting now asks
+        for its own mode, never skipping that because the telemetry still shows it."""
+        v = self._ex.vehicle_state()
+        late = self._ex.auth.late
+        if late is not None and v.mono_ms <= late.until_ms and v.fc_mode != late.mode.name:
+            return v.model_copy(update={"fc_mode": late.mode.name})
+        return v
 
     async def set_mode(self, mode: CopterMode) -> bool:
         return await self._ex.set_mode(mode, self._origin)
@@ -661,7 +669,7 @@ class Executor:
             return False
         except asyncio.CancelledError:
             # Accepted: the flight controller may show it after all. A HEARTBEAT showing
-            # AUTO until this call's own deadline is then our own doing (``Authority``).
+            # AUTO or LOITER until this call's own deadline is then ours (``Authority``).
             if (
                 accepted_ms is not None
                 and answer_seq is not None

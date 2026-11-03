@@ -285,18 +285,52 @@ def test_another_mode_while_a_cancelled_auto_may_show_is_not_ours(other: CopterM
     assert a.mode_problem(t, 1100) == f"mode_{other.name}"
 
 
-@pytest.mark.parametrize(
-    "mode", [CopterMode.LOITER, CopterMode.GUIDED, CopterMode.RTL, CopterMode.SMART_RTL]
-)
-def test_only_a_cancelled_auto_is_kept(mode: CopterMode) -> None:
-    """A cancelled LOITER (or any mode but AUTO) that shows later is a change from outside:
-    the executor never steers by holding a mode, and a person's LOITER must stop it."""
+@pytest.mark.parametrize("mode", [CopterMode.GUIDED, CopterMode.RTL, CopterMode.SMART_RTL])
+def test_only_a_cancelled_auto_or_loiter_is_kept(mode: CopterMode) -> None:
+    """A cancelled GUIDED, RTL or SMART_RTL that shows later is a change from outside."""
     a = Authority()
     a.confirmed(CopterMode.AUTO, resumed=True)
     a.sent_and_cancelled(mode, 3000, None, _OWN)
     assert a.late is None
     t = _shows(mode, 1100)
     assert a.adopt_late(t, 1100) is None and a.unexpected_mode(t, 1100) is not None
+
+
+def _late_loiter() -> Authority:
+    """GUIDED expected (a closer look's step); its LOITER at the step's end accepted
+    (answer ``_OWN``) and cancelled by the link-loss climb, deadline 3000."""
+    a = Authority()
+    a.confirmed(CopterMode.GUIDED, resumed=True)
+    a.sent_and_cancelled(CopterMode.LOITER, 3000, None, _OWN)
+    return a
+
+
+def test_a_cancelled_loiter_is_ours_while_the_climbs_guided_is_on_the_way() -> None:
+    """The step's LOITER, cut short: a HEARTBEAT showing it before the climb's GUIDED is
+    answered is ours (never HELD), and once nothing newer is on the way it is adopted."""
+    a = _late_loiter()
+    a.pending_mode = CopterMode.GUIDED  # the climb's switch, not answered yet
+    t = _shows(CopterMode.LOITER, 1100)
+    assert a.unexpected_mode(t, 1100) is None
+    assert a.mode_problem(t, 1100) is None
+    assert a.adopt_late(t, 1100) is None  # not while the GUIDED is on the way
+    a = _late_loiter()
+    assert a.adopt_late(t, 1100) == CopterMode.LOITER
+    assert a.expected_mode == CopterMode.LOITER and a.late is None
+
+
+def test_a_persons_loiter_after_our_newer_answer_is_still_a_takeover() -> None:
+    """After the climb's GUIDED was answered (newer receive order) a HEARTBEAT showing
+    LOITER is from outside; so is one after the deadline, or with the RC switch moved."""
+    a = _late_loiter()
+    a.confirmed(CopterMode.GUIDED)
+    assert a.unexpected_mode(_shows(CopterMode.LOITER, 1200, answer=9), 1200) is not None
+    a = _late_loiter()
+    assert a.unexpected_mode(_shows(CopterMode.LOITER, 3001), 3001) is not None
+    a = Authority()
+    a.confirmed(CopterMode.GUIDED, resumed=True)
+    a.sent_and_cancelled(CopterMode.LOITER, 3000, 1100, _OWN)
+    assert a.unexpected_mode(_shows(CopterMode.LOITER, 1200, rc=1900), 1200) is not None
 
 
 def test_a_notice_a_change_from_outside_or_a_hold_ends_a_cancelled_auto() -> None:

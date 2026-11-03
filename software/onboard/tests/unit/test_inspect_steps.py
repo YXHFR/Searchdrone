@@ -12,12 +12,14 @@ import numpy as np
 import pytest
 from onboard_helpers import ONBOARD_SKILLS, PLANE, Rig, at, charter, rig
 
+from sd_mav.modes import CopterMode
 from sd_onboard.executor.inspect import INTERNAL_INSPECT_CLIMB, abort_reason
 from sd_onboard.executor.limits import LimitAction
 from sd_onboard.executor.link_loss import LinkLossInput, LinkLossRule
 from sd_onboard.skills import inspect_steps
 from sd_onboard.skills.base import InspectShot
 from sd_onboard.skills.inspect_steps import estimate, is_clear, look_radius_m, pick
+from sd_safety.constants import LINK_LOSS_DETECT_S
 from sd_safety.floor import FloorPack, floor_at
 from sd_schemas.base import LatLon, new_id
 from sd_schemas.executor import ExecutorState as S
@@ -557,11 +559,32 @@ async def test_other_orders_are_refused_while_the_look_flies() -> None:
 async def test_link_loss_ends_the_look_and_climbs_straight_up() -> None:
     async with rig() as r:
         await start(r, pack=meadow())
-        # Lost early in the second step down: the rule acts mid-descent (GUIDED), not as
-        # the step ends in LOITER (a mode change cut short races the climb's GUIDED).
-        await r.until(lambda: alt(r) < 48, 120)
-        r.link = False
-        await r.until(lambda: bool(events(r, "inspect.aborted")), 10)
+        # Lost exactly as a step ends in LOITER: the flight controller has taken it, no
+        # HEARTBEAT shows it yet. The climb cuts that switch short; the LOITER that shows
+        # then is ours (``Authority.late``), never a takeover, and the climb asks for GUIDED.
+        await r.until(lambda: alt(r) < 45, 120)
+        cut: list[CopterMode] = []
+        record = r.ex.auth.sent_and_cancelled
+
+        def cancelled(mode: CopterMode, *args: Any) -> None:
+            cut.append(mode)
+            record(mode, *args)
+
+        r.ex.auth.sent_and_cancelled = cancelled  # type: ignore[method-assign]
+        send = r.ex.vehicle.set_mode_ordered
+
+        async def answered(mode: CopterMode, **kw: Any) -> Any:
+            out = await send(mode, **kw)
+            if mode == CopterMode.LOITER and r.link:  # accepted: the link is lost now
+                r.link = False
+                r.ex.on_link(False, None)
+                lost = r.clock.monotonic_ms() - round(LINK_LOSS_DETECT_S * 1000) - 1
+                r.ex.link_last_inbound_ms = lost
+            return out
+
+        r.ex.vehicle.set_mode_ordered = answered  # type: ignore[method-assign]
+        await r.until(lambda: bool(events(r, "inspect.aborted")), 30)
+        assert cut == [CopterMode.LOITER]  # the race: the step's LOITER cut short
         assert events(r, "inspect.aborted")[0]["reason"] == "link_loss"
         await r.run(0.5)
         assert r.ex.state == S.INSPECT
