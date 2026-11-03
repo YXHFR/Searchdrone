@@ -31,6 +31,7 @@ from sd_schemas.base import LatLon, SdModel, new_id
 from sd_schemas.link import (
     CROP_JPEG_MAX_BYTES,
     CROP_MAX_PX,
+    KEEPOUT_RELEASED_MAX,
     KEEPOUTS_MAX,
     PERCEPTION_DETECTIONS_MAX,
     TTL_REQUIRED_KINDS,
@@ -112,9 +113,10 @@ def crop(size: int = 1000) -> CropData:
     )
 
 
-def keepouts(n: int = 1) -> KeepoutInstall:
+def keepouts(n: int = 1, released: int = 0) -> KeepoutInstall:
     return KeepoutInstall(
         install_seq=n,
+        released=[new_id() for _ in range(released)],
         keepouts=[
             Keepout(
                 keepout_id=new_id(),
@@ -185,7 +187,7 @@ def test_the_largest_messages_fit_the_link() -> None:
     for body, side in (
         (report(PERCEPTION_DETECTIONS_MAX), "vehicle"),
         (crop(CROP_JPEG_MAX_BYTES), "vehicle"),
-        (keepouts(KEEPOUTS_MAX), "ground"),
+        (keepouts(KEEPOUTS_MAX, KEEPOUT_RELEASED_MAX), "ground"),
     ):
         text = encode(envelope_from(body, side=side, ttl_ms=30_000))
         assert len(text.encode()) <= MAX_MESSAGE_BYTES, type(body).__name__

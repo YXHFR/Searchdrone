@@ -571,23 +571,27 @@ def escape(
     every cylinder by ``KEEPOUT_ARC_MARGIN_M`` along a straight leg from ``here`` that goes
     deeper into no confirmed cylinder (``hard``) and enters none, and stays inside
     ``area``. The leg may cross unconfirmed cylinders (``soft``) with or without a passage:
-    flying through one is shorter over a possible person than hovering in it. None when
-    ``here`` lies in no cylinder, or no such leg exists (the caller flies home)."""
+    flying through one is shorter over a possible person than hovering in it. The way
+    through another person's unconfirmed cylinder (one ``here`` is not in) counts its
+    stretch inside twice, so of two ways about as short the one over fewer people wins.
+    None when ``here`` lies in no cylinder, or no such leg exists (the caller flies home)."""
     every = [*hard, *soft]
     if not any(math.dist(here, c) < r for c, r in every):
         return None
+    others = [(c, r) for c, r in soft if math.dist(here, c) >= r]
     best: tuple[float, Xy] | None = None
     for k in range(round(2 * math.pi / _ESCAPE_STEP)):
         u = (math.cos(k * _ESCAPE_STEP), math.sin(k * _ESCAPE_STEP))
         t = _clear_along(here, u, every)
-        if best is not None and t >= best[0]:
-            continue
         p = (here[0] + t * u[0], here[1] + t * u[1])
+        cost = t + sum(chord_m(here, p, c, r) for c, r in others)
+        if best is not None and cost >= best[0]:
+            continue
         if any(leg_enters(here, p, c, r) for c, r in hard):
             continue
         if area is not None and area.leg_outside_by(here, p) > 0.0:
             continue
-        best = (t, p)
+        best = (cost, p)
     return None if best is None else best[1]
 
 

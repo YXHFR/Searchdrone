@@ -185,7 +185,7 @@ def test_reroute_passes_an_unconfirmed_cylinder_straight_and_goes_around_a_long_
     route: list[Xy] = [(-150, 0), (0, 0), (150, 0)]  # a corner in the middle of it
     out = reroute(route, [], area=BOX, soft=soft, passage=PASS)
     assert out == [(-150, 0), (150, 0)]  # the corner is dropped, the leg passes
-    assert xy_route_violation(out, [], soft, PASS) is None
+    assert out is not None and xy_route_violation(out, [], soft, PASS) is None
     # Too wide to pass in time: gone around like a confirmed one.
     wide = [((0.0, 0.0), 50.0)]
     out = reroute(route, [], area=BOX, soft=wide, passage=PASS)
@@ -230,3 +230,11 @@ def test_escape_never_enters_a_confirmed_cylinder_and_gives_none_when_boxed_in()
     tight = Polygon(((-35.0, -400.0), (400.0, -400.0), (400.0, 400.0), (-35.0, 400.0)))
     p = escape((-25.0, 0.0), [], [((-25.0, 0.0), 30.0)], tight)
     assert p is not None and p[0] > -35.0
+
+
+def test_escape_prefers_a_way_past_another_unconfirmed_person_to_one_over_them() -> None:
+    here: Xy = (10.0, 0.0)  # inside A, nearest its east side, where B lies
+    a, b = ((0.0, 0.0), 50.0), ((45.0, 0.0), 30.0)
+    p = escape(here, [], [a, b], BOX)
+    assert p is not None and not leg_enters(here, p, *b)
+    assert all(math.dist(p, c) >= r + KEEPOUT_ARC_MARGIN_M - 1e-6 for c, r in (a, b))
