@@ -160,3 +160,36 @@ def test_command_line_writes_the_flat_worlds_pack(tmp_path: Path) -> None:
     assert pack.name == "sim-lake-forest" and pack.chm_dm.shape == (100, 100)
     assert int(pack.chm_dm[_cell(pack, 10.0, 10.0)]) == CHM_UNKNOWN_DM
     assert floor_pack.main(["--out", str(tmp_path / "x"), "--world", "sd_nowhere"]) == 2
+
+
+def test_refuses_a_folder_that_is_not_a_pack_and_leaves_it_as_it_was(tmp_path: Path) -> None:
+    # `--out .` in the repository must never wipe it.
+    folder = tmp_path / "repo"
+    (folder / "docs").mkdir(parents=True)
+    (folder / "docs" / "notes.md").write_text("mine", encoding="utf-8")
+    (folder / "README.md").write_text("readme", encoding="utf-8")
+    before = sorted(p.relative_to(folder) for p in folder.rglob("*"))
+    with pytest.raises(ValueError, match="inget kartpaket"):
+        floor_pack.build(_scene(), folder, name="sim-test")
+    assert sorted(p.relative_to(folder) for p in folder.rglob("*")) == before
+    assert (folder / "docs" / "notes.md").read_text(encoding="utf-8") == "mine"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["repo"]  # no leftovers beside it
+    # A pack with one stranger in it is not a pack either.
+    _build(tmp_path, _scene())
+    (tmp_path / "pack" / "extra.txt").write_text("x", encoding="utf-8")
+    with pytest.raises(ValueError):
+        _build(tmp_path, _scene())
+    assert (tmp_path / "pack" / "extra.txt").exists()
+    assert floor_pack.main(["--out", str(folder), "--half-m", "20"]) == 2
+    assert (folder / "README.md").exists()
+
+
+def test_replaces_an_existing_pack_and_an_empty_folder(tmp_path: Path) -> None:
+    first = _build(tmp_path, _scene())
+    second = _build(tmp_path, _scene(TREE))
+    assert second.sha256 != first.sha256
+    assert load_floor_pack(tmp_path / "pack").sha256 == second.sha256
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["pack"]  # no temporary folders left
+    (tmp_path / "empty").mkdir()
+    pack = floor_pack.build(_scene(), tmp_path / "empty", name="sim-test")
+    assert load_floor_pack(tmp_path / "empty").sha256 == pack.sha256

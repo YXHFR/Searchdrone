@@ -147,15 +147,38 @@ def test_no_laser_no_change(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert "--serial6" not in st.sitl_argv()
 
 
-def test_the_runs_map_pack_lands_where_the_drone_looks(
+def test_the_runs_map_pack_lands_in_the_run_folder(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     line = PowerLine("line", (100.0, -50.0), (100.0, 50.0), 18.0)
     st = _stack(tmp_path, "none", obstacles=[line])
     monkeypatch.setattr(st, "stack_paths", lambda: _paths(tmp_path))
     pack = st.write_floor_pack("sim-run", MapErrors(holes=((0.0, 50.0, 3.0),)))
-    assert load_floor_pack(tmp_path / "data" / "floor" / "sim-run").sha256 == pack.sha256
+    assert load_floor_pack(tmp_path / "run" / "floor" / "sim-run").sha256 == pack.sha256
+    assert not (tmp_path / "data" / "floor").exists()
     assert len(pack.lines) == 1
     bad = launch.Stack(SimConfig(world="sd_nowhere"), tmp_path / "r2")
     with pytest.raises(InfraError):
         bad.obstacle_scene()
+
+
+def test_a_sim_map_pack_never_lands_in_the_real_data_folder_with_video(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With video on, the ground station's data folder is the owner's real SD_DATA_DIR.
+    cfg = SimConfig(instance=0, physics="builtin", video="test")
+    st = launch.Stack(cfg, tmp_path / "run", repo=paths.REPO)
+    assert st.video_on
+    shared = tmp_path / "real_data"
+    monkeypatch.setattr(
+        st,
+        "stack_paths",
+        lambda: services.StackPaths(
+            paths.REPO, tmp_path / "run", tmp_path / "secrets", shared, shared / "sim" / "i0"
+        ),
+    )
+    st.write_floor_pack("sim-bad-map", MapErrors(tree_bias_m=5.0))
+    folder = tmp_path / "run" / "floor" / "sim-bad-map"
+    assert folder.resolve().is_relative_to((tmp_path / "run").resolve())
+    assert load_floor_pack(folder).name == "sim-bad-map"
+    assert not shared.exists()

@@ -501,10 +501,18 @@ class Stack:
                 raise InfraError(f"Världens hinder gick inte att bygga: {exc}") from exc
         return self._obstacle_scene
 
+    @property
+    def floor_dir(self) -> Path:
+        """Where this run's map packs go: inside the run folder, whatever the video."""
+        return self.run_dir / "floor"
+
     def write_floor_pack(self, name: str, errors: floor_pack.MapErrors | None = None) -> FloorPack:
-        """The run's map pack, from its own world, in ``${SD_DATA_DIR}/floor/<name>/``
-        where the drone and the ground station look for packs."""
-        folder = self.stack_paths().data_dir / "floor" / name
+        """The run's map pack, from its own world, in the run's own ``floor/<name>/``.
+
+        Never in ``${SD_DATA_DIR}``: with video on, the run's data folder is the owner's
+        real one, where the real ground station and drone read their packs, and a sim
+        pack (often with map errors on purpose) must never land among them."""
+        folder = self.floor_dir / name
         return floor_pack.build(
             self.obstacle_scene(), folder, name=name, errors=errors or floor_pack.MapErrors()
         )

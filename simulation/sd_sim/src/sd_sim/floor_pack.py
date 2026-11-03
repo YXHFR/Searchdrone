@@ -34,7 +34,7 @@ import json
 import math
 import random
 import re
-import shutil
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -204,7 +204,9 @@ def _write(
     about: dict[str, Any],
 ) -> None:
     """The files of ``sd_safety.floor_pack``'s format, each with its hash in
-    ``floor_pack.toml``. A folder that is there already is replaced."""
+    ``floor_pack.toml``. The pack is written to a new folder beside ``folder``, read
+    back with the drone's loader and then put in place. A folder that is there already
+    is replaced only if it is empty or a floor pack; any other folder is refused."""
     files: dict[str, bytes] = {
         "dtm_cm.npy": _npy(g.dtm_cm),
         "chm_dm.npy": _npy(g.chm_dm),
@@ -227,12 +229,57 @@ def _write(
         f"\n[about]\n{about_toml}"
         f"\n[sha256]\n{hashes}"
     )
-    if folder.exists():
-        shutil.rmtree(folder)
-    folder.mkdir(parents=True)
-    for file_name, data in files.items():
-        (folder / file_name).write_bytes(data)
-    (folder / "floor_pack.toml").write_text(toml, encoding="utf-8")
+    old = _replaceable(folder)
+    folder.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(tempfile.mkdtemp(prefix=f".{folder.name}.new-", dir=folder.parent))
+    try:
+        for file_name, data in files.items():
+            (tmp / file_name).write_bytes(data)
+        (tmp / PACK_TOML).write_text(toml, encoding="utf-8")
+        load_floor_pack(tmp)  # the drone's own loader reads it before it goes in place
+    except BaseException:
+        _remove_pack(tmp, [p.name for p in tmp.iterdir()])
+        raise
+    if old is None:
+        tmp.rename(folder)
+        return
+    aside = folder.with_name(f".{folder.name}.old-{tmp.name.rsplit('-', 1)[-1]}")
+    folder.rename(aside)
+    tmp.rename(folder)
+    _remove_pack(aside, old)
+
+
+PACK_TOML: Final = "floor_pack.toml"
+
+
+def _replaceable(folder: Path) -> list[str] | None:
+    """The files of the pack already in ``folder`` (None: no folder). Only an empty
+    folder or a floor pack (``floor_pack.toml`` and the pack's files, nothing else) is
+    replaced; anything else is refused and left as it is."""
+    if not folder.exists() and not folder.is_symlink():
+        return None
+    if folder.is_symlink() or not folder.is_dir():
+        raise ValueError(f"{folder} finns och är ingen mapp; skriver inte över den")
+    entries = list(folder.iterdir())
+    names = [p.name for p in entries]
+    allowed = {PACK_TOML, *FLOOR_PACK_FILES}
+    if entries and (
+        PACK_TOML not in names
+        or any(n not in allowed for n in names)
+        or any(p.is_symlink() or not p.is_file() for p in entries)
+    ):
+        raise ValueError(
+            f"{folder} är inte tom och inget kartpaket; skriver inte över den. "
+            "Välj en tom eller ny mapp."
+        )
+    return names
+
+
+def _remove_pack(folder: Path, names: list[str]) -> None:
+    """Remove the named files and then the (now empty) folder; never anything else."""
+    for name in names:
+        (folder / name).unlink(missing_ok=True)
+    folder.rmdir()
 
 
 def _npy(grid: NDArray[Any]) -> bytes:
