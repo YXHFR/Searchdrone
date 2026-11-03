@@ -350,6 +350,8 @@ class CommanderLoop:
         self._unended.clear()
 
     async def health_recovered(self) -> None:
+        """Out of the degraded state. Like a reconnect it keeps the record of orders whose
+        end is unseen: only ``stream_resynced`` or a new mission forgets it."""
         self.health.recovered()
         await self.connected(True)
 

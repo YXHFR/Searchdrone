@@ -10,7 +10,7 @@ import pytest
 from brain_helpers import REG, fixture, with_stub
 from mock_commander import TOKEN, MockCommander
 
-from sd_brain.app import StartError, _startup, build, follow_ground_profile, run
+from sd_brain.app import StartError, _startup, _stream, build, follow_ground_profile, run
 from sd_brain.clock import utc_now
 from sd_brain.config import BrainConfig
 from sd_brain.evals.fake_ground import FakeGround
@@ -97,3 +97,41 @@ async def test_zdr_and_the_ai_hash_follow_the_ground_stations_profile(
         await b.budget.aclose()
         if b.cloud_http is not None:
             await b.cloud_http.aclose()
+
+
+async def test_a_resync_on_the_stream_forgets_the_ends_that_never_come() -> None:
+    fg = FakeGround(fixture("airborne_modeB.json")["situation"], reg=REG, now=utc_now)
+    async with MockCommander(fg) as mock:
+        b = build(_cfg(mock.url), Secrets(TOKEN, KEY), REG)
+        await _startup(b, REG)
+        task = asyncio.create_task(_stream(b))
+        try:
+            for _ in range(200):
+                if mock.hellos:
+                    break
+                await asyncio.sleep(0.02)
+            b.loop._unended["order-1"] = None  # pyright: ignore[reportPrivateUsage]
+            # The same epoch: the ground replays what the stream missed, the record stays.
+            await mock.drop()
+            for _ in range(200):
+                if len(mock.hellos) >= 2:
+                    break
+                await asyncio.sleep(0.02)
+            await asyncio.sleep(0.1)
+            assert "order-1" in b.loop._unended  # pyright: ignore[reportPrivateUsage]
+            # A new epoch: no replay, so the end of order-1 never comes.
+            mock.epoch = "epoch-2"
+            await mock.drop()
+            for _ in range(200):
+                if not b.loop._unended:  # pyright: ignore[reportPrivateUsage]
+                    break
+                await asyncio.sleep(0.02)
+            assert b.loop._unended == {}  # pyright: ignore[reportPrivateUsage]
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            await b.http.aclose()
+            await b.budget.aclose()
+            if b.cloud_http is not None:
+                await b.cloud_http.aclose()
