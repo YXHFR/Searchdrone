@@ -338,12 +338,16 @@ class CommanderLoop:
     async def connected(self, reconnect: bool) -> None:
         """The stream is up. After a reconnect the AI says it is back."""
         self.ready_since = self.clock.utc_now()
-        if reconnect:
-            self._unended.clear()  # an end sent while the stream was down never comes
         if reconnect and self.mission_id is not None:
             await self._say(OutMessage(text=BACK_TEXT, kind="status"))
             self._followups.append(("recovered", {}))
             self._wake.set()
+
+    def stream_resynced(self) -> None:
+        """The ground could not replay what the stream missed (a new server epoch, or a gap
+        past its replay ring): an end sent meanwhile never comes. A reconnect it can replay
+        keeps the record, since the missed ends arrive in the replay."""
+        self._unended.clear()
 
     async def health_recovered(self) -> None:
         self.health.recovered()
@@ -796,7 +800,10 @@ class CommanderLoop:
         the AI as an event yet: the turn for that end is on its way and decides what comes
         next. An idle turn that ran first saw no active order and acted on its own (#159:
         a scripted resume right after a goto ended). An end that never comes stops counting
-        after ``idle_airborne_tick_s``, so the idle turns are never held up for good."""
+        after ``idle_airborne_tick_s``, so the idle turns are never held up for good. The
+        clock starts at the first idle check that finds no order active and idle checks
+        come one period apart (each stand-down counts as a turn), so in practice the hold
+        lasts up to about two periods (plus the 1 s ticker)."""
         now = self.clock.monotonic()
         for cid, since in list(self._unended.items()):
             if since is None:

@@ -562,6 +562,65 @@ async def test_a_new_mission_from_an_event_forgets_the_old_orders() -> None:
     assert not loop._unended
 
 
+async def test_a_replayed_reconnect_still_waits_for_the_end() -> None:
+    """On a reconnect in the same server epoch the ground replays what the stream missed,
+    so the order's end still comes: the idle turn keeps waiting for it."""
+    backend = Steps(
+        act("goto", pin="P1"), say("Tillbaka."), say("Framme vid P1."), say("Inget nytt.")
+    )
+    loop, fg, _ = make_loop(backend)
+    loop.idle_tick(force=True)
+    await loop.settle()
+    goto = str(fg.commands[0].command_id)
+    await loop.connected(True)  # its "recovered" turn runs; the record stays
+    await loop.settle()
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["idle_tick", "recovered"]
+    assert len(fg.commands) == 1
+    evt = {"type": "event.skill", "body": {"command_id": goto, "skill": "goto", "status": "done"}}
+    fg.apply_event(evt)
+    loop.handle_event(evt)  # the replay
+    await loop.settle()
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert [t.trigger for t in backend.turns][2:] == ["skill_event", "idle_tick"]
+
+
+async def test_a_resync_forgets_the_ends_that_never_come() -> None:
+    """A new epoch or a gap past the replay ring: the missed end never comes."""
+    backend = Steps(act("goto", pin="P1"), say("Inget nytt."))
+    loop, _, _ = make_loop(backend)
+    loop.idle_tick(force=True)
+    await loop.settle()
+    loop.stream_resynced()
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["idle_tick", "idle_tick"]
+
+
+async def test_an_order_on_its_card_is_waited_for_until_its_end() -> None:
+    """An order that waits for the pilot's click (PENDING_APPROVAL) is counted too: once
+    clicked and run, its end decides what follows, not an idle turn."""
+    backend = Steps(act("goto", pin="P1"), say("Framme vid P1."), say("Inget nytt."))
+    loop, fg, _ = make_loop(backend)
+    fg.responses = [{"match": {"skill": "goto"}, "result": {"decision": "PENDING_APPROVAL"}}]
+    loop.idle_tick(force=True)
+    await loop.settle()
+    goto = str(fg.commands[0].command_id)
+    assert goto in loop._unended
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert len(backend.turns) == 1
+    evt = {"type": "event.skill", "body": {"command_id": goto, "skill": "goto", "status": "done"}}
+    fg.apply_event(evt)
+    loop.handle_event(evt)
+    await loop.settle()
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["idle_tick", "skill_event", "idle_tick"]
+
+
 @pytest.mark.parametrize(("kind", "waits"), [("charter", False), ("command", True)])
 async def test_idle_tick_waits_only_for_its_own_action_card(kind: str, waits: bool) -> None:
     """After a failed turn in the air the idle tick tries again. The AI's own charter
