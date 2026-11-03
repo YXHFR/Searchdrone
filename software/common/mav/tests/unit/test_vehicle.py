@@ -239,6 +239,40 @@ def test_a_lost_answer_to_the_mode_already_shown_is_recorded_at_the_retry() -> N
     asyncio.run(run())
 
 
+def test_a_heartbeat_from_before_the_send_is_no_answer_at_the_retry() -> None:
+    """#161 round-8 review: the telemetry shows GUIDED, but the flight controller has taken
+    AUTO (its HEARTBEAT held back), and our GUIDED command is lost. The retry still sees the
+    GUIDED HEARTBEAT, received before the first send: that proves nothing, so the command
+    is sent again rather than taken as answered (that would let a following AUTO through
+    as ours)."""
+
+    async def run() -> None:
+        clock, vehicle, events = await _started()
+        await clock.run_for(3.0)
+        fc = vehicle.fc
+        fc.set_mode_external(CopterMode.GUIDED)
+        await clock.run_for(1.0)
+        fc.release_heartbeat()  # a GUIDED HEARTBEAT just before the send: still fresh
+        await clock.run_for(0.0)
+        assert vehicle.telemetry.fc_mode == "GUIDED"
+        fc.heartbeat_held = True
+        fc.mode = CopterMode.AUTO  # taken, its HEARTBEAT held back
+        fc.drop_commands = 1  # our command is lost on the way
+        result, _ = await run_with_clock(
+            clock, vehicle.set_mode_ordered(CopterMode.GUIDED, origin=SendOrigin.SKILL)
+        )
+        assert result is MavResult.ACCEPTED
+        assert fc.mode == CopterMode.GUIDED  # the second send did it
+        tries = [
+            m for m in vehicle.sent if m.get_type() == "COMMAND_LONG" and int(m.command) == 176
+        ]
+        assert len(tries) == 2
+        assert "mav.ack_lost_mode_reached" not in events.kinds()
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
 def test_each_heartbeat_carries_the_newest_one_that_showed_another_mode() -> None:
     """``other_mode_seq``: recorded as received, so a reader that runs only after a newer
     HEARTBEAT still sees that another mode showed in between."""
