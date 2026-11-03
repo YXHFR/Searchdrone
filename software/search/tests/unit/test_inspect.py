@@ -20,6 +20,7 @@ from search_helpers import (  # pyright: ignore[reportMissingImports]
 )
 
 from sd_schemas.base import new_id
+from sd_schemas.geo import plane_distance_m
 from sd_schemas.inspect import InspectDone
 from sd_schemas.link import BBox
 from sd_schemas.search import CandidateState, SearchDetection
@@ -28,9 +29,9 @@ from sd_search.app import (
     INSPECT_SETTLE_S,
     SearchService,
     close_ups,
-    inspect_target,
+    look_joins,
 )
-from sd_search.fusion import Fusion, Track
+from sd_search.fusion import LOOK_JOIN_MAX_M, Fusion, Track
 from sd_search.mapper import map_candidate
 from sd_search.match.cascade import Cascade
 from sd_search.match.engines import CloudMatchEngine
@@ -68,18 +69,37 @@ def detect(g: FakeGround, east: float, north: float, t: float, **kw: Any) -> Sea
 
 
 class Look:
-    """One closer look at ``target``: its stills carry the order and the target."""
+    """One closer look at ``target``: its stills carry the order, the target and where
+    the target was (``anchor``, east and north metres) with its sigma when it went out."""
 
-    def __init__(self, g: FakeGround, target: str, sigma95_m: float) -> None:
+    def __init__(
+        self,
+        g: FakeGround,
+        target: str,
+        sigma95_m: float,
+        anchor: tuple[float, float] = (0.0, 0.0),
+    ) -> None:
         self.g, self.target, self.sigma = g, target, sigma95_m
+        self.anchor = at(*anchor)
         self.command_id = str(new_id())
         self.stills: list[tuple[str, float, float]] = []  # (still id, px/m, seconds)
 
-    def shot(self, east: float, north: float, t: float, *, tele: bool, **kw: Any) -> str:
-        """A detection in one of the look's stills (main or tele camera)."""
-        still = str(new_id())
+    def shot(
+        self,
+        east: float,
+        north: float,
+        t: float,
+        *,
+        tele: bool,
+        still: str | None = None,
+        **kw: Any,
+    ) -> str:
+        """A detection in one of the look's stills (main or tele camera); a new still
+        unless ``still`` names one already taken."""
         px_per_m = TELE_PX_PER_M if tele else MAIN_PX_PER_M
-        self.stills.append((still, px_per_m, t))
+        if still is None:
+            still = str(new_id())
+            self.stills.append((still, px_per_m, t))
         d = detect(
             self.g,
             east,
@@ -89,6 +109,8 @@ class Look:
             command_id=self.command_id,
             still_px_per_m=px_per_m,
             inspect_candidate_id=self.target,
+            inspect_lat=self.anchor[0],
+            inspect_lon=self.anchor[1],
             inspect_sigma95_m=self.sigma,
             **kw,
         )
@@ -120,24 +142,41 @@ async def steps(s: SearchService, n: int = 2) -> None:
         await s.cascade.drain()
 
 
+def covered(g: FakeGround) -> None:
+    """Every candidate's 95 % radius reaches every place it was seen, so its keep-out
+    cylinder (30 m + sigma) keeps the drone at least 30 m from each of them."""
+    for cid in g.revs:
+        c = g.latest(cid)
+        for d in g.stored:
+            if g.observed.get(str(d.detection_id)) == cid:
+                assert plane_distance_m(c.lat, c.lon, d.lat, d.lon) <= c.sigma95_m, cid
+
+
+async def survey_target(g: FakeGround, s: SearchService, **kw: Any) -> str:
+    """A candidate from the survey at (0, 0) that the pilot sends the drone to look at."""
+    detect(g, 0, 0, 0, **kw)
+    await s.step()
+    (target,) = g.revs
+    inspecting(g, target)
+    return target
+
+
 async def test_inspect_stills_join_target() -> None:
     """Acceptance 23 (and TN19 on the search side): the look's pictures of its target
     join it, beyond the fusion radius, and start no candidate; a second person 25 m away
-    in the same stills gets a candidate of their own. The close-ups tighten the target's
+    in the same still gets a candidate of their own. The close-ups tighten the target's
     position, so its keep-out cylinder (30 m + sigma) shrinks."""
     g = FakeGround(MISSION, profile_body=profile())
     s = SearchService(g, GroundProfileSource(g))
-    detect(g, 0, 0, 0, sigma95_m=3.0)  # seen in the survey, 10 m off the truth
-    await s.step()
-    (target,) = g.revs
+    target = await survey_target(g, s, sigma95_m=8.0)  # seen from high up, 3 m off
     before = g.latest(target)
-    inspecting(g, target)
     look = Look(g, target, before.sigma95_m)
     joined = [
-        look.shot(10, 0, 10, tele=False, sigma95_m=1.5, px_size=60.0),
-        look.shot(10.2, 0, 10.1, tele=True, sigma95_m=0.8, px_size=180.0),
+        look.shot(3, 0, 10, tele=False, sigma95_m=1.5, px_size=60.0),
+        look.shot(3.2, 0, 10.1, tele=True, sigma95_m=0.8, px_size=180.0),
     ]
-    look.shot(35, 0, 10, tele=False, sigma95_m=1.5)  # someone else, 25 m away
+    still = look.stills[0][0]
+    look.shot(28, 0, 10, tele=False, still=still, sigma95_m=1.5)  # someone else, 25 m away
     await steps(s)
     assert len(g.revs) == 2
     assert all(g.observed[d] == target for d in joined)
@@ -147,8 +186,8 @@ async def test_inspect_stills_join_target() -> None:
     assert after.state is CandidateState.INSPECTING  # the pilot's state stays
     assert after.n_seen == 3
     assert after.sigma95_m < before.sigma95_m  # the ground's cylinder: 30 m + sigma
-    lat, lon = at(10, 0)
-    assert abs(after.lat - lat) < 1e-5 and abs(after.lon - lon) < 1e-5  # within about 1 m
+    assert plane_distance_m(after.lat, after.lon, *at(3, 0)) < 0.5
+    covered(g)
 
 
 async def test_only_the_target_within_the_match_radius_is_forced() -> None:
@@ -156,10 +195,7 @@ async def test_only_the_target_within_the_match_radius_is_forced() -> None:
     the target is fused as usual, even though the still names the target."""
     g = FakeGround(MISSION, profile_body=profile())
     s = SearchService(g, GroundProfileSource(g))
-    detect(g, 0, 0, 0, sigma95_m=3.0)
-    await s.step()
-    (target,) = g.revs
-    inspecting(g, target)
+    target = await survey_target(g, s)
     look = Look(g, target, 3.0)
     look.shot(16, 0, 10, tele=False, sigma95_m=1.5)
     await steps(s)
@@ -338,30 +374,118 @@ def test_close_ups_take_one_crop_from_each_camera() -> None:
     assert close_ups(track, str(new_id())) == []
 
 
-def test_inspect_target_needs_a_known_candidate_within_the_radius() -> None:
+async def test_two_people_in_one_look_get_a_candidate_each() -> None:
+    """Two people 12 m apart, both within the 15 m match radius: in a still that shows
+    both, only the one nearest where the order sent the drone joins the target; the other
+    gets a candidate of their own. A still that shows only the other one joins it to the
+    target, but the target's radius then reaches both, so no cylinder leaves anyone out."""
+    g = FakeGround(MISSION, profile_body=profile())
+    s = SearchService(g, GroundProfileSource(g))
+    target = await survey_target(g, s, sigma95_m=2.0, score=0.8)
+    look = Look(g, target, 2.0)
+    near = look.shot(0.5, 0, 10, tele=True, sigma95_m=0.8)
+    other = look.shot(12, 0, 10, tele=True, still=look.stills[0][0], sigma95_m=0.8)
+    await steps(s)
+    assert g.observed[near] == target
+    second = g.observed[other]
+    assert second != target and len(g.revs) == 2
+    assert g.latest(target).sigma95_m < 3.0  # the close-up agrees with the survey
+    covered(g)
+
+    alone = look.shot(12.3, 0, 15, tele=True, sigma95_m=0.8)  # the tele sees only them
+    await steps(s)
+    assert g.observed[alone] == target
+    after = g.latest(target)
+    assert after.sigma95_m >= plane_distance_m(after.lat, after.lon, *at(0, 0))
+    covered(g)
+
+
+async def test_a_far_person_in_a_large_order_radius_is_not_forced() -> None:
+    """A target known only to 40 m (match radius 80 m on board): a person 70 m away in
+    the look's stills is beyond the 30 m cap and gets a candidate of their own; a person
+    25 m away is forced on, and the target's radius grows to reach them."""
+    g = FakeGround(MISSION, profile_body=profile())
+    s = SearchService(g, GroundProfileSource(g))
+    target = await survey_target(g, s, sigma95_m=40.0)
+    look = Look(g, target, 40.0)
+    a = look.shot(0, 0, 10, tele=False, sigma95_m=2.0)
+    b = look.shot(70, 0, 10, tele=False, still=look.stills[0][0], sigma95_m=2.0)
+    far = look.shot(70, 0, 12, tele=False, sigma95_m=2.0)  # a still with only them
+    await steps(s)
+    assert g.observed[a] == target
+    assert g.observed[b] != target and g.observed[far] == g.observed[b]
+    covered(g)
+    c = look.shot(25, 0, 14, tele=False, sigma95_m=2.0)
+    await steps(s)
+    assert g.observed[c] == target
+    after = g.latest(target)
+    assert after.sigma95_m >= plane_distance_m(after.lat, after.lon, *at(25, 0))
+    covered(g)
+
+
+async def test_a_chain_of_pictures_cannot_walk_the_target_away() -> None:
+    """The match radius is measured from where the order sent the drone, not from the
+    target's moving estimate: pictures 13 m apart join only while within 15 m of that
+    point, and each farther one starts a candidate of its own."""
+    g = FakeGround(MISSION, profile_body=profile())
+    s = SearchService(g, GroundProfileSource(g))
+    target = await survey_target(g, s, sigma95_m=2.0)
+    look = Look(g, target, 2.0)
+    shots: list[str] = []
+    for k in range(1, 7):  # one still at a time, each fused before the next is taken
+        shots.append(look.shot(13 * k, 0, 10 + k, tele=True, sigma95_m=0.8))
+        await steps(s, 1)
+    assert g.observed[shots[0]] == target
+    assert len({g.observed[d] for d in shots[1:]} - {target}) == 5
+    assert g.latest(target).n_seen == 2
+    covered(g)
+
+
+def test_look_joins_one_picture_per_still_near_the_order() -> None:
     f = Fusion()
-    step = f.add(sighting(0, 0, sigma=10.0))
+    step = f.add(sighting(0, 0, sigma=40.0))
     assert step is not None
-    lat, lon = at(18, 0)
-    base: dict[str, Any] = {
-        "detection_id": str(new_id()),
-        "seq": 1,
-        "still_id": str(new_id()),
-        "label": "person",
-        "score": 0.6,
-        "lat": lat,
-        "lon": lon,
-        "sigma95_m": 1.0,
-        "px_size": 40.0,
-        "bbox": BBox(x=1, y=1, w=10, h=10),
-        "has_crop": False,
-        "captured_utc": utc(0),
-    }
-    d = SearchDetection.model_validate(base)
-    assert inspect_target(f, d) is None  # not a look's still
-    look = d.model_copy(update={"inspect_candidate_id": step.candidate_id})
-    assert inspect_target(f, look) == step.candidate_id  # 2 x 10 m (the track's sigma)
-    then = look.model_copy(update={"inspect_sigma95_m": 3.0})
-    assert inspect_target(f, then) is None  # 15 m with the order's sigma
-    other = look.model_copy(update={"inspect_candidate_id": new_id()})
-    assert inspect_target(f, other) is None
+    cid = step.candidate_id
+    lat, lon = at(0, 0)
+    still = str(new_id())
+
+    def det(east: float, **kw: Any) -> SearchDetection:
+        dlat, dlon = at(east, 0)
+        base: dict[str, Any] = {
+            "detection_id": str(new_id()),
+            "seq": 1,
+            "still_id": still,
+            "label": "person",
+            "score": 0.6,
+            "lat": dlat,
+            "lon": dlon,
+            "sigma95_m": 1.0,
+            "px_size": 40.0,
+            "bbox": BBox(x=1, y=1, w=10, h=10),
+            "has_crop": False,
+            "captured_utc": utc(0),
+            "inspect_candidate_id": cid,
+            "inspect_lat": lat,
+            "inspect_lon": lon,
+            "inspect_sigma95_m": 40.0,
+        }
+        return SearchDetection.model_validate(base | kw)
+
+    near, nearer, sure = det(20), det(10), det(10, score=0.9)
+    assert look_joins(f, [near, nearer, sure]) == {str(sure.detection_id): cid}
+    assert look_joins(f, [det(LOOK_JOIN_MAX_M + 0.5)]) == {}  # capped below 2 x 40 m
+    assert look_joins(f, [det(16, inspect_sigma95_m=3.0)]) == {}  # 15 m with sigma 3
+    assert look_joins(f, [det(1, inspect_candidate_id=None)]) == {}  # not a look's still
+    assert look_joins(f, [det(1, inspect_lat=None)]) == {}  # the order's position unknown
+    assert look_joins(f, [det(1, inspect_candidate_id=new_id())]) == {}  # unknown target
+    assert look_joins(f, [det(1, label="red_block")]) == {}
+    other_still = det(1, still_id=str(new_id()))
+    f.add(sighting(0, 0), force_candidate_id=cid)
+    f.tracks[cid].sightings[-1] = replace(f.tracks[cid].sightings[-1], still_id=still)
+    assert look_joins(f, [det(1)]) == {}  # this still already gave the target its picture
+    assert look_joins(f, [other_still]) == {str(other_still.detection_id): cid}
+    seen = det(1, still_id=str(new_id()))
+    f.seen.add(str(seen.detection_id))
+    assert look_joins(f, [seen]) == {}  # fused before
+    f.tracks[cid].state = CandidateState.REJECTED
+    assert look_joins(f, [other_still]) == {}

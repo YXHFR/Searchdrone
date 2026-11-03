@@ -20,9 +20,11 @@ detector's. Cloud answers live in memory only: after a restart the candidates ar
 again (the budget bounds what that costs). If sd-search dies, the rest of the system goes on: it has
 no part in flying, and the panel shows ``parts.search`` as down.
 
-A closer look (``inspect_detection``) at a candidate: a detection in one of the look's
-stills within ``match_radius_m`` of its target joins the target (``Fusion.add`` with
-``force_candidate_id``); the others are fused as usual. While the look flies, the code
+A closer look (``inspect_detection``) at a candidate: in each of the look's stills the
+one detection nearest where the target was when the order went out, within
+``look_radius_m`` of it, joins the target (``Fusion.add`` with ``force_candidate_id``,
+``look_joins``); the others are fused as usual, so a second person gets a candidate
+(and a cylinder) of their own. While the look flies, the code
 assesses the target after every step but the cloud waits: when the drone reports
 ``inspect.done`` (read every ``INSPECT_POLL_S``, handled ``INSPECT_SETTLE_S`` later so
 the last step's pictures are in), the target is assessed again, by the code and once by
@@ -46,7 +48,7 @@ from dataclasses import dataclass, field
 from PIL import Image
 
 from sd_schemas.geo import plane_distance_m
-from sd_schemas.inspect import InspectDone, match_radius_m
+from sd_schemas.inspect import InspectDone
 from sd_schemas.link import BBox
 from sd_schemas.search import (
     SEARCH_BATCH_MAX,
@@ -62,7 +64,7 @@ from sd_schemas.search import (
 )
 from sd_search.client import ConflictError, GroundError, SearchApi
 from sd_search.color import CROPS_MAX, CropView, assess_colors, box_in_crop
-from sd_search.fusion import Fusion, Sighting, Track
+from sd_search.fusion import Fusion, Sighting, Track, look_radius_m
 from sd_search.mapper import MAP_EVERY_S, MapService
 from sd_search.match.cascade import Cascade, skip_cloud
 from sd_search.match.engines import CROPS_FAST, Crop, MatchRequest
@@ -78,7 +80,7 @@ __all__ = [
     "LOOKBACK",
     "SearchService",
     "close_ups",
-    "inspect_target",
+    "look_joins",
     "merge_fields",
     "sighting",
     "track_of",
@@ -121,23 +123,40 @@ def sighting(d: SearchDetection) -> Sighting:
         has_crop=d.has_crop,
         command_id=None if d.command_id is None else str(d.command_id),
         px_per_m=d.still_px_per_m,
+        look_of=None if d.inspect_candidate_id is None else str(d.inspect_candidate_id),
     )
 
 
-def inspect_target(fusion: Fusion, d: SearchDetection) -> str | None:
-    """The candidate a closer look's detection is a picture of: the look's target, when
-    the detection lies within ``match_radius_m`` (of the target's uncertainty when the
-    order went out, as on board) of the target's position now. ``None`` otherwise."""
-    if d.inspect_candidate_id is None:
-        return None
-    cid = str(d.inspect_candidate_id)
-    t = fusion.tracks.get(cid)
-    if t is None:
-        return None
-    sigma = t.sigma95_m if d.inspect_sigma95_m is None else d.inspect_sigma95_m
-    if plane_distance_m(t.lat, t.lon, d.lat, d.lon) > match_radius_m(sigma):
-        return None
-    return cid
+def look_joins(fusion: Fusion, batch: list[SearchDetection]) -> dict[str, str]:
+    """The closer looks' pictures of their targets in ``batch``: detection id -> the
+    candidate it is forced onto. At most one per still: the detection nearest the
+    target's position when the order went out (higher score on a tie), within
+    ``look_radius_m`` of the target's uncertainty then, and only while the target is
+    open, of its class and has no picture from that still yet. The anchor never moves,
+    so a chain of pictures cannot walk the target away from where the order sent the
+    drone."""
+    best: dict[str, tuple[float, float, str, str]] = {}  # still id -> (m, -score, ids)
+    for d in batch:
+        if (
+            d.inspect_candidate_id is None
+            or d.inspect_lat is None
+            or d.inspect_lon is None
+            or d.inspect_sigma95_m is None
+        ):
+            continue
+        did, cid, still = str(d.detection_id), str(d.inspect_candidate_id), str(d.still_id)
+        t = fusion.tracks.get(cid)
+        if did in fusion.seen or t is None or not t.open or t.label != d.label:
+            continue
+        if any(s.still_id == still for s in t.sightings):
+            continue
+        dist = plane_distance_m(d.inspect_lat, d.inspect_lon, d.lat, d.lon)
+        if dist > look_radius_m(d.inspect_sigma95_m):
+            continue
+        key = (dist, -d.score, did, cid)
+        if still not in best or key < best[still]:
+            best[still] = key
+    return {did: cid for _, _, did, cid in best.values()}
 
 
 def _other_camera(a: Sighting, b: Sighting) -> bool:
@@ -333,9 +352,10 @@ class SearchService:
         fresh = await self.api.detections(mission_id, max(0, m.cursor - LOOKBACK), FEED_LIMIT)
         dirty: dict[str, list[tuple[str, float]]] = {}
         fused = 0
+        joins = look_joins(m.fusion, fresh)
         for d in fresh:
             m.cursor = max(m.cursor, d.seq)
-            step = m.fusion.add(sighting(d), force_candidate_id=inspect_target(m.fusion, d))
+            step = m.fusion.add(sighting(d), force_candidate_id=joins.get(str(d.detection_id)))
             if step is None:
                 continue
             fused += 1

@@ -504,7 +504,8 @@ async def test_a_closer_looks_stills_and_its_end_reach_the_search_service(r: Rig
     try:
         await send(r, person(r, 0, 100, sigma95_m=2.0))
         await service.step()
-        (target,) = [c["candidate_id"] for c in (await queue(r, mid))["items"]]
+        (first,) = (await queue(r, mid))["items"]
+        target = first["candidate_id"]
         look = str(new_id())
         async with r.flow.repo.engine.begin() as conn:  # the order as the ground stores it
             await conn.execute(text(
@@ -512,7 +513,8 @@ async def test_a_closer_looks_stills_and_its_end_reach_the_search_service(r: Rig
                 "skill, params, status) VALUES (:id, :m, :v, 'operator', 'operator:demo', "
                 "'inspect_detection', CAST(:p AS jsonb), 'running')"
             ), {"id": look, "m": mid, "v": VID, "p": json.dumps(
-                {"candidate_id": target.upper(), "sigma95_m": 2.0, "target_radius_m": 32.0}
+                {"candidate_id": target.upper(), "lat": first["lat"], "lon": first["lon"],
+                 "sigma95_m": 2.0, "target_radius_m": 32.0}
             )})  # fmt: skip
         close_up = person(r, 12, 100, sigma95_m=0.8)  # beyond 4 + 2 m, within 15 m
         rep = report(r, close_up).model_copy(update={"command_id": UUID(look), "inspect_step": 2})
@@ -521,6 +523,8 @@ async def test_a_closer_looks_stills_and_its_end_reach_the_search_service(r: Rig
         feed = (await r.search.get(f"/search/v1/missions/{mid}/detections")).json()
         assert [d["inspect_candidate_id"] for d in feed] == [None, target]
         assert feed[1]["command_id"] == look and feed[1]["inspect_sigma95_m"] == 2.0
+        assert (feed[1]["inspect_lat"], feed[1]["inspect_lon"]) == (first["lat"], first["lon"])
+        assert feed[0]["inspect_lat"] is None
         assert feed[1]["still_px_per_m"] == 24.0 and feed[0]["command_id"] is None
 
         await service.step()

@@ -366,8 +366,9 @@ class SearchDetection(SdModel):
     ``command_id`` is the order its still was taken during and ``still_px_per_m`` the
     still's detail (the tele camera's is about three times the main camera's at one
     height). A still of a closer look (``inspect_detection``) also names the candidate
-    the look is at and that candidate's uncertainty when the order went out, so the
-    search service can join the look's pictures of its target to it (``sd_search.fusion``).
+    the look is at and that candidate's position and uncertainty when the order went out,
+    so the search service can join the look's pictures of its target to it
+    (``sd_search.fusion``).
     """
 
     detection_id: Id
@@ -386,6 +387,8 @@ class SearchDetection(SdModel):
     command_id: Id | None = None
     still_px_per_m: float | None = Field(default=None, gt=0)
     inspect_candidate_id: Id | None = None
+    inspect_lat: float | None = Field(default=None, ge=-90, le=90)
+    inspect_lon: float | None = Field(default=None, ge=-180, le=180)
     inspect_sigma95_m: float | None = Field(default=None, ge=0, le=1000)
 
 

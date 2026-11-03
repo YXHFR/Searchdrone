@@ -41,11 +41,16 @@ _DETECTION = (
     "d.score, ST_Y(d.geom) AS lat, ST_X(d.geom) AS lon, d.sigma95_m, d.px_size, d.bbox, "
     "d.crop_box, d.crop_path IS NOT NULL AS has_crop, s.captured_utc, "
     "s.command_id::text AS command_id, s.px_per_m AS still_px_per_m, "
-    # A closer look's still: the candidate the order looks at and its uncertainty then,
-    # as the ground filled them in (only well-formed values; the order passed the gate).
+    # A closer look's still: the candidate the order looks at, its position and its
+    # uncertainty then, as the ground filled them in (only well-formed values; the order
+    # passed the gate).
     "CASE WHEN look.params->>'candidate_id' ~* "
     "'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' "
     "THEN lower(look.params->>'candidate_id') END AS inspect_candidate_id, "
+    "CASE WHEN jsonb_typeof(look.params->'lat') = 'number' "
+    "THEN (look.params->>'lat')::float END AS inspect_lat, "
+    "CASE WHEN jsonb_typeof(look.params->'lon') = 'number' "
+    "THEN (look.params->>'lon')::float END AS inspect_lon, "
     "CASE WHEN jsonb_typeof(look.params->'sigma95_m') = 'number' "
     "THEN (look.params->>'sigma95_m')::float END AS inspect_sigma95_m"
 )

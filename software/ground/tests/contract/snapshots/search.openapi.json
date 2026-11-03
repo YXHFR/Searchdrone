@@ -1215,7 +1215,7 @@
       },
       "SearchDetection": {
         "additionalProperties": false,
-        "description": "A stored detection of a target class, as the search service reads it.\n\n``command_id`` is the order its still was taken during and ``still_px_per_m`` the\nstill's detail (the tele camera's is about three times the main camera's at one\nheight). A still of a closer look (``inspect_detection``) also names the candidate\nthe look is at and that candidate's uncertainty when the order went out, so the\nsearch service can join the look's pictures of its target to it (``sd_search.fusion``).",
+        "description": "A stored detection of a target class, as the search service reads it.\n\n``command_id`` is the order its still was taken during and ``still_px_per_m`` the\nstill's detail (the tele camera's is about three times the main camera's at one\nheight). A still of a closer look (``inspect_detection``) also names the candidate\nthe look is at and that candidate's position and uncertainty when the order went out,\nso the search service can join the look's pictures of its target to it\n(``sd_search.fusion``).",
         "properties": {
           "bbox": {
             "$ref": "#/components/schemas/BBox"
@@ -1270,6 +1270,32 @@
               }
             ],
             "title": "Inspect Candidate Id"
+          },
+          "inspect_lat": {
+            "anyOf": [
+              {
+                "maximum": 90.0,
+                "minimum": -90.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inspect Lat"
+          },
+          "inspect_lon": {
+            "anyOf": [
+              {
+                "maximum": 180.0,
+                "minimum": -180.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inspect Lon"
           },
           "inspect_sigma95_m": {
             "anyOf": [
