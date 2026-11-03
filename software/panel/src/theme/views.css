@@ -73,3 +73,26 @@
   color: var(--c-mute);
   text-align: center;
 }
+
+/* Inställningar. */
+.settings-view .card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  max-width: 560px;
+}
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 44px;
+}
+.settings-view .btn {
+  align-self: flex-start;
+  min-height: 44px;
+}

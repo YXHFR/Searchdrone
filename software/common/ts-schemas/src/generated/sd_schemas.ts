@@ -1960,6 +1960,44 @@ export interface InspectProgress {
   step: number;
 }
 /**
+ * A closer look as the ground keeps it (``GET /api/v1/missions/{id}/inspections``
+ * and ``inspection.updated`` on the live topic ``candidates``). At most one is open per
+ * mission (``ended_at`` None).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "Inspection".
+ */
+export interface Inspection {
+  await_until?: string | null;
+  candidate_id: string;
+  command_id: string;
+  detail?: string | null;
+  done?: InspectDone | null;
+  ended_at?: string | null;
+  lower_offer?: InspectLowerOffer | null;
+  lower_offer_until?: string | null;
+  mission_id: string;
+  operation_mode: "sim" | "exercise" | "live";
+  outcome?:
+    | (
+        | "confirmed"
+        | "rejected"
+        | "unsure"
+        | "resume"
+        | "timeout"
+        | "resumed_by_pilot"
+        | "aborted"
+        | "refused_onboard"
+        | "failed"
+      )
+    | null;
+  overflight: boolean;
+  phase: "flying" | "lower_offer" | "await" | "ended";
+  seq: number;
+  started_at: string;
+  started_by: string;
+}
+/**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "Item".
  */
@@ -2717,6 +2755,19 @@ export interface Pose {
   roll_deg: number;
   source_ts_ms: number;
   yaw_deg: number;
+}
+/**
+ * The ground's overflight permit for ``live`` (``GET``/``PUT /api/v1/permit``): the
+ * reference of the operator's permit in the specific category (Transportstyrelsen) and
+ * whether a closer look may then fly straight over its candidate. A charter approved
+ * in ``live`` carries ``overflight_allowed`` from it; sim and exercise always may.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "Permit".
+ */
+export interface Permit {
+  allow_overflight_live?: boolean;
+  specific_category_ref?: string;
 }
 /**
  * ``permit.changed`` on the ground: the overflight permit setting for ``live``.

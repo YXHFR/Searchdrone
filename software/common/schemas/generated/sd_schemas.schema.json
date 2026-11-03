@@ -5647,6 +5647,163 @@
       "title": "InspectProgress",
       "type": "object"
     },
+    "Inspection": {
+      "additionalProperties": false,
+      "description": "A closer look as the ground keeps it (``GET /api/v1/missions/{id}/inspections``\nand ``inspection.updated`` on the live topic ``candidates``). At most one is open per\nmission (``ended_at`` None).",
+      "properties": {
+        "await_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "candidate_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "done": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InspectDone"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lower_offer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InspectLowerOffer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lower_offer_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "operation_mode": {
+          "enum": [
+            "sim",
+            "exercise",
+            "live"
+          ],
+          "type": "string"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "enum": [
+                "confirmed",
+                "rejected",
+                "unsure",
+                "resume",
+                "timeout",
+                "resumed_by_pilot",
+                "aborted",
+                "refused_onboard",
+                "failed"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "overflight": {
+          "type": "boolean"
+        },
+        "phase": {
+          "enum": [
+            "flying",
+            "lower_offer",
+            "await",
+            "ended"
+          ],
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "started_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "started_by": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "candidate_id",
+        "mission_id",
+        "seq",
+        "started_at",
+        "started_by",
+        "operation_mode",
+        "overflight",
+        "phase"
+      ],
+      "title": "Inspection",
+      "type": "object"
+    },
     "Item": {
       "additionalProperties": false,
       "properties": {
@@ -7824,6 +7981,23 @@
         "detector"
       ],
       "title": "PerceptionReport",
+      "type": "object"
+    },
+    "Permit": {
+      "additionalProperties": false,
+      "description": "The ground's overflight permit for ``live`` (``GET``/``PUT /api/v1/permit``): the\nreference of the operator's permit in the specific category (Transportstyrelsen) and\nwhether a closer look may then fly straight over its candidate. A charter approved\nin ``live`` carries ``overflight_allowed`` from it; sim and exercise always may.",
+      "properties": {
+        "allow_overflight_live": {
+          "default": false,
+          "type": "boolean"
+        },
+        "specific_category_ref": {
+          "default": "",
+          "maxLength": 64,
+          "type": "string"
+        }
+      },
+      "title": "Permit",
       "type": "object"
     },
     "PermitChanged": {

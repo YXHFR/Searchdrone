@@ -17,6 +17,9 @@ import { MiniMap } from "./MiniMap";
 import { outerRing, type Ring } from "./miniMap";
 import { SkillBody } from "./SkillBody";
 
+type OperationMode = "sim" | "exercise" | "live";
+const OPERATION_MODES: readonly OperationMode[] = ["sim", "exercise", "live"];
+
 type Outcome = "superseded" | "expired" | null;
 
 function useDecide(a: PanelApproval) {
@@ -130,6 +133,13 @@ export function ApprovalCard({ approval: a }: { approval: PanelApproval }) {
   const clearanceActive = useMissionStore((s) => s.clearance.status === "active");
   const { busy, error, outcome, decide } = useDecide(a);
   const [mode, setMode] = useState<AutonomyMode>(() => defaultAutonomy(a));
+  // The operation mode has no default: the pilot picks it. A change keeps the one in force
+  // until the pilot picks another.
+  const activeId = useLiveStore((s) => s.mission?.active_charter_id ?? null);
+  const inForce = useMissionStore((s) => activeCharter(s, activeId));
+  const [op, setOp] = useState<OperationMode | null>(() =>
+    inForce && inForce.id !== a.charter?.id ? (inForce.body.operation_mode ?? null) : null,
+  );
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
   const now = useNow(1_000);
@@ -148,8 +158,11 @@ export function ApprovalCard({ approval: a }: { approval: PanelApproval }) {
   }, [focus, a.approval_id]);
 
   const left = a.expires_at ? Date.parse(a.expires_at) - now : null;
-  const title =
-    a.kind === "skill"
+  // The AI's "titta närmare på K3?": a question, answered Ja or Nej (Ja = the button).
+  const inspect = a.kind === "skill" && a.command?.skill === "inspect_detection";
+  const title = inspect
+    ? t("inspect.ai.title")
+    : a.kind === "skill"
       ? t("cards.skill.title", {
           skill: t(`skills.${a.command?.skill ?? ""}`, { defaultValue: a.command?.skill ?? "" }),
         })
@@ -159,6 +172,7 @@ export function ApprovalCard({ approval: a }: { approval: PanelApproval }) {
     busy ||
     a.subject_loading ||
     problems.length > 0 ||
+    (isCharter && op === null) ||
     (needsClearance && !clearanceActive);
   return (
     <fieldset
@@ -211,6 +225,26 @@ export function ApprovalCard({ approval: a }: { approval: PanelApproval }) {
           ))}
         </fieldset>
       ) : null}
+      {pending && isCharter ? (
+        <fieldset className="mode-choice" data-testid="op-mode">
+          <legend>{t("opMode.legend")}</legend>
+          {OPERATION_MODES.map((m) => (
+            <label key={m} data-on={op === m}>
+              <input
+                type="radio"
+                name={`op-${a.approval_id}`}
+                value={m}
+                checked={op === m}
+                disabled={!isPilot}
+                data-testid={`op-mode-${m}`}
+                onChange={() => setOp(m)}
+              />
+              {t(`opMode.choice.${m}`)}
+            </label>
+          ))}
+          {op === null ? <p className="muted">{t("opMode.pick")}</p> : null}
+        </fieldset>
+      ) : null}
       {pending && needsClearance ? <ClearanceControl force /> : null}
       {pending ? (
         <div className="approval-actions">
@@ -219,7 +253,7 @@ export function ApprovalCard({ approval: a }: { approval: PanelApproval }) {
               testId="approve"
               disabled={approveDisabled}
               hint={t("cards.holdHint")}
-              onDone={() => void decide("approve", { autonomy_mode: mode })}
+              onDone={() => void decide("approve", { autonomy_mode: mode, operation_mode: op })}
             >
               {t(a.kind === "charter" ? "cards.approveArea" : "cards.approveChange")}
             </HoldButton>
@@ -231,7 +265,7 @@ export function ApprovalCard({ approval: a }: { approval: PanelApproval }) {
               disabled={approveDisabled}
               onClick={() => void decide("approve", {})}
             >
-              {t("cards.approve")}
+              {t(inspect ? "inspect.ai.yes" : "cards.approve")}
             </button>
           )}
           <button
@@ -240,10 +274,14 @@ export function ApprovalCard({ approval: a }: { approval: PanelApproval }) {
             data-testid="reject"
             disabled={!isPilot || busy}
             onClick={() =>
-              rejecting ? void decide("reject", reason ? { reason } : {}) : setRejecting(true)
+              inspect
+                ? void decide("reject", {})
+                : rejecting
+                  ? void decide("reject", reason ? { reason } : {})
+                  : setRejecting(true)
             }
           >
-            {t(rejecting ? "cards.rejectSend" : "cards.reject")}
+            {t(inspect ? "inspect.ai.no" : rejecting ? "cards.rejectSend" : "cards.reject")}
           </button>
           {isCharter && isPilot ? (
             <button

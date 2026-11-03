@@ -112,9 +112,11 @@ from sd_schemas.gate import ClearanceState, GateDecision, GateRequest, StateRef
 from sd_schemas.inspect import (
     InspectAborted,
     InspectDone,
+    Inspection,
     InspectLaserLost,
     InspectLowerOffer,
     InspectProgress,
+    Permit,
     PermitChanged,
 )
 from sd_schemas.link import (
@@ -317,6 +319,7 @@ __all__ = [
     "InspectLowerOffer",
     "InspectOutcome",
     "InspectProgress",
+    "Inspection",
     "Item",
     "Keepout",
     "KeepoutHoldField",
@@ -362,6 +365,7 @@ __all__ = [
     "PanelConfig",
     "PartStatus",
     "PerceptionReport",
+    "Permit",
     "PermitChanged",
     "PilotPosition",
     "Pose",

@@ -23,8 +23,10 @@ import type {
   Clearance,
   Command,
   Find,
+  Inspection,
   Mission,
   PanelConfig,
+  Permit,
   Session,
 } from "@searchdrone/schemas";
 import {
@@ -123,6 +125,12 @@ export class FakeGround {
   /** Candidate cards and, per candidate, what its detail adds (pictures, assessments). */
   candidates: CandidateCard[] = [];
   candidateDetail: Record<string, Pick<CandidateDetail, "observations" | "assessments">> = {};
+  /** The closer looks ("Titta närmare") as GET .../inspections answers them. */
+  inspections: Inspection[] = [];
+  /** The overflight permit (GET/PUT /permit). */
+  permit: Permit = { specific_category_ref: "", allow_overflight_live: false };
+  /** The gate's no to the next Titta närmare (codes), like the ground's INSPECT_REFUSED. */
+  refuseInspect: { code: string; text: string } | null = null;
   /** Detections opened in large size (a confirmation needs one of the candidate's). */
   readonly viewed = new Set<string>();
   /** The search profile: the version in force and a newer proposal (the AI's). */
@@ -336,7 +344,11 @@ export class FakeGround {
       const f = data as Find;
       this.finds = [...this.finds.filter((x) => x.find_id !== f.find_id), f];
     }
-    if (type.startsWith("candidate.")) {
+    if (type === "inspection.updated") {
+      const l = data as Inspection;
+      this.inspections = [...this.inspections.filter((x) => x.command_id !== l.command_id), l];
+    }
+    if (type.startsWith("candidate.") && type !== "candidate.inspect_progress") {
       const c = data as CandidateCard;
       this.candidates = [...this.candidates.filter((x) => x.candidate_id !== c.candidate_id), c];
     }
@@ -364,11 +376,28 @@ export class FakeGround {
     const pics = this.candidateDetail[id]?.observations ?? [];
     if (body.decision === "confirm" && !pics.some((o) => this.viewed.has(o.detection_id)))
       return { status: 409, body: { code: "NOT_VIEWED", detail_sv: "Titta på bilden först." } };
+    const pilotOnly = ["inspect", "resume", "reopen"];
+    if (pilotOnly.includes(body.decision) && this.session?.role !== "pilot")
+      return { status: 403, body: { code: "FORBIDDEN_ROLE", detail_sv: "Bara piloten." } };
+    if (body.decision === "inspect" && this.refuseInspect)
+      return {
+        status: 409,
+        body: {
+          code: "INSPECT_REFUSED",
+          detail_sv: this.refuseInspect.text,
+          errors: [{ code: this.refuseInspect.code }],
+        },
+      };
     const to: Record<string, CandidateCard["state"]> = {
       confirm: "confirmed",
       reject: "rejected",
       reopen: "ready",
+      inspect: "inspecting",
+      resume: "ready",
+      ...(c.state === "inspecting" ? { unsure: "ready" as const } : {}),
     };
+    if (body.decision === "inspect") this.startLook(c);
+    else if (this.session?.role === "pilot") this.endLook(c.candidate_id, body.decision);
     const next = to[body.decision];
     const card = next ? { ...c, state: next, rev: c.rev + 1 } : c;
     this.decisions[id] = [
@@ -387,6 +416,45 @@ export class FakeGround {
       decision: { decision: body.decision, candidate_id: id, seq: c.seq },
     });
     return { status: 200, body: this.candidateDetailOf(card) };
+  }
+
+  /** Like the ground when the order goes: the look opens, the drone flies. */
+  private startLook(c: CandidateCard): void {
+    const look: Inspection = {
+      command_id: `0192f4a1-7b90-7a22-b1c3-1000000000${String(c.seq).padStart(2, "0")}`,
+      candidate_id: c.candidate_id,
+      mission_id: MISSION,
+      seq: c.seq,
+      started_at: new Date().toISOString(),
+      started_by: this.session?.issuer_ref ?? "operator:demo",
+      operation_mode: "exercise",
+      overflight: true,
+      phase: "flying",
+    };
+    this.pushLive("candidates", "inspection.updated", look);
+  }
+
+  /** The pilot's decision ends the open look on the candidate. */
+  private endLook(candidateId: string, decision: string): void {
+    const outcome = {
+      confirm: "confirmed",
+      reject: "rejected",
+      unsure: "unsure",
+      resume: "resume",
+    }[decision] as Inspection["outcome"] | undefined;
+    const look = this.inspections.find((l) => l.candidate_id === candidateId && !l.ended_at);
+    if (!look || !outcome) return;
+    this.pushLive("candidates", "inspection.updated", {
+      ...look,
+      phase: "ended",
+      ended_at: new Date().toISOString(),
+      outcome,
+    });
+  }
+
+  /** The open look (the newest one not ended). */
+  openLook(): Inspection | undefined {
+    return this.inspections.find((l) => !l.ended_at);
   }
 
   async dropSocket(): Promise<void> {
@@ -656,6 +724,27 @@ export class FakeGround {
           },
         },
       };
+    }
+    if (k === `GET ${ms}/inspections`) return { status: 200, body: this.inspections };
+    const lower = /^POST \/api\/v1\/inspections\/([^/]+)\/lower$/.exec(k);
+    if (lower) {
+      const look = this.inspections.find((l) => l.command_id === lower[1] && !l.ended_at);
+      if (!look) return { status: 404, body: { code: "INSPECTION_NOT_FOUND" } };
+      if (!look.lower_offer)
+        return { status: 409, body: { code: "NO_LOWER_OFFER", detail_sv: "Frågar inte nu." } };
+      const next: Inspection = {
+        ...look,
+        phase: "flying",
+        lower_offer: null,
+        lower_offer_until: null,
+      };
+      this.pushLive("candidates", "inspection.updated", next);
+      return { status: 200, body: next };
+    }
+    if (k === `GET ${API}/permit`) return { status: 200, body: this.permit };
+    if (k === `PUT ${API}/permit`) {
+      this.permit = req.body as Permit;
+      return { status: 200, body: this.permit };
     }
     const cand = /^(GET|POST) \/api\/v1\/candidates\/([^/]+)(\/decision|\/export\.gpx)?$/.exec(k);
     if (cand) {

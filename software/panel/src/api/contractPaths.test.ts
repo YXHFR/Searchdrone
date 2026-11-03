@@ -61,6 +61,11 @@ const CALLS: [string, string][] = [
   ["GET", paths.searchProfile(ID)],
   ["POST", paths.searchProfile(ID)],
   ["GET", paths.searchProfileVersions(ID)],
+  ["GET", paths.missionInspections(ID)],
+  ["POST", paths.inspectionLower(ID)],
+  ["GET", paths.permit()],
+  ["PUT", paths.permit()],
+  ["POST", paths.candidateDecision(ID)],
 ];
 
 describe("contract paths", () => {

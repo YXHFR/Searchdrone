@@ -41,6 +41,10 @@ const SHOWN = new Set([
   "mission_id",
   "vehicle_id",
   "autonomy_mode",
+  "operation_mode",
+  "overflight_allowed",
+  "floor_pack_id",
+  "floor_pack_sha256",
 ]);
 
 function compass(dx: number, dy: number): string {
@@ -194,6 +198,18 @@ export function CharterFields({ c }: { c: MissionCharter }) {
           )}
         </Row>
       ) : null}
+      {c.operation_mode ? (
+        <Row label={t("charter.field.operation_mode")}>
+          {t(`opMode.choice.${c.operation_mode}`)}
+          {" · "}
+          {t(c.overflight_allowed ? "charter.overflightYes" : "charter.overflightNo")}
+        </Row>
+      ) : null}
+      <Row label={t("charter.field.floor_pack_id")}>
+        <span data-testid="charter-floor-pack">
+          {c.floor_pack_id ? c.floor_pack_id : t("charter.noFloorPack")}
+        </span>
+      </Row>
       {c.notes ? <Row label={t("charter.field.notes")}>{c.notes}</Row> : null}
       {extra.map(([k, v]) => (
         <Row key={k} label={k}>
