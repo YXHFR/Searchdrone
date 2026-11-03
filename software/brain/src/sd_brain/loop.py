@@ -1234,7 +1234,8 @@ class CommanderLoop:
     def _decision_entry(self, record: TurnRecord, d: TurnDiagnostics) -> DecisionLog:
         """The turn's audit entry, made safe to send once: the model wrote much of it."""
         prompt = _wire_safe(d.prompt_json or {"trigger": record.trigger, "texts": record.texts})
-        prompt_bytes = json.dumps(prompt, sort_keys=True, ensure_ascii=False)
+        # default=str: a value that is no JSON (a UUID, a datetime) is logged as its text.
+        prompt_bytes = json.dumps(prompt, sort_keys=True, ensure_ascii=False, default=str)
         result = record.result
         fields: dict[str, Any] = _wire_safe(
             {
@@ -1265,7 +1266,7 @@ class CommanderLoop:
             attempt=record.attempt,
             proposal_id=record.proposal.proposal_id if record.proposal else None,
             proposal_ok=record.proposal.ok if record.proposal else None,
-            prompt_json=prompt if len(prompt_bytes) < 900_000 else None,
+            prompt_json=json.loads(prompt_bytes) if len(prompt_bytes) < 900_000 else None,
             **fields,
         )
         if _sendable(entry):
