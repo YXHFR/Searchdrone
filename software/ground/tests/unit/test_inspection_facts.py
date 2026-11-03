@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import importlib.util
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,20 +14,34 @@ from typing import Any
 
 import pytest
 
+from sd_ground.services import inspections
+from sd_schemas.gate import GateContext
+from sd_schemas.inspect import Permit
+
 SAFETY_TESTS = Path(__file__).resolve().parents[3] / "common" / "safety" / "tests" / "unit"
-sys.path.insert(0, str(SAFETY_TESTS))
 
-from floor_fixtures import (  # noqa: E402  # pyright: ignore[reportMissingImports]
-    GROUND_M,
-    at,
-    make_pack,
-    write_pack,
+
+def _fixtures(name: str) -> Any:
+    """The safety tests' helper module, loaded by path (their folder is not put on
+    ``sys.path``: its ``conftest`` would shadow this package's)."""
+    spec = importlib.util.spec_from_file_location(f"safety_{name}", SAFETY_TESTS / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_floor_fx = _fixtures("floor_fixtures")
+_gate_fx = _fixtures("gate_fixtures")
+GROUND_M, at, make_pack, write_pack = (
+    _floor_fx.GROUND_M,
+    _floor_fx.at,
+    _floor_fx.make_pack,
+    _floor_fx.write_pack,
 )
-from gate_fixtures import CHARTER, ctx  # noqa: E402  # pyright: ignore[reportMissingImports]
+CHARTER, ctx = _gate_fx.CHARTER, _gate_fx.ctx
 
-from sd_ground.services import inspections  # noqa: E402
-from sd_schemas.gate import GateContext  # noqa: E402
-from sd_schemas.inspect import Permit  # noqa: E402
 
 PACK = "testpack"
 

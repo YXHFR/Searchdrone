@@ -28,7 +28,7 @@ from test_candidates import person as seen_at  # pyright: ignore[reportMissingIm
 from test_inspect_order import flying_with  # pyright: ignore[reportMissingImports]
 from test_orders import order, wait_order_status  # pyright: ignore[reportMissingImports]
 
-from sd_ground.services import inspections
+from sd_ground.services import commands, inspections
 from sd_schemas.base import new_id
 from sd_schemas.inspect import AWAIT_DECISION_S, InspectProgress
 from sd_schemas.link import InspectLower, InspectOutcome, OnboardEvent
@@ -350,3 +350,23 @@ async def test_the_operation_mode_and_the_permit(r: Rig) -> None:
     assert res.status_code == 200
     exercise = await charter_again(r, mid, operation_mode="exercise")
     assert exercise.operation_mode == "exercise" and exercise.overflight_allowed is True
+
+
+async def test_a_candidate_closed_just_before_the_order_goes_stops_it(r: Rig) -> None:
+    """The gate saw it open, but a person decided before the order went: the look does
+    not start and the order is not sent (a race the gate alone cannot close)."""
+    det = seen_at(r, 0, 100)
+    mid, d = await flying_with(r, det, mode="exercise")
+    out = await order(r, d, "inspect_detection", {"candidate_id": "K1"}, want="PENDING_APPROVAL")
+    async with person(r, "pilot", "kalle") as pilot:
+        res = await decide(pilot, str(det.detection_id), "reject")
+        assert res.status_code == 200, res.text
+    mission = await r.flow.open_mission_of(mid)
+    cmd = await r.flow.repo.command(out["command_id"])
+    assert cmd is not None
+    await commands._dispatch(r.flow, mission, cmd, approval=None)  # pyright: ignore[reportPrivateUsage]
+    cmd = await r.flow.repo.command(out["command_id"])
+    assert cmd is not None and str(cmd.status) == "rejected_by_gate"
+    assert cmd.status_reason == "INSPECT_TARGET_CLOSED"
+    assert not [o for o in r.onboard.orders if o.skill == "inspect_detection"]
+    assert await looks(r, mid) == []
