@@ -8,6 +8,31 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Training at our cameras' scales (the owner's decision of 2026-11-03: more real
+  aerial pictures, resampled so people have the pixel sizes our cameras will see):
+  `just train-detector scales=native,wide,tele` also cuts each training picture
+  resampled so its people are as large as the wide Camera Module 3 (about 71 px/m at
+  50 m, a person about 33 px) or the tele (about 230 px/m, a person about 100 px) sees
+  them, each picture at a height drawn between 30 and 60 m. A picture's scale is its
+  set's `px_per_m` in the register (HERIDAL: about 2 cm per pixel) or read off its
+  person boxes, and it is enlarged at
+  most `max_up=2` times, since an enlarged person is blurred. The val and the locked
+  test part are never resampled. The tile builder prints how many people of what size
+  each set gave at each scale.
+- Recall by person size: `just bench-detector` prints, and its result holds
+  (`recall_by_size`, and `by_size` per dataset), the recall in bins of the box's
+  longest side (0-16, 16-24, 24-32, 32-48, 48-64, 64-96, 96-128, 128-192, 192+ px), so
+  the effect of `scales=` can be seen.
+- UIT-Drone4 to train on (Zenodo 14862652, CC BY 4.0, University of Information
+  Technology, VNU-HCM): city traffic in Vietnam filmed from drones at 3840x2160. Every
+  tenth video frame is taken: 1,523 pictures with 7,193 pedestrians, half of them
+  between 36 and 86 px (median 59 px), between our wide and tele cameras' sizes. Its
+  motorcycles are boxed with their riders, who are people but not boxed as persons, so
+  they are kept as ignore regions and a tile that overlaps one is never trained on. It
+  is never measured on: the new split v4 keeps every set of v3 as it was and gives
+  UIT-Drone4 only train and val parts by video. The measurement still reads v3, so
+  results measured before stay comparable.
+
 - A larger person detector to train (the owner's decision of 2026-11-03):
   `just train-detector model=yolox_m` trains YOLOX-m, started from Megvii's COCO
   weights (Apache-2.0, fetched and checked by `just detector-fetch only=yolox_m`), with
