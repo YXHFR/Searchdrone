@@ -638,7 +638,10 @@ class Scenario:
         cmds = await self.commands()
         gates = {c["id"]: await self.gate(c["id"]) for c in cmds}
         events = await self.events()
-        broken = check_all(self.track, charters, cmds, gates, events, exempt=exempt)
+        approvals = (await r.panel.get(f"/api/v1/missions/{self.mid}/approvals")).json()
+        broken = check_all(
+            self.track, charters, cmds, gates, events, exempt=exempt, approvals=approvals
+        )
         assert not broken, broken
 
 
