@@ -1,0 +1,11 @@
+# TN05: live without the overflight permit. The look is the side look from the edge of
+# the candidate's cylinder: never nearer the person sideways than the cylinder's radius.
+scenario: TN05
+title: "SKARPT utan tillstånd: aldrig närmare än cylinderns radie i sidled"
+mode: live
+overflight: false
+laser: none
+start_alt_m: 50
+target: { at_enu: [0, 100], jitter_m: 10, visible_m: 0.4, score: 0.45 }
+map: { scan_year: 2019 }
+seeds: [1, 2, 3]

@@ -1,0 +1,10 @@
+# TN08: the map has no value (-1) under the person: counted as 30 m forest.
+scenario: TN08
+title: "Hål i kartan under målet: räknas som 30 m skog"
+mode: exercise
+laser: none
+start_alt_m: 60
+target: { at_enu: [40, 0], jitter_m: 2, visible_m: 0.4, score: 0.45 }
+estimate: { error_m: 2 }
+map: { scan_year: 2019, holes: [[40, 0, 14]] }
+seeds: [1, 2, 3]

@@ -1,0 +1,12 @@
+# TN07: a GRF-250 over the meadow lets the pilot take the drone below the map floor
+# without the laser (trees + 15 m); the laser stops answering there and the drone climbs
+# straight back to that floor.
+scenario: TN07
+title: "Laserbortfall under träd + 15 m: stiger till golvet"
+mode: exercise
+laser: grf250
+start_alt_m: 50
+charter: { alt_min_agl_m: 10 }
+target: { at_enu: [40, 0], jitter_m: 5, visible_m: 0.2, score: 0.45 }
+map: { scan_year: 2019 }
+seeds: [1, 2, 3]
