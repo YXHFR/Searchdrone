@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
+import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "helpers"))
@@ -40,7 +41,8 @@ from test_orders import (  # pyright: ignore[reportMissingImports]
 
 from sd_ground.api.commander import to_commander
 from sd_ground.services import commands, inspections
-from sd_schemas.base import new_id
+from sd_safety.floor_pack import write_floor_pack
+from sd_schemas.base import LatLon, new_id
 from sd_schemas.inspect import AWAIT_DECISION_S, InspectProgress
 from sd_schemas.link import InspectLower, InspectOutcome, InspectStay, OnboardEvent
 
@@ -598,6 +600,91 @@ async def test_the_operation_mode_and_the_permit(r: Rig) -> None:
     assert res.status_code == 200
     exercise = await charter_again(r, mid, operation_mode="exercise")
     assert exercise.operation_mode == "exercise" and exercise.overflight_allowed is True
+
+
+def floor_pack(r: Rig, name: str, *, tree_dm: int = 0) -> str:
+    """A small map pack in the ground's ``<data_dir>/floor/<name>/``; its hash."""
+    side = 40
+    pack = write_floor_pack(
+        r.flow.data_root() / "floor" / name,
+        name=name,
+        origin=LatLon(lat=-35.363261, lon=149.165230),  # CMAC, SITL's public test field
+        dtm_cm=np.full((side, side), 584_00, dtype=np.int32),
+        chm_dm=np.full((side, side), tree_dm, dtype=np.int16),
+        scan_year=np.full((1, 1), 2020, dtype=np.uint16),
+        scan_cell_m=side,
+        attribution="Testdata (CC0)",
+    )
+    return pack.sha256
+
+
+async def proposal(r: Rig, mid: str) -> dict[str, Any]:
+    res = await r.panel.post(
+        f"/api/v1/missions/{mid}/charters",
+        json={
+            "area": r.square(140.0),
+            "reason_sv": "Mindre",
+            "base_version": r.onboard.charters[-1].charter.version,
+        },
+        headers=H,
+    )
+    assert res.status_code == 201, res.text
+    return res.json()
+
+
+async def test_the_pilot_picks_the_floor_pack_on_the_charter_card(r: Rig) -> None:
+    """The list holds the whole packs only, with their source credit; the pick names the
+    hash the list showed, and anything else is refused (the card stays waiting). Without
+    a pick the pack in force stays; "Ingen höjdkarta" clears it."""
+    sha = floor_pack(r, "area-a")
+    broken = r.flow.data_root() / "floor" / "broken"
+    floor_pack(r, "broken")
+    (broken / "chm_dm.npy").write_bytes(b"not a grid")
+    (r.flow.data_root() / "floor" / ".area-b.writing").mkdir()  # a write in progress
+    async with person(r, "observer", "olle") as observer:
+        res = await observer.get("/api/v1/floor_packs")
+    assert res.status_code == 200, res.text
+    assert res.json() == [
+        {
+            "floor_pack_id": "area-a",
+            "floor_pack_sha256": sha,
+            "attribution": "Testdata (CC0)",
+            "origin": {"lat": -35.363261, "lon": 149.16523},
+            "size_east_m": 40,
+            "size_north_m": 40,
+        }
+    ]
+    mid = await r.ready_mission(mode="exercise")
+    assert r.onboard.charters[-1].charter.floor_pack_id is None  # a first charter: none
+    card = await proposal(r, mid)
+    for choice, code in [
+        ({"floor_pack_id": "nowhere", "floor_pack_sha256": sha}, "FLOOR_PACK_UNAVAILABLE"),
+        ({"floor_pack_id": "broken", "floor_pack_sha256": sha}, "FLOOR_PACK_UNAVAILABLE"),
+        ({"floor_pack_id": "area-a", "floor_pack_sha256": "0" * 64}, "FLOOR_PACK_CHANGED"),
+    ]:
+        res = await r.approve(str(card["approval_id"]), card["version"], floor_pack=choice)
+        assert res.status_code == 409 and res.json()["code"] == code, res.text
+    for bad in ({"floor_pack_id": "area-a"}, {"floor_pack_id": "../x", "floor_pack_sha256": sha}):
+        res = await r.approve(str(card["approval_id"]), card["version"], floor_pack=bad)
+        assert res.status_code == 422, res.text
+    installed = len(r.onboard.charters)
+    good = {"floor_pack_id": "area-a", "floor_pack_sha256": sha}
+    res = await r.approve(str(card["approval_id"]), card["version"], floor_pack=good)
+    assert res.status_code == 200 and res.json()["status"] == "approved", res.text
+    await r.until(lambda: len(r.onboard.charters) > installed, 10, "charter sent onboard")
+    picked = r.onboard.charters[-1].charter
+    assert (picked.floor_pack_id, picked.floor_pack_sha256) == ("area-a", sha)
+    res = await r.panel.get(f"/api/v1/missions/{mid}/charters")
+    (stored,) = [c for c in res.json() if c["status"] == "approved"]
+    assert stored["body"]["floor_pack_id"] == "area-a"
+    # No pick on the next card: the pack in force stays.
+    kept = await charter_again(r, mid)
+    assert (kept.floor_pack_id, kept.floor_pack_sha256) == ("area-a", sha)
+    none = {"floor_pack_id": None, "floor_pack_sha256": None}
+    cleared = await charter_again(r, mid, floor_pack=none)
+    assert cleared.floor_pack_id is None and cleared.floor_pack_sha256 is None
+    again = await charter_again(r, mid)  # and none stays none
+    assert again.floor_pack_id is None
 
 
 async def test_revoking_the_permit_stops_overflight_at_once(r: Rig) -> None:
