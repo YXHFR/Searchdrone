@@ -110,6 +110,9 @@ def test_abort_reasons() -> None:
     assert abort_reason(S.HELD, "operator_home", None, "human") == "home"
     assert abort_reason(S.HELD, "system_battery", None, "human") == "battery"
     assert abort_reason(S.HELD, "external", None, "human") == "override"
+    # FLY HOME seen at the flight controller before the ground's notice: still home.
+    assert abort_reason(S.HELD, "external", None, "human", flying_home=True) == "home"
+    assert abort_reason(S.HELD, "operator_stop", None, "human", flying_home=True) == "stop"
     assert abort_reason(S.FAILSAFE, None, None, "gnss") == "gnss"
     assert abort_reason(S.RTL, None, None, "battery") == "battery"
     assert abort_reason(S.RTL, None, None, None) == "home"

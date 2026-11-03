@@ -3016,7 +3016,13 @@ class Executor:
             case _:
                 ok = self.state == S.INSPECT and a is not None and a.skill == INTERNAL_INSPECT_CLIMB
         if not ok:
-            reason = abort_reason(self.state, self.held_by, self.hold_reason, self._taken_by)
+            reason = abort_reason(
+                self.state,
+                self.held_by,
+                self.hold_reason,
+                self._taken_by,
+                flying_home=self._flying_home(),
+            )
             self._inspect_finish(f"left:{self.state}", reason)
 
     def _inspect_return(self, cause: str) -> None:

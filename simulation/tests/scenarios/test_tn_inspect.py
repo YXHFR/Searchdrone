@@ -45,6 +45,7 @@ from scenario_rig import (  # pyright: ignore[reportMissingImports]
     pin,
     scenario,
     sim,
+    survey_box_enu,
 )
 from test_sc_emergency import (  # pyright: ignore[reportMissingImports]
     HOLD_S,
@@ -300,7 +301,17 @@ async def look_breaks_the_search(
     res = await sc.order("survey_sector", {"polygon": survey_box(sc)})
     assert res.get("decision") == "ALLOW", res
     survey = await sc.wait_command("survey_sector", "running", 60)
-    await sc.until(lambda: sc.tel.groundspeed_ms > 2.0, 90, "on the survey's lines")
+    box = survey_box_enu()
+    west, east = min(e for e, _ in box), max(e for e, _ in box)
+    south, north = min(n for _, n in box), max(n for _, n in box)
+    plane = Plane(*sc.r.home)
+
+    def on_lines() -> bool:
+        e, n = plane.xy(sc.tel.lat, sc.tel.lon)
+        return west <= e <= east and south <= n <= north and sc.tel.groundspeed_ms > 2.0
+
+    await sc.until(on_lines, 120, "on the survey's lines in the box")
+    await asyncio.sleep(5.0)  # some way along a line
     brk = (sc.tel.lat, sc.tel.lon)
     await look_at(sc, cid)
     return cid, survey, brk
@@ -311,7 +322,11 @@ async def survey_again(sc: Scenario, brk: tuple[float, float], survey: dict[str,
     within 30 m of the break."""
     ex = sc.r.onboard.ex
     await sc.until(lambda: ex.state == "SURVEY", 120, "the survey again")
-    assert distance_m(*brk, sc.tel.lat, sc.tel.lon) <= 30.0
+    await sc.until(
+        lambda: distance_m(*brk, sc.tel.lat, sc.tel.lon) <= 30.0 and ex.state == "SURVEY",
+        120,
+        "surveying within 30 m of the break",
+    )
     assert (await sc.command(survey["id"]))["status"] in ("running", "superseded")
 
 

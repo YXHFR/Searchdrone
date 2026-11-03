@@ -415,7 +415,9 @@ def test_tn09_no_descent_within_30_m_of_a_power_line(seed: int) -> None:
                 # look ends there, before a snapshot carries the floor's reason).
                 assert done is not None and done["end"] == "floor", done
                 start_above = w.start_alt_m - truth(f).ground.at1(*w.estimate_enu)
-                assert done["lowest_above_ground_m"] == pytest.approx(start_above, abs=TOL_M)
+                # (the approach comes in up to APPROACH_ABOVE_FLOOR_M over the floor)
+                lowest = done["lowest_above_ground_m"]
+                assert start_above - TOL_M <= lowest <= start_above + 2.0 + TOL_M, done
                 assert not look.of("inspect.lower_offer")
                 # Acceptance 14: never below the start height within 30 m of the line.
                 a, b = (line.a[0], line.a[1]), (line.b[0], line.b[1])
