@@ -339,7 +339,7 @@
   display: block;
   font-size: var(--fs-small);
   font-weight: 400;
-  color: var(--c-faint);
+  color: var(--c-mute);
   overflow-wrap: anywhere;
 }
 .mode-choice input {
