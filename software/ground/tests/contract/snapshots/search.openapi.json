@@ -667,6 +667,79 @@
         "title": "Hair",
         "type": "object"
       },
+      "InspectDone": {
+        "additionalProperties": false,
+        "description": "``inspect.done``: the steps are over and the drone hovers for the pilot's decision.\nThe candidate stays ``inspecting`` until it comes, or ``AWAIT_DECISION_S`` passes.",
+        "properties": {
+          "candidate_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "clear": {
+            "title": "Clear",
+            "type": "boolean"
+          },
+          "command_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "end": {
+            "enum": [
+              "clear",
+              "floor",
+              "lower_declined",
+              "steps_max",
+              "timeout",
+              "keepout",
+              "laser_lost",
+              "side_look"
+            ],
+            "title": "End",
+            "type": "string"
+          },
+          "lowest_above_ground_m": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lowest Above Ground M"
+          },
+          "steps": {
+            "minimum": 0.0,
+            "title": "Steps",
+            "type": "integer"
+          },
+          "still_ids": {
+            "items": {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "maxItems": 200,
+            "title": "Still Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "command_id",
+          "candidate_id",
+          "end",
+          "steps",
+          "clear"
+        ],
+        "title": "InspectDone",
+        "type": "object"
+      },
       "Item": {
         "additionalProperties": false,
         "properties": {
@@ -1142,7 +1215,7 @@
       },
       "SearchDetection": {
         "additionalProperties": false,
-        "description": "A stored detection of a target class, as the search service reads it.",
+        "description": "A stored detection of a target class, as the search service reads it.\n\n``command_id`` is the order its still was taken during and ``still_px_per_m`` the\nstill's detail (the tele camera's is about three times the main camera's at one\nheight). A still of a closer look (``inspect_detection``) also names the candidate\nthe look is at and that candidate's position and uncertainty when the order went out,\nso the search service can join the look's pictures of its target to it\n(``sd_search.fusion``).",
         "properties": {
           "bbox": {
             "$ref": "#/components/schemas/BBox"
@@ -1151,6 +1224,19 @@
             "format": "date-time",
             "title": "Captured Utc",
             "type": "string"
+          },
+          "command_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command Id"
           },
           "crop_box": {
             "anyOf": [
@@ -1171,6 +1257,58 @@
           "has_crop": {
             "title": "Has Crop",
             "type": "boolean"
+          },
+          "inspect_candidate_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inspect Candidate Id"
+          },
+          "inspect_lat": {
+            "anyOf": [
+              {
+                "maximum": 90.0,
+                "minimum": -90.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inspect Lat"
+          },
+          "inspect_lon": {
+            "anyOf": [
+              {
+                "maximum": 180.0,
+                "minimum": -180.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inspect Lon"
+          },
+          "inspect_sigma95_m": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inspect Sigma95 M"
           },
           "label": {
             "pattern": "^[a-z][a-z0-9_]{1,31}$",
@@ -1216,6 +1354,18 @@
             "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
             "title": "Still Id",
             "type": "string"
+          },
+          "still_px_per_m": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Still Px Per M"
           }
         },
         "required": [
@@ -1950,6 +2100,51 @@
           }
         },
         "summary": "Detections"
+      }
+    },
+    "/search/v1/missions/{mission_id}/inspections": {
+      "get": {
+        "description": "The closer looks the drone reported done (``inspect.done``), oldest first: the\nsearch service assesses each target again on the look's close-ups.",
+        "operationId": "inspections_search_v1_missions__mission_id__inspections_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/InspectDone"
+                  },
+                  "title": "Response Inspections Search V1 Missions  Mission Id  Inspections Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Inspections"
       }
     },
     "/search/v1/missions/{mission_id}/probability-map/inputs": {

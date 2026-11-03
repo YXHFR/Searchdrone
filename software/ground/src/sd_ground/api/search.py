@@ -3,11 +3,11 @@
 It lives on the commander's loopback-only listener but has its own token and role. The
 search service reads the open missions, their approved search profile and their target
 detections and crops, writes candidates with the code's assessment, reads its candidates
-back after a restart and sends a heartbeat. For the probability map it reads the map's
-inputs and the stills and writes new versions. It has no route for orders, approvals, STOP /
-RETURN HOME, chat as a person or a decision on a candidate (it can never set ``confirmed``
-or ``rejected``), and its token is refused on the commander API and on the panel listeners
-(403).
+back after a restart, reads the closer looks the drone reported done and sends a
+heartbeat. For the probability map it reads the map's inputs and the stills and writes
+new versions. It has no route for orders, approvals, STOP / RETURN HOME, chat as a person
+or a decision on a candidate (it can never set ``confirmed`` or ``rejected``), and its
+token is refused on the commander API and on the panel listeners (403).
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from sd_ground.services import files as files_service
 from sd_ground.services import probability_map as map_service
 from sd_ground.services import search_profile as profile_service
 from sd_ground.services.missions import MissionFlow
+from sd_schemas.inspect import InspectDone
 from sd_schemas.probmap import (
     ProbabilityMapInputs,
     ProbabilityMapWrite,
@@ -127,6 +128,13 @@ async def candidates(mission_id: IdPath, _: Search, g: G) -> list[SearchTrack]:
     """Every candidate in force with the detections it observed (to resume after a
     restart)."""
     return await candidates_service.tracks(_flow(g), mission_id)
+
+
+@router.get("/missions/{mission_id}/inspections", response_model=list[InspectDone])
+async def inspections(mission_id: IdPath, _: Search, g: G) -> list[InspectDone]:
+    """The closer looks the drone reported done (``inspect.done``), oldest first: the
+    search service assesses each target again on the look's close-ups."""
+    return await candidates_service.looks_done(_flow(g), mission_id)
 
 
 @router.post("/missions/{mission_id}/candidates", response_model=list[CandidateWritten])

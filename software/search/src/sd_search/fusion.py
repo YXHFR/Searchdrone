@@ -12,6 +12,18 @@ up closer than the radius are merged: the older stays, the younger becomes ``mer
 with ``merged_into`` set; its observations stay where they are. Nothing merges once a
 person has decided on either, or while one is being inspected.
 
+A closer look (``inspect_detection``) flies over one candidate and photographs it from
+lower and lower. Its picture of that target joins the target beyond the fusion radius
+(``force_candidate_id``): it starts no new candidate and merges nothing. Which picture
+that is the search service decides (``sd_search.app.look_joins``): at most one per still,
+the nearest to where the target was when the order went out, and only within
+``look_radius_m``. Being sharper and taken from lower, the close-ups have a smaller
+sigma, so they weigh more in the refit and the position tightens. A forced join is not
+held to the fusion radius, so it may be a second person: the 95 % radius of a candidate
+with its closer look's pictures is therefore never smaller than the distance of its
+farthest sighting from the new position, and its keep-out cylinder (30 m + sigma) keeps
+the drone at least 30 m from every place it was seen.
+
 Pure and deterministic: the same detections in the same order give the same candidates.
 A new candidate's id is its first detection's id, so a restart that replays the same
 detections cannot create a second one.
@@ -20,10 +32,11 @@ detections cannot create a second one.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from sd_schemas.geo import plane_distance_m as distance_m
+from sd_schemas.inspect import match_radius_m
 from sd_schemas.search import (
     FUSION_RADIUS_M,
     FUSION_RADIUS_MAX_M,
@@ -34,17 +47,26 @@ from sd_schemas.search import (
 __all__ = [
     "FUSION_RADIUS_M",
     "FUSION_RADIUS_MAX_M",
+    "LOOK_JOIN_MAX_M",
     "SIGMA_MIN_M",
     "Fusion",
     "Sighting",
     "Step",
     "Track",
     "fusion_radius_m",
+    "look_radius_m",
 ]
 
 SIGMA_MIN_M = 2.0
 _SIGMA_FLOOR_M = 0.5  # a sighting's sigma below this counts as this (no division by zero)
 _SCORE_FLOOR = 0.05  # a sighting with score 0 still has a little weight
+# How far from the target's position at order time a closer look's picture may lie and
+# still be forced onto it: ``match_radius_m`` (the drone's own rule, max(15 m, 2 sigma))
+# but at most the 30 m keep-out (PERSON_KEEPOUT_M), which is the drone's rule up to an
+# order sigma of 15 m. Farther out, the joined picture would stretch the target's
+# cylinder past 30 m + 30 m, while as a candidate of its own it gets a 30 m + sigma
+# cylinder around it: tighter, and right when it is someone else.
+LOOK_JOIN_MAX_M = 30.0  # = sd_safety.constants.PERSON_KEEPOUT_M (a test checks)
 
 # States a person (or the pilot through the gate) owns: fusion never changes or merges them.
 HUMAN_STATES = frozenset(
@@ -71,6 +93,15 @@ class Sighting:
     px_size: float
     captured_utc: datetime
     has_crop: bool = False
+    command_id: str | None = None  # the order its still was taken during
+    px_per_m: float | None = None  # its still's detail (which camera, at what height)
+    look_of: str | None = None  # a closer look's still: the candidate the look was at
+
+
+def look_radius_m(sigma95_m: float) -> float:
+    """How near the target's position at order time (whose uncertainty was ``sigma95_m``)
+    a closer look's picture must lie to be forced onto the target."""
+    return min(match_radius_m(sigma95_m), LOOK_JOIN_MAX_M)
 
 
 @dataclass
@@ -115,7 +146,8 @@ class Track:
         return self.decided or self.state in HUMAN_STATES
 
     def refit(self) -> None:
-        """Position and radius from every sighting (weight score / sigma^2)."""
+        """Position and radius from every sighting (weight score / sigma^2). With its
+        closer look's pictures the radius also reaches every sighting (rounded up)."""
         if not self.sightings:
             return
         wsum = lat = lon = inv = 0.0
@@ -127,7 +159,11 @@ class Track:
             lon += w * s.lon
             inv += 1.0 / (sig * sig)
         self.lat, self.lon = lat / wsum, lon / wsum
-        self.sigma95_m = round(max(SIGMA_MIN_M, min(1000.0, 1.0 / math.sqrt(inv))), 2)
+        sigma = round(max(SIGMA_MIN_M, min(1000.0, 1.0 / math.sqrt(inv))), 2)
+        if any(s.look_of == self.candidate_id for s in self.sightings):
+            spread = max(distance_m(self.lat, self.lon, s.lat, s.lon) for s in self.sightings)
+            sigma = max(sigma, min(1000.0, math.ceil(spread * 100) / 100))
+        self.sigma95_m = sigma
         self.first_seen_utc = min(s.captured_utc for s in self.sightings)
         self.last_seen_utc = max(s.captured_utc for s in self.sightings)
 
@@ -157,11 +193,22 @@ class Fusion:
             self.tracks[t.candidate_id] = t
             self.seen.update(s.detection_id for s in t.sightings)
 
-    def add(self, s: Sighting) -> Step | None:
-        """Fuse one sighting; ``None`` if this detection was fused before."""
+    def add(self, s: Sighting, force_candidate_id: str | None = None) -> Step | None:
+        """Fuse one sighting; ``None`` if this detection was fused before.
+
+        ``force_candidate_id``: a closer look's picture of its target. It joins that
+        candidate, when it is open and of the sighting's class, however far it lies, and
+        merges nothing; otherwise the sighting is fused as usual. The caller limits how
+        far (``look_radius_m``) and how many (one per still)."""
         if s.detection_id in self.seen:
             return None
         self.seen.add(s.detection_id)
+        target = None if force_candidate_id is None else self.tracks.get(force_candidate_id)
+        if target is not None and target.open and target.label == s.label:
+            d = distance_m(target.lat, target.lon, s.lat, s.lon)
+            target.sightings.append(replace(s, look_of=target.candidate_id))
+            target.refit()
+            return Step(target.candidate_id, created=False, distance_m=d)
         best: tuple[float, datetime, str] | None = None
         for t in self.tracks.values():
             if t.label != s.label or not t.open:
