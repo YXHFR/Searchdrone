@@ -266,6 +266,10 @@ class CommanderLoop:
         self._own_approvals: set[str] = set()
         # the AI's own action cards: only these make it wait (its own charter proposals do not)
         self._own_action_approvals: set[str] = set()
+        # The AI's own orders whose end (done, failed, superseded, ...) has not reached it as
+        # an event yet: command id -> when an idle check first found no order active.
+        # Its own skill_event turn decides what follows, not an idle turn (``_end_unseen``).
+        self._unended: dict[str, float | None] = {}
         self._backlog_ids: set[str] = set()
         # Refused charter proposals since the last approved/rejected charter (or mission).
         self._charter_attempts = 0
@@ -321,14 +325,21 @@ class CommanderLoop:
             self._queue.clear()
             self._followups.clear()
             self._backlog.clear()
-            self._charter_attempts = 0
-            self._carry = None
-            self._candidates_woken.clear()
+            self._new_mission()
             self._activity_at = self.clock.monotonic()
+
+    def _new_mission(self) -> None:
+        """What belongs to one mission only, for both ways a new one arrives."""
+        self._charter_attempts = 0
+        self._carry = None
+        self._candidates_woken.clear()
+        self._unended.clear()
 
     async def connected(self, reconnect: bool) -> None:
         """The stream is up. After a reconnect the AI says it is back."""
         self.ready_since = self.clock.utc_now()
+        if reconnect:
+            self._unended.clear()  # an end sent while the stream was down never comes
         if reconnect and self.mission_id is not None:
             await self._say(OutMessage(text=BACK_TEXT, kind="status"))
             self._followups.append(("recovered", {}))
@@ -369,6 +380,8 @@ class CommanderLoop:
                 self._start_stop_check(evt)
         elif kind == "event.skill":
             cid = str(body.get("command_id"))
+            if body.get("status") in SKILL_WAKE:
+                self._unended.pop(cid, None)
             if body.get("status") == "rejected_by_gate" and cid in self._sync_rejects:
                 return  # already handled by the retry turn
             if body.get("status") in SKILL_WAKE:
@@ -433,9 +446,7 @@ class CommanderLoop:
             mid = evt.get("mission_id") or body.get("mission_id")
             if mid:
                 if str(mid) != self.mission_id:
-                    self._charter_attempts = 0
-                    self._carry = None
-                    self._candidates_woken.clear()
+                    self._new_mission()
                 self.mission_id = str(mid)
         if trigger is None:
             return
@@ -777,7 +788,22 @@ class CommanderLoop:
             )
             and motion_block(s) is None
             and s.ai_enabled
+            and not self._end_unseen()  # last: only with no order active
         )
+
+    def _end_unseen(self) -> bool:
+        """An order of ours is no longer active on the ground, but its end has not reached
+        the AI as an event yet: the turn for that end is on its way and decides what comes
+        next. An idle turn that ran first saw no active order and acted on its own (#159:
+        a scripted resume right after a goto ended). An end that never comes stops counting
+        after ``idle_airborne_tick_s``, so the idle turns are never held up for good."""
+        now = self.clock.monotonic()
+        for cid, since in list(self._unended.items()):
+            if since is None:
+                self._unended[cid] = since = now
+            if now - since > self.cfg.behaviour.idle_airborne_tick_s:
+                del self._unended[cid]
+        return bool(self._unended)
 
     def _operator_message(
         self, events: list[dict[str, Any]], chat: list[ChatMessage]
@@ -1042,9 +1068,14 @@ class CommanderLoop:
             await self._say(OutMessage(text=text), reply_to)
             return mem
         await self._respect_rate()
+        # Counted before the submit: the ground can publish the order's end before its
+        # answer (a ground skill such as report is done on insert), and that end must find it.
+        cid = str(req.command_id)
+        self._unended[cid] = None
         try:
             result = await self.ground.submit(mid, req)
         except GroundError as exc:
+            self._unended.pop(cid, None)
             _raise_if_refused(exc)
             log.warning("ordern gick inte fram: %s", exc)
             await self._say(OutMessage(text="Ordern gick inte fram till markstationen."), reply_to)
@@ -1053,6 +1084,8 @@ class CommanderLoop:
         self._activity_at = self.clock.monotonic()
         record.request = req
         record.result = result
+        if result.decision not in ("ALLOW", "PENDING_APPROVAL"):
+            self._unended.pop(cid, None)  # never started: no end comes
         if result.decision == "ALLOW":
             self._rate_rejects = 0
             if out.action.skill == "takeoff":
@@ -1235,7 +1268,10 @@ class CommanderLoop:
         """The turn's audit entry, made safe to send once: the model wrote much of it."""
         prompt = _wire_safe(d.prompt_json or {"trigger": record.trigger, "texts": record.texts})
         # default=str: a value that is no JSON (a UUID, a datetime) is logged as its text.
-        prompt_bytes = json.dumps(prompt, sort_keys=True, ensure_ascii=False, default=str)
+        # That text is cleaned too: str() of an odd value may hold a lone surrogate.
+        prompt_bytes: str = _wire_safe(
+            json.dumps(prompt, sort_keys=True, ensure_ascii=False, default=str)
+        )
         result = record.result
         fields: dict[str, Any] = _wire_safe(
             {

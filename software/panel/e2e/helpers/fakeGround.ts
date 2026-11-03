@@ -99,6 +99,8 @@ export class FakeGround {
   readonly unknown: string[] = [];
   /** Requests that got past the routes to the preview server (answered 502 there). */
   readonly escaped: string[] = [];
+  /** /api and /tiles requests on the test origin the browser has not finished yet. */
+  private readonly inFlight = new Set<Request>();
   readonly cspErrors: string[] = [];
   /** Every /tiles/ request and its status (glyph and tile failures make a test fail). */
   readonly tiles: { path: string; status: number }[] = [];
@@ -183,6 +185,21 @@ export class FakeGround {
           return orig?.get?.call(this);
         },
       });
+    });
+    const toGround = (r: Request): boolean => {
+      const url = new URL(r.url());
+      return url.origin === this.origin && /^\/(api|tiles)(\/|$)/.test(url.pathname);
+    };
+    page.on("request", (r) => {
+      if (toGround(r)) this.inFlight.add(r);
+    });
+    page.on("requestfinished", (r) => this.inFlight.delete(r));
+    page.on("requestfailed", (r) => this.inFlight.delete(r));
+    // A reload or navigation cuts the old document's requests off without either event.
+    // This also fires on history.replaceState and hash changes; settle() then just
+    // returns early, as it did before it waited at all.
+    page.on("framenavigated", (f) => {
+      if (f === page.mainFrame()) this.inFlight.clear();
     });
     page.on("response", (res) => {
       if (res.headers()["x-sd-unrouted"])
@@ -393,6 +410,16 @@ export class FakeGround {
     await this.page.goto(path);
   }
 
+  /** Waits, up to `ms`, for a moment with no /api or /tiles request in flight, so a
+   * request the test body sent last is answered (or logged by the guard) before verify()
+   * and the END marker, and counts as part of the test. */
+  async settle(ms = 2_000): Promise<void> {
+    const until = Date.now() + ms;
+    while (this.inFlight.size > 0 && Date.now() < until && !this.page.isClosed()) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+
   /** Checks that run after every test. */
   async verify(): Promise<void> {
     expect(this.external, "requests to other hosts").toEqual([]);
@@ -521,7 +548,10 @@ export class FakeGround {
     }
     if (this.contract && !this.contract.some((re) => re.test(key)))
       this.unknown.push(`${key} (not in OpenAPI)`);
-    if (res === "hang") return; // never answered; the panel's own timeout aborts it
+    if (res === "hang") {
+      this.inFlight.delete(req); // never answered; the panel's own timeout aborts it
+      return;
+    }
     if (res === null) {
       this.unknown.push(key);
       await route.fulfill({
@@ -842,6 +872,7 @@ export const test = base.extend<{ ground: FakeGround }>({
       await g.install();
       try {
         await use(g);
+        await g.settle();
         await g.verify();
       } finally {
         // The page closes after this: what the server logs for this test from now on was

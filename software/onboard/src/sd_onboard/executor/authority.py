@@ -31,6 +31,17 @@ After AUTO was taken as ours the RC mode switch is still watched for ``RC_RECHEC
 past that (or to the deadline): a pilot's RC AUTO whose HEARTBEAT came before the next
 RC_CHANNELS sample is then a takeover after all.
 
+Assumed: the link delivers the flight controller's messages in the order it sent them
+(one serial or radio link to it). Were they reordered, a GUIDED HEARTBEAT sent before the
+AUTO answer but received after it would end the late AUTO, and the AUTO that shows next
+would be taken as a takeover: a false hold, never a takeover taken as ours.
+
+Known residual: a newer mode command of ours whose answer is lost, then a GCS switch to
+AUTO before any HEARTBEAT showed our change. Nothing received yet tells that the late AUTO
+is over, so that AUTO is taken as ours. It is bounded by the late record's deadline (at
+most ``MODE_CONFIRM_TIMEOUT_S`` after the answer, 2 s) and to AUTO, and an RC takeover is
+always caught: the mode switch moving ends the record, and it is watched after adoption.
+
 A mode change nobody here asked for suspends control at once (HELD, ``external``). A
 failsafe signal up to 2 s before or after it makes it FAILSAFE instead; a notice from the
 ground in that window names who took over.
@@ -121,6 +132,7 @@ class Authority:
         if late is None:
             return None
         moved = switch_moved(late.rc_mode_pwm, t.rc_mode_pwm)
+        # Receive order stands for send order: the link does not reorder (module docstring).
         after_newer = t.mode_answer_seq is not None and t.mode_answer_seq > late.answer_seq
         # The flight controller was in the late mode when it sent that answer: a HEARTBEAT
         # received after it that showed another mode means it left it, so the mode showing
