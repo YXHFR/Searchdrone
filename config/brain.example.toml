@@ -42,7 +42,7 @@ require_parameters = true             # only providers that support tools and re
 # zdr = true                          # only zero-data-retention endpoints; unset = by the
                                       # ground station's profile: false only for its sim
 only = []                             # e.g. ["deepinfra"]; empty = any allowed provider
-order = []                            # preferred providers, tried first
+order = ["deepinfra", "fireworks", "together"]  # tried first (fast); [] = OpenRouter's routing
 
 [decide]                              # the decision interface (quick stop check)
 # Best first. A hosted engine is used only when its key is in .env (SD_JEV_API_KEY,
