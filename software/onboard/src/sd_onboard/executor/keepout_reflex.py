@@ -236,8 +236,10 @@ def stop_m(speed_ms: float) -> float:
 
 def way_out(here: Xy, cyl: list[Circle], area: Polygon) -> Xy | None:
     """The point just outside every cylinder ``here`` lies in, along a straight leg that
-    goes deeper into none of them and enters no other, inside ``area``
-    (``sd_safety.keepout.reroute``); None when ``here`` is in none or no such leg exists."""
+    goes deeper into none of them and enters no other, with ``_EXIT_EDGE_M``
+    (``sd_safety.keepout``) of room along the leg past its end, all of it clear of the
+    cylinders and inside ``area`` (``sd_safety.keepout.reroute``); None when ``here`` is in
+    none or no such leg exists."""
     way = reroute([here], cyl, area=area)
     return None if way is None or len(way) < 2 else way[1]
 
