@@ -15,8 +15,9 @@ Used by ``InspectHandler`` when the charter allows flying over the candidate
   descent is fed to the flight controller as a target moving down at ``DESCENT_MAX_MS``
   (``DESCENT_SLOW_MS`` below the map's floor without the laser). Every leg goes through
   the executor's whole gate first (``ExecutorIO.leg_refusal``).
-* **The end** (``InspectEnd``): a clear picture, the floor reached, the pilot said no or
-  did not answer in ``LOWER_OFFER_S``, ``STEPS_MAX`` steps, ``INSPECT_MAX_S``, a cylinder
+* **The end** (``InspectEnd``): a clear picture, the floor reached, the pilot said no
+  (``InspectStay``: at once, where the drone hovers) or did not answer in
+  ``LOWER_OFFER_S``, ``STEPS_MAX`` steps, ``INSPECT_MAX_S``, a cylinder
   in the way (``keepout``), or the laser lost below the map's floor without it (the drone
   climbs back to that floor first). The drone stays at the lowest height reached; the
   executor then hovers for the pilot's decision.
@@ -218,8 +219,9 @@ class StepLook:
     _stop: bool = False  # the keep-out reflex: stop where the drone is (``keepout``)
     _climb_to: float | None = None  # ... or climb straight up to this, then stop
     _climbing: bool = False
-    _lower_yes: asyncio.Event | None = None
+    _lower_yes: asyncio.Event | None = None  # set by the pilot's answer, yes or no
     _lower_asked: bool = False
+    _lower_no: bool = False  # the answer was no (``InspectStay``)
     _pilot_yes: bool = False
     laser_seen: bool = False
     _paused_s: float = 0.0  # the pilot's answer time: not counted in INSPECT_MAX_S
@@ -301,6 +303,15 @@ class StepLook:
     def lower(self) -> None:
         """The pilot's yes (``InspectLower``): down to the lowest floor."""
         self._lower_asked = True
+        if self._lower_yes is not None:
+            self._lower_yes.set()
+
+    def stay(self) -> None:
+        """The pilot's no (``InspectStay``): the question ends at once and so does the look,
+        at the height the drone hovers at (``lower_declined``). Nothing moves for it: the
+        drone keeps hovering where it asked, and the executor then waits for the decision
+        there. A no wins over a yes that came with it."""
+        self._lower_no = True
         if self._lower_yes is not None:
             self._lower_yes.set()
 
@@ -388,8 +399,9 @@ class StepLook:
         await self._step_to(io, here, target, goal, fl)
 
     async def _offer_lower(self, io: ExecutorIO, fl: Floors, alt_m: float) -> None:
-        """Hover and ask the pilot (``inspect.lower_offer``); no or no answer in
-        ``LOWER_OFFER_S`` ends the steps (``lower_declined``)."""
+        """Hover and ask the pilot (``inspect.lower_offer``); a no (``InspectStay``) or no
+        answer in ``LOWER_OFFER_S`` ends the steps (``lower_declined``) where the drone
+        hovers."""
         if self._lower_yes is None:
             raise RuntimeError("planned before running")
         self.phase = "lower_offer"
@@ -411,6 +423,8 @@ class StepLook:
             self._watch(io)
             await io.sleep(_TICK_S)
         self._paused_s += io.clock.monotonic() - asked
+        if self._lower_no:
+            raise _End("lower_declined")
         self._pilot_yes = True
         self.phase = "step"
 

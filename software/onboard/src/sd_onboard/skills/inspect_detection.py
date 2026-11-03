@@ -218,6 +218,11 @@ class InspectHandler:
         if self.steps is not None:
             self.steps.lower()
 
+    def stay(self) -> None:
+        """The pilot said no to going lower (``InspectStay``): the look ends where it is."""
+        if self.steps is not None:
+            self.steps.stay()
+
     def leg_end(self) -> tuple[float, float] | None:
         if self.steps is not None:
             return self.steps.leg_end()

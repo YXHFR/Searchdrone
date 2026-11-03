@@ -378,9 +378,22 @@ export interface ApprovalDecisionRequest {
     | ["clear_around_drone", "clear_around_drone", "clear_around_drone"]
     | ["clear_around_drone", "clear_around_drone", "clear_around_drone", "clear_around_drone"];
   decision: "approve" | "reject";
+  floor_pack?: FloorPackChoice | null;
   operation_mode?: ("sim" | "exercise" | "live") | null;
   reason?: string | null;
   subject_version: number;
+}
+/**
+ * The pilot's map pack on the charter card: one from ``GET /floor_packs`` with the
+ * hash the list showed, or neither ("Ingen höjdkarta": a closer look does not come
+ * down). The ground refuses a pack it does not have whole or whose hash has changed.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "FloorPackChoice".
+ */
+export interface FloorPackChoice {
+  floor_pack_id?: string | null;
+  floor_pack_sha256?: string | null;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -1579,6 +1592,23 @@ export interface FindMeParams {
   hover_offset_m: number;
 }
 /**
+ * ``GET /floor_packs``: a height-floor map pack the ground station holds under
+ * ``<data_dir>/floor/<floor_pack_id>/`` whose files all match their hashes, for the
+ * pilot's choice on the charter card. ``attribution`` is the data's source credit (it
+ * is shown wherever the pack is picked).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "FloorPackInfo".
+ */
+export interface FloorPackInfo {
+  attribution: string;
+  floor_pack_id: string;
+  floor_pack_sha256: string;
+  origin: LatLon;
+  size_east_m: number;
+  size_north_m: number;
+}
+/**
  * Stage 2. Unresolved here: the operator's position is checked onboard.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -1958,6 +1988,57 @@ export interface InspectProgress {
   laser_confirmed?: boolean;
   phase: "approach" | "step" | "lower_offer" | "await" | "return";
   step: number;
+}
+/**
+ * Ground -> onboard, reliable: the pilot's no to "Gå lägre?" ("Nej, stanna här"). The
+ * drone stops waiting for an answer at once and the look ends where it is
+ * (``lower_declined``), as on no answer in ``LOWER_OFFER_S``: it never goes lower for it.
+ * A kind of its own, not a flag on ``InspectLower``, so that a no can never be read as a
+ * yes. Only from the pilot's own click.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "InspectStay".
+ */
+export interface InspectStay {
+  command_id: string;
+}
+/**
+ * A closer look as the ground keeps it (``GET /api/v1/missions/{id}/inspections``
+ * and ``inspection.updated`` on the live topic ``candidates``). At most one is open per
+ * mission (``ended_at`` None).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "Inspection".
+ */
+export interface Inspection {
+  await_until?: string | null;
+  candidate_id: string;
+  command_id: string;
+  detail?: string | null;
+  done?: InspectDone | null;
+  ended_at?: string | null;
+  lower_offer?: InspectLowerOffer | null;
+  lower_offer_until?: string | null;
+  mission_id: string;
+  operation_mode: "sim" | "exercise" | "live";
+  outcome?:
+    | (
+        | "confirmed"
+        | "rejected"
+        | "unsure"
+        | "resume"
+        | "timeout"
+        | "resumed_by_pilot"
+        | "aborted"
+        | "refused_onboard"
+        | "failed"
+      )
+    | null;
+  overflight: boolean;
+  phase: "flying" | "lower_offer" | "await" | "ended";
+  seq: number;
+  started_at: string;
+  started_by: string;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -2717,6 +2798,19 @@ export interface Pose {
   roll_deg: number;
   source_ts_ms: number;
   yaw_deg: number;
+}
+/**
+ * The ground's overflight permit for ``live`` (``GET``/``PUT /api/v1/permit``): the
+ * reference of the operator's permit in the specific category (Transportstyrelsen) and
+ * whether a closer look may then fly straight over its candidate. A charter approved
+ * in ``live`` carries ``overflight_allowed`` from it; sim and exercise always may.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "Permit".
+ */
+export interface Permit {
+  allow_overflight_live?: boolean;
+  specific_category_ref?: string;
 }
 /**
  * ``permit.changed`` on the ground: the overflight permit setting for ``live``.

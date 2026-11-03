@@ -119,6 +119,10 @@ const SERVER_FIELDS = new Set([
   "mission_id",
   "vehicle_id",
   "autonomy_mode",
+  // Picked on the card or stamped by the ground when it is approved:
+  "operation_mode",
+  "overflight_allowed",
+  "floor_pack_sha256",
 ]);
 
 export interface DiffRow {
@@ -146,6 +150,7 @@ const KNOWN = new Set([
   "pilot_position",
   "sectors",
   "no_personal_data",
+  "floor_pack_id",
 ]);
 
 /** Every field that differs, known or not (a generic diff). */

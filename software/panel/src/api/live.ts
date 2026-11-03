@@ -2,11 +2,13 @@
 // live events. Events that arrive while a resync runs are held back and applied after it
 // in seq order, so a snapshot can never overwrite something newer.
 import i18next from "i18next";
+import { chime } from "../lib/chime";
 import { noteLive } from "../lib/testHooks";
 import { alertView, findHoldEndedView, isSticky, LINK_DOWN_CODES } from "../safety/gnss";
 import { actionBus } from "../state/actionBus";
 import { useCandidateStore } from "../state/candidateStore";
 import { lastChatSeq, useChatStore } from "../state/chatStore";
+import { useInspectStore } from "../state/inspectStore";
 import { useLiveStore } from "../state/liveStore";
 import { type ClearanceView, type SectorFeature, useMissionStore } from "../state/missionStore";
 import { useSessionStore } from "../state/sessionStore";
@@ -23,6 +25,8 @@ import type {
   ChatMessage,
   Command,
   Find,
+  Inspection,
+  InspectProgress,
   Mission,
   MissionDetail,
   OperatorLatch,
@@ -82,6 +86,7 @@ function setMission(mission: Mission | null): void {
   if (changed) {
     useMissionStore.getState().reset(mission?.id ?? null);
     useCandidateStore.getState().reset(mission?.id ?? null);
+    useInspectStore.getState().reset(mission?.id ?? null);
     useChatStore.getState().clear();
     socket?.resubscribe();
   }
@@ -117,6 +122,9 @@ async function loadMissionData(missionId: string): Promise<void> {
     const queue = await quietly(api<CandidateQueue>(paths.missionCandidates(missionId)));
     if (queue && useCandidateStore.getState().missionId === missionId)
       useCandidateStore.getState().setCards(queue.items);
+    const looks = await quietly(api<Inspection[]>(paths.missionInspections(missionId)));
+    if (looks && useInspectStore.getState().missionId === missionId)
+      useInspectStore.getState().setLooks(looks);
   }
   await loadChat(missionId);
   const track = await quietly(api<TrackFeature>(paths.missionTrack(missionId)));
@@ -224,6 +232,27 @@ function logFindHoldEnded(d: Record<string, unknown>, ts: string | null | undefi
   const v = findHoldEndedView(d, at, seq);
   const reason = v.reasonKey ? i18next.t(v.reasonKey) : String(d.reason ?? "");
   useUiStore.getState().log("info", i18next.t(v.key, { ...v.vars, reason }));
+}
+
+/** A look's new state. The drone asking to go lower and the end of the steps are told once
+ * each (the end with a tone), wherever the pilot is in the panel. */
+function announceLook(look: Inspection): void {
+  const before = useInspectStore.getState().upsert(look);
+  if (before?.phase === look.phase || before?.phase === "ended") return;
+  const ui = useUiStore.getState();
+  if (look.phase !== "lower_offer" && look.phase !== "await") return;
+  // Only the pilot answers "Gå lägre?": an observer is told that the pilot does.
+  const pilot = useSessionStore.getState().session?.role === "pilot";
+  const key =
+    look.phase === "await"
+      ? "inspect.toast.done"
+      : pilot
+        ? "inspect.toast.lower"
+        : "inspect.toast.lowerObserver";
+  const text = i18next.t(key, { seq: look.seq });
+  ui.log("info", text);
+  ui.toast(text);
+  if (look.phase === "await") chime();
 }
 
 function isPending(a: Approval): boolean {
@@ -384,6 +413,12 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
       );
       break;
     }
+    case "inspection.updated":
+      if (forMission) announceLook(e.data as Inspection);
+      break;
+    case "candidate.inspect_progress":
+      if (forMission) useInspectStore.getState().setProgress(e.data as InspectProgress);
+      break;
     case "search_profile.proposed":
     case "search_profile.approved":
       if (forMission) {
@@ -497,6 +532,7 @@ export function startLive(vehicleId: string): () => void {
         useLiveStore.getState().reset();
         useMissionStore.getState().reset(null);
         useCandidateStore.getState().reset(null);
+        useInspectStore.getState().reset(null);
         useChatStore.getState().clear();
         void resync(vehicleId);
       },

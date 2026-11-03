@@ -180,6 +180,7 @@ from sd_schemas.link import (
     HelloAck,
     InspectLower,
     InspectOutcome,
+    InspectStay,
     Keepout,
     KeepoutInstall,
     ManualTakeover,
@@ -3164,6 +3165,26 @@ class Executor:
             return
         a.handler.lower()
         self.emit("inspect_lower", {"command_id": str(s.command_id)})
+        self._ack(ref_id, "done")
+
+    def on_inspect_stay(self, stay: InspectStay, ref_id: UUID) -> None:
+        """The pilot's no to "Gå lägre?" ("Nej, stanna här"), only to the question asked
+        now, like the yes: the look stops waiting and ends where the drone hovers
+        (``lower_declined``), never lower. Stale otherwise: nothing changes onboard."""
+        s, a = self._inspect, self.active
+        if (
+            s is None
+            or s.command_id != stay.command_id
+            or s.phase != "flying"
+            or a is None
+            or not isinstance(a.handler, InspectHandler)
+            or a.handler.steps is None
+            or a.handler.steps.phase != "lower_offer"
+        ):
+            self._ack(ref_id, "rejected", ("ONB_STALE_ORDER",))
+            return
+        a.handler.stay()
+        self.emit("inspect_stay", {"command_id": str(s.command_id)})
         self._ack(ref_id, "done")
 
     def _inspect_progress(self) -> InspectProgress | None:

@@ -21,13 +21,20 @@ from sd_schemas.base import (
     VehicleId,
     json_bytes_at_most,
 )
-from sd_schemas.charter import AutonomyMode, MissionCharter, OperationMode
+from sd_schemas.charter import (
+    FLOOR_PACK_NAME_PATTERN,
+    AutonomyMode,
+    MissionCharter,
+    OperationMode,
+)
 from sd_schemas.gate import GateDecision, StateRef
 from sd_schemas.link import StateSnapshot, StickAxes
 from sd_schemas.mission import MissionState, OperatorLatch, PausedBy, ReturningCause
 from sd_schemas.probmap import PoaHint
 from sd_schemas.safety import LimitCaps, SafetyLimits
 from sd_schemas.sv_commands import OverrideIntent
+
+_SHA256 = r"^[0-9a-f]{64}$"
 
 __all__ = [
     "CHAT_MAX_CHARS",
@@ -61,6 +68,8 @@ __all__ = [
     "Event",
     "Features",
     "Find",
+    "FloorPackChoice",
+    "FloorPackInfo",
     "Health",
     "LinkLossPlan",
     "LinkStatus",
@@ -540,6 +549,35 @@ class Approval(SdModel):
     reason: str | None
 
 
+class FloorPackInfo(SdModel):
+    """``GET /floor_packs``: a height-floor map pack the ground station holds under
+    ``<data_dir>/floor/<floor_pack_id>/`` whose files all match their hashes, for the
+    pilot's choice on the charter card. ``attribution`` is the data's source credit (it
+    is shown wherever the pack is picked)."""
+
+    floor_pack_id: str = Field(pattern=FLOOR_PACK_NAME_PATTERN)
+    floor_pack_sha256: str = Field(pattern=_SHA256)
+    attribution: str = Field(max_length=500)
+    origin: LatLon  # the middle of the pack
+    size_east_m: int = Field(ge=1)
+    size_north_m: int = Field(ge=1)
+
+
+class FloorPackChoice(SdModel):
+    """The pilot's map pack on the charter card: one from ``GET /floor_packs`` with the
+    hash the list showed, or neither ("Ingen höjdkarta": a closer look does not come
+    down). The ground refuses a pack it does not have whole or whose hash has changed."""
+
+    floor_pack_id: str | None = Field(default=None, pattern=FLOOR_PACK_NAME_PATTERN)
+    floor_pack_sha256: str | None = Field(default=None, pattern=_SHA256)
+
+    @model_validator(mode="after")
+    def _both_or_neither(self) -> FloorPackChoice:
+        if (self.floor_pack_id is None) != (self.floor_pack_sha256 is None):
+            raise ValueError("give both floor_pack_id and floor_pack_sha256, or neither")
+        return self
+
+
 class ApprovalDecisionRequest(SdModel):
     decision: Literal["approve", "reject"]
     subject_version: int
@@ -550,6 +588,9 @@ class ApprovalDecisionRequest(SdModel):
     # A charter: the kind of flight it is for, the pilot's choice. None keeps the mode of
     # the charter in force; a first charter without one is live, the strictest.
     operation_mode: OperationMode | None = None
+    # A charter: the height-floor map pack, the pilot's choice. None keeps the pack of the
+    # charter in force (a first charter: none).
+    floor_pack: FloorPackChoice | None = None
     reason: str | None = Field(default=None, max_length=500)
 
 

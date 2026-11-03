@@ -14,6 +14,7 @@ owns are already here, with their final paths, bodies and role checks, and answe
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 from typing import Annotated, Any, Literal
 
@@ -49,6 +50,7 @@ from sd_ground.services import chat as chat_service
 from sd_ground.services import clearance as clearance_service
 from sd_ground.services import commands as commands_service
 from sd_ground.services import files as files_service
+from sd_ground.services import floor_packs as floor_packs_service
 from sd_ground.services import health
 from sd_ground.services import inspections as inspections_service
 from sd_ground.services import perception as perception_service
@@ -79,6 +81,7 @@ from sd_schemas.api import (
     Event,
     Features,
     Find,
+    FloorPackInfo,
     Health,
     LoginRequest,
     Mission,
@@ -778,6 +781,22 @@ async def post_inspection_lower(command_id: IdPath, g: G, _: Interactive) -> Ins
     """The pilot's yes to "Gå lägre?" (only while the drone asks: 409 ``NO_LOWER_OFFER``
     otherwise, 404 when the look is not open, 503 without the link)."""
     return await inspections_service.lower(_flow(g), command_id)
+
+
+@router.post("/inspections/{command_id}/stay", response_model=Inspection)
+async def post_inspection_stay(command_id: IdPath, g: G, _: Interactive) -> Inspection:
+    """The pilot's no to "Gå lägre?" ("Nej, stanna här"): the drone stops asking at once
+    and the look ends at the height it hovers at, never lower. The same answers as
+    ``/lower`` (409 ``NO_LOWER_OFFER``, 404, 503 ``LINK_DOWN``)."""
+    return await inspections_service.stay(_flow(g), command_id)
+
+
+@router.get("/floor_packs", response_model=list[FloorPackInfo])
+async def get_floor_packs(g: G, _: Observer) -> list[FloorPackInfo]:
+    """The height-floor map packs the ground holds whole (``<data_dir>/floor/<id>/``, every
+    file matching its hash), by name, each with its source credit: what the pilot picks
+    from on the charter card (``ApprovalDecisionRequest.floor_pack``)."""
+    return await asyncio.to_thread(floor_packs_service.listing, _flow(g))
 
 
 @router.get("/permit", response_model=Permit)

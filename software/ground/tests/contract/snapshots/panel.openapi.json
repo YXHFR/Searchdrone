@@ -636,6 +636,16 @@
             "title": "Decision",
             "type": "string"
           },
+          "floor_pack": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FloorPackChoice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "operation_mode": {
             "anyOf": [
               {
@@ -2372,6 +2382,82 @@
           "synthetic"
         ],
         "title": "Find",
+        "type": "object"
+      },
+      "FloorPackChoice": {
+        "additionalProperties": false,
+        "description": "The pilot's map pack on the charter card: one from ``GET /floor_packs`` with the\nhash the list showed, or neither (\"Ingen höjdkarta\": a closer look does not come\ndown). The ground refuses a pack it does not have whole or whose hash has changed.",
+        "properties": {
+          "floor_pack_id": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Pack Id"
+          },
+          "floor_pack_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Pack Sha256"
+          }
+        },
+        "title": "FloorPackChoice",
+        "type": "object"
+      },
+      "FloorPackInfo": {
+        "additionalProperties": false,
+        "description": "``GET /floor_packs``: a height-floor map pack the ground station holds under\n``<data_dir>/floor/<floor_pack_id>/`` whose files all match their hashes, for the\npilot's choice on the charter card. ``attribution`` is the data's source credit (it\nis shown wherever the pack is picked).",
+        "properties": {
+          "attribution": {
+            "maxLength": 500,
+            "title": "Attribution",
+            "type": "string"
+          },
+          "floor_pack_id": {
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+            "title": "Floor Pack Id",
+            "type": "string"
+          },
+          "floor_pack_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Floor Pack Sha256",
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/LatLon"
+          },
+          "size_east_m": {
+            "minimum": 1.0,
+            "title": "Size East M",
+            "type": "integer"
+          },
+          "size_north_m": {
+            "minimum": 1.0,
+            "title": "Size North M",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "floor_pack_id",
+          "floor_pack_sha256",
+          "attribution",
+          "origin",
+          "size_east_m",
+          "size_north_m"
+        ],
+        "title": "FloorPackInfo",
         "type": "object"
       },
       "Garment": {
@@ -6721,6 +6807,29 @@
         "summary": "Post Detection View"
       }
     },
+    "/api/v1/floor_packs": {
+      "get": {
+        "description": "The height-floor map packs the ground holds whole (``<data_dir>/floor/<id>/``, every\nfile matching its hash), by name, each with its source credit: what the pilot picks\nfrom on the charter card (``ApprovalDecisionRequest.floor_pack``).",
+        "operationId": "get_floor_packs_api_v1_floor_packs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FloorPackInfo"
+                  },
+                  "title": "Response Get Floor Packs Api V1 Floor Packs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Floor Packs"
+      }
+    },
     "/api/v1/health": {
       "get": {
         "operationId": "get_health_api_v1_health_get",
@@ -6778,6 +6887,47 @@
           }
         },
         "summary": "Post Inspection Lower"
+      }
+    },
+    "/api/v1/inspections/{command_id}/stay": {
+      "post": {
+        "description": "The pilot's no to \"Gå lägre?\" (\"Nej, stanna här\"): the drone stops asking at once\nand the look ends at the height it hovers at, never lower. The same answers as\n``/lower`` (409 ``NO_LOWER_OFFER``, 404, 503 ``LINK_DOWN``).",
+        "operationId": "post_inspection_stay_api_v1_inspections__command_id__stay_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "command_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Command Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Inspection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Inspection Stay"
       }
     },
     "/api/v1/missions": {

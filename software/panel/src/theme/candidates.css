@@ -276,3 +276,44 @@
   font-weight: 600;
   color: var(--c-ok);
 }
+
+/* Titta närmare: the strip during a look, "Gå lägre?" and the wait for the decision. */
+.inspect-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-2);
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--c-acc);
+  border-radius: var(--r);
+  background: var(--c-acc-soft);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.inspect-over {
+  font-weight: 400;
+  color: var(--c-mute);
+}
+.inspect-box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 2px solid var(--c-warn);
+  border-radius: var(--r);
+  background: var(--c-warn-soft);
+}
+.inspect-box h3 {
+  margin: 0;
+  font-size: var(--fs-big);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.inspect-box .btn,
+.cand-decide .btn-quiet {
+  min-height: 44px;
+}
+.inspect-line {
+  color: var(--c-acc);
+  font-weight: 600;
+}

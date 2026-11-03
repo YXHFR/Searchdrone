@@ -78,7 +78,6 @@ def target(east: float = 0.0, north: float = 20.0) -> dict[str, Any]:
 @pytest.fixture
 def pack_dir(tmp_path: Path) -> tuple[Path, str]:
     folder = write_pack(tmp_path / "floor" / PACK, make_pack(tree_m=20.0))
-    inspections._load_pack.cache_clear()  # pyright: ignore[reportPrivateUsage]
     return tmp_path, hashlib.sha256((folder / "floor_pack.toml").read_bytes()).hexdigest()
 
 

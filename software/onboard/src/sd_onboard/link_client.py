@@ -52,6 +52,7 @@ from sd_schemas.link import (
     HelloAck,
     InspectLower,
     InspectOutcome,
+    InspectStay,
     KeepoutInstall,
     ManualControl,
     ManualTakeover,
@@ -226,6 +227,7 @@ class OnboardLink:
                 | CharterInstall()
                 | InspectOutcome()
                 | InspectLower()
+                | InspectStay()
             ):
                 self._ordered.put_nowait(inbound)
             case OperatorOverrideNotice():
@@ -283,6 +285,8 @@ class OnboardLink:
                 ex.on_inspect_outcome(body, env.msg_id)
             case InspectLower():
                 ex.on_inspect_lower(body, env.msg_id)
+            case InspectStay():
+                ex.on_inspect_stay(body, env.msg_id)
             case _:
                 pass
 

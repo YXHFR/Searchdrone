@@ -5,11 +5,12 @@ import { useNow } from "../lib/useNow";
 import { useBrainEngine, useBrainState, useCloudBudget, useCommandMode } from "../state/brain";
 import { openReview, useCandidateStore } from "../state/candidateStore";
 import { useLiveStore } from "../state/liveStore";
-import { useMissionStore } from "../state/missionStore";
-import { useSessionStore } from "../state/sessionStore";
+import { activeCharter, useMissionStore } from "../state/missionStore";
+import { useIsPilot, useSessionStore } from "../state/sessionStore";
 import { useShellStore } from "../state/shellStore";
 import { useUiStore } from "../state/uiStore";
 import { THEME_PREFS, type ThemePref } from "../theme/theme";
+import { operationMode } from "../views/candidates/inspect";
 import { BACKLOG_AT, groupQueue } from "../views/candidates/queue";
 import { type Cell, instrumentCells, isStale } from "./instruments";
 import { Menu } from "./Menu";
@@ -276,10 +277,31 @@ function ModeSwitch() {
   );
 }
 
+/** The kind of flight the charter in force is for: SIM, ÖVNING (yellow) or SKARPT (red). */
+function useOperationMode() {
+  const activeId = useLiveStore((s) => s.mission?.active_charter_id ?? null);
+  const charter = useMissionStore((s) => activeCharter(s, activeId));
+  return operationMode(charter?.body);
+}
+
+function OperationBadge() {
+  const { t } = useTranslation();
+  const mode = useOperationMode();
+  if (!mode) return null;
+  return (
+    <span className="tag op-badge" data-mode={mode} data-testid="op-badge">
+      {t(`opMode.badge.${mode}`)}
+    </span>
+  );
+}
+
 export function TopBar() {
   const { t } = useTranslation();
   const title = useLiveStore((s) => s.mission?.title ?? null);
-  const sim = useSessionStore((s) => s.config?.vehicle_kind === "sim");
+  const simVehicle = useSessionStore((s) => s.config?.vehicle_kind === "sim");
+  const mode = useOperationMode();
+  const sim = simVehicle && mode !== "sim";
+  const isPilot = useIsPilot();
   const vp = useShellStore((s) => s.vp);
   return (
     <header className="topbar" data-testid="topbar">
@@ -291,6 +313,7 @@ export function TopBar() {
         <span className="mission-title" data-testid="mission-title" title={title ?? undefined}>
           {title ?? t("app.noMission")}
         </span>
+        <OperationBadge />
         {sim ? <span className="tag">{t("app.sim")}</span> : null}
       </div>
       {vp !== "phone" ? <ModeSwitch /> : null}
@@ -337,6 +360,19 @@ export function TopBar() {
               >
                 {t("menu.manual")}
               </button>
+              {isPilot ? (
+                <button
+                  type="button"
+                  className="menu-item"
+                  data-testid="menu-settings"
+                  onClick={() => {
+                    useShellStore.getState().setOverlay("settings");
+                    close();
+                  }}
+                >
+                  {t("menu.settings")}
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="menu-item"

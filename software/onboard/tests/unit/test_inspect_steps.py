@@ -26,7 +26,14 @@ from sd_schemas.executor import ExecutorState as S
 from sd_schemas.executor import LinkLossPhase
 from sd_schemas.inspect import AWAIT_DECISION_S, DESCENT_MAX_MS, LOWER_OFFER_S
 from sd_schemas.keepout import Keepout
-from sd_schemas.link import BBox, GeoDetectionMsg, InspectLower, InspectOutcome, KeepoutInstall
+from sd_schemas.link import (
+    BBox,
+    GeoDetectionMsg,
+    InspectLower,
+    InspectOutcome,
+    InspectStay,
+    KeepoutInstall,
+)
 from sd_schemas.rangefinder import LaserState
 
 SKILLS = [*ONBOARD_SKILLS, "capture_stills", "inspect_detection"]
@@ -353,6 +360,78 @@ async def test_the_pilots_yes_goes_down_to_the_lowest_floor() -> None:
         assert min(lows) > lowest - 1.6  # never below the lowest floor
         assert alt(r) < 30 - 5
         assert len(events(r, "inspect.lower_offer")) == 1
+
+
+async def test_the_pilots_no_ends_the_look_at_once_where_it_hovers() -> None:
+    pack = meadow()
+    async with rig() as r:
+        cmd, _ = await start(r, pack=pack)
+        auto, _ = ground_floor(r, pack)
+        await r.until(lambda: bool(events(r, "inspect.lower_offer")), 200)
+        asked_at, hover = r.clock.monotonic(), alt(r)
+        r.ex.on_inspect_stay(InspectStay(command_id=cmd.command_id), no := new_id())
+        assert "done" in r.up.stages(no)
+        assert [e["command_id"] for e in events(r, "executor.inspect_stay")] == [
+            str(cmd.command_id)
+        ]
+        lows: list[float] = []
+
+        def watch() -> bool:
+            lows.append(alt(r))
+            return r.ex.hold_reason == "inspect_await"
+
+        await r.until(watch, 10)  # not the 60 s of no answer
+        assert r.clock.monotonic() - asked_at < 5
+        done = events(r, "inspect.done")
+        assert len(done) == 1 and done[0]["end"] == "lower_declined"
+        assert done[0]["lowest_above_ground_m"] == pytest.approx(30, abs=1.6)
+        assert min(lows) > min(hover, auto) - 1.6  # never lower for a no
+        await r.run(LOWER_OFFER_S + 5)  # the old answer time runs out: nothing more
+        assert r.ex.hold_reason == "inspect_await"
+        assert alt(r) > min(hover, auto) - 1.6
+        assert len(events(r, "inspect.lower_offer")) == 1
+        assert len(events(r, "inspect.done")) == 1
+
+
+async def test_a_no_before_the_question_or_after_a_yes_is_stale() -> None:
+    async with rig() as r:
+        cmd, _ = await start(r, pack=meadow())
+        await r.until(lambda: alt(r) < 55, 120)
+        r.ex.on_inspect_stay(InspectStay(command_id=cmd.command_id), early := new_id())
+        assert r.up.codes(early) == ("ONB_STALE_ORDER",)
+        await r.until(lambda: bool(events(r, "inspect.lower_offer")), 200)  # still asked
+        r.ex.on_inspect_stay(InspectStay(command_id=new_id()), other := new_id())
+        assert r.up.codes(other) == ("ONB_STALE_ORDER",)  # another look's
+        r.ex.on_inspect_lower(InspectLower(command_id=cmd.command_id), yes := new_id())
+        assert "done" in r.up.stages(yes)
+        await r.run(1)
+        r.ex.on_inspect_stay(InspectStay(command_id=cmd.command_id), late := new_id())
+        assert r.up.codes(late) == ("ONB_STALE_ORDER",)  # the yes stands
+        done = await awaiting(r, 120)
+        assert done["end"] == "floor" and alt(r) < 30 - 5
+
+
+async def test_a_no_with_a_yes_at_the_same_time_keeps_the_height() -> None:
+    pack = meadow()
+    async with rig() as r:
+        await start(r, pack=pack)
+        auto, _ = ground_floor(r, pack)
+        await r.until(lambda: bool(events(r, "inspect.lower_offer")), 200)
+        hover = alt(r)
+        a = r.ex.active
+        assert a is not None
+        handler: Any = a.handler
+        handler.steps.lower()  # both before the step wakes up: the no wins
+        handler.steps.stay()
+        lows: list[float] = []
+
+        def watch() -> bool:
+            lows.append(alt(r))
+            return r.ex.hold_reason == "inspect_await"
+
+        await r.until(watch, 10)
+        assert events(r, "inspect.done")[0]["end"] == "lower_declined"
+        assert min(lows) > min(hover, auto) - 1.6
 
 
 async def test_a_lower_without_a_look_flying_is_stale() -> None:

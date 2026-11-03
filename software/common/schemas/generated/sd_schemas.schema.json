@@ -764,6 +764,17 @@
           ],
           "type": "string"
         },
+        "floor_pack": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FloorPackChoice"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "operation_mode": {
           "anyOf": [
             {
@@ -4362,6 +4373,77 @@
       "title": "FindMeParams",
       "type": "object"
     },
+    "FloorPackChoice": {
+      "additionalProperties": false,
+      "description": "The pilot's map pack on the charter card: one from ``GET /floor_packs`` with the\nhash the list showed, or neither (\"Ingen höjdkarta\": a closer look does not come\ndown). The ground refuses a pack it does not have whole or whose hash has changed.",
+      "properties": {
+        "floor_pack_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "floor_pack_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "FloorPackChoice",
+      "type": "object"
+    },
+    "FloorPackInfo": {
+      "additionalProperties": false,
+      "description": "``GET /floor_packs``: a height-floor map pack the ground station holds under\n``<data_dir>/floor/<floor_pack_id>/`` whose files all match their hashes, for the\npilot's choice on the charter card. ``attribution`` is the data's source credit (it\nis shown wherever the pack is picked).",
+      "properties": {
+        "attribution": {
+          "maxLength": 500,
+          "type": "string"
+        },
+        "floor_pack_id": {
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+          "type": "string"
+        },
+        "floor_pack_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/LatLon"
+        },
+        "size_east_m": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "size_north_m": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "floor_pack_id",
+        "floor_pack_sha256",
+        "attribution",
+        "origin",
+        "size_east_m",
+        "size_north_m"
+      ],
+      "title": "FloorPackInfo",
+      "type": "object"
+    },
     "FollowMeParams": {
       "additionalProperties": false,
       "description": "Stage 2. Unresolved here: the operator's position is checked onboard.",
@@ -5645,6 +5727,179 @@
         "phase"
       ],
       "title": "InspectProgress",
+      "type": "object"
+    },
+    "InspectStay": {
+      "additionalProperties": false,
+      "description": "Ground -> onboard, reliable: the pilot's no to \"Gå lägre?\" (\"Nej, stanna här\"). The\ndrone stops waiting for an answer at once and the look ends where it is\n(``lower_declined``), as on no answer in ``LOWER_OFFER_S``: it never goes lower for it.\nA kind of its own, not a flag on ``InspectLower``, so that a no can never be read as a\nyes. Only from the pilot's own click.",
+      "properties": {
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id"
+      ],
+      "title": "InspectStay",
+      "type": "object"
+    },
+    "Inspection": {
+      "additionalProperties": false,
+      "description": "A closer look as the ground keeps it (``GET /api/v1/missions/{id}/inspections``\nand ``inspection.updated`` on the live topic ``candidates``). At most one is open per\nmission (``ended_at`` None).",
+      "properties": {
+        "await_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "candidate_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "done": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InspectDone"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lower_offer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InspectLowerOffer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lower_offer_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "operation_mode": {
+          "enum": [
+            "sim",
+            "exercise",
+            "live"
+          ],
+          "type": "string"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "enum": [
+                "confirmed",
+                "rejected",
+                "unsure",
+                "resume",
+                "timeout",
+                "resumed_by_pilot",
+                "aborted",
+                "refused_onboard",
+                "failed"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "overflight": {
+          "type": "boolean"
+        },
+        "phase": {
+          "enum": [
+            "flying",
+            "lower_offer",
+            "await",
+            "ended"
+          ],
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "started_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "started_by": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "candidate_id",
+        "mission_id",
+        "seq",
+        "started_at",
+        "started_by",
+        "operation_mode",
+        "overflight",
+        "phase"
+      ],
+      "title": "Inspection",
       "type": "object"
     },
     "Item": {
@@ -7824,6 +8079,23 @@
         "detector"
       ],
       "title": "PerceptionReport",
+      "type": "object"
+    },
+    "Permit": {
+      "additionalProperties": false,
+      "description": "The ground's overflight permit for ``live`` (``GET``/``PUT /api/v1/permit``): the\nreference of the operator's permit in the specific category (Transportstyrelsen) and\nwhether a closer look may then fly straight over its candidate. A charter approved\nin ``live`` carries ``overflight_allowed`` from it; sim and exercise always may.",
+      "properties": {
+        "allow_overflight_live": {
+          "default": false,
+          "type": "boolean"
+        },
+        "specific_category_ref": {
+          "default": "",
+          "maxLength": 64,
+          "type": "string"
+        }
+      },
+      "title": "Permit",
       "type": "object"
     },
     "PermitChanged": {

@@ -71,7 +71,7 @@ def test_the_ground_answers_and_the_drone_reports() -> None:
     assert link.InspectOutcome(command_id=OTHER, outcome="confirmed").outcome == "confirmed"
     with pytest.raises(ValidationError):
         link.InspectOutcome.model_validate({"command_id": str(OTHER), "outcome": "maybe"})
-    assert {"InspectOutcome", "InspectLower"} <= link.RELIABLE_KINDS
+    assert {"InspectOutcome", "InspectLower", "InspectStay"} <= link.RELIABLE_KINDS
     for kind in (inspect.EVENT_DONE, inspect.EVENT_LOWER_OFFER, "executor.inspect_done"):
         assert link.OnboardEvent(type=kind, severity="info").type == kind
     with pytest.raises(ValidationError):  # the ground's own event, never the drone's
