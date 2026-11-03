@@ -75,6 +75,202 @@ def test_heartbeat_within_5s_and_telemetry_at_4hz() -> None:
     asyncio.run(run())
 
 
+def test_a_held_heartbeat_shows_the_mode_only_when_released() -> None:
+    """``heartbeat_held``: the mode the fake took shows at ``release_heartbeat``, not
+    before; the other telemetry goes on."""
+
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        assert await run_with_clock(clock, vehicle.wait_connected(5.0), max_s=5.0)
+        fc = vehicle.fc
+        fc.heartbeat_held = True
+        seen = vehicle.telemetry.fc_heartbeat_mono_ms
+        fc.mode = CopterMode.LOITER
+        updates: list[int] = []
+        vehicle.subscribe(lambda t: updates.append(clock.monotonic_ms()))
+        await clock.run_for(1.0)
+        assert vehicle.telemetry.fc_mode == "STABILIZE"
+        assert vehicle.telemetry.fc_heartbeat_mono_ms == seen and updates
+        fc.release_heartbeat()
+        await clock.run_for(0.01)
+        assert vehicle.telemetry.fc_mode == "LOITER" and not fc.heartbeat_held
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_a_heartbeat_queued_behind_the_ack_is_ordered_after_it() -> None:
+    """``set_mode_ordered``: the flight controller answers and then sends a HEARTBEAT at
+    once. Both are handled before the caller runs again, in the same millisecond, so
+    only the receive order tells that the HEARTBEAT came after the answer."""
+
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(3.0)
+        fc = vehicle.fc
+        fc.heartbeat_held = True
+        fc.after_ack = lambda _command: fc.release_heartbeat()
+        before = vehicle.telemetry.fc_heartbeat_seq
+        result, seq = await run_with_clock(
+            clock, vehicle.set_mode_ordered(CopterMode.LOITER, origin=SendOrigin.SKILL)
+        )
+        t = vehicle.telemetry
+        assert result is MavResult.ACCEPTED and seq is not None
+        assert before is not None and before < seq
+        assert t.fc_mode == "LOITER" and t.fc_heartbeat_seq is not None
+        assert t.fc_heartbeat_seq > seq
+        assert t.fc_heartbeat_mono_ms == clock.monotonic_ms()  # a time cannot order them
+        fc.after_ack = None
+        fc.drop_acks = 1  # the answer is lost; the retry sees the mode in the HEARTBEAT
+        await clock.run_for(0.5)
+        result, seq = await run_with_clock(
+            clock, vehicle.set_mode_ordered(CopterMode.GUIDED, origin=SendOrigin.SKILL)
+        )
+        assert result is MavResult.ACCEPTED
+        assert seq is not None and seq == vehicle.telemetry.fc_heartbeat_seq
+        fc.drop_commands = 5
+        result, seq = await run_with_clock(
+            clock, vehicle.set_mode_ordered(CopterMode.LOITER, origin=SendOrigin.SKILL)
+        )
+        assert result is MavResult.TIMEOUT and seq is None
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_the_answer_to_our_mode_command_is_recorded_as_it_is_received() -> None:
+    """``mode_answer_seq``: the HEARTBEAT queued behind the answer to our mode command
+    already carries that answer when it is handled, before the caller runs again. With the
+    answer lost, the HEARTBEAT that shows the mode is the answer. A mode change from
+    outside, with no command of ours on the way, is none."""
+
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(3.0)
+        fc = vehicle.fc
+        assert vehicle.telemetry.mode_answer_seq is None
+        seen: list[tuple[int | None, int | None]] = []
+
+        def heartbeat_behind_the_answer(_command: int) -> None:
+            fc.after_ack = None
+            fc.release_heartbeat()
+            # Runs right after that HEARTBEAT is handled, before set_mode_ordered resumes.
+            asyncio.get_running_loop().call_soon(
+                lambda: seen.append(
+                    (vehicle.telemetry.fc_heartbeat_seq, vehicle.telemetry.mode_answer_seq)
+                )
+            )
+
+        fc.heartbeat_held = True
+        fc.after_ack = heartbeat_behind_the_answer
+        result, ack_seq = await run_with_clock(
+            clock, vehicle.set_mode_ordered(CopterMode.LOITER, origin=SendOrigin.SKILL)
+        )
+        assert result is MavResult.ACCEPTED and ack_seq is not None
+        assert seen and seen[0][0] is not None and seen[0][0] > ack_seq
+        assert seen[0][1] == ack_seq
+        # The answer lost: the first HEARTBEAT showing GUIDED is the answer; the ones after
+        # it, while the command still waits, are no new answer.
+        heartbeats: list[tuple[int, int | None, str | None]] = []
+
+        def on_telemetry(t: FcTelemetry) -> None:
+            seq = t.fc_heartbeat_seq
+            if seq is not None and (not heartbeats or heartbeats[-1][0] != seq):
+                heartbeats.append((seq, t.mode_answer_seq, t.fc_mode))
+
+        unsubscribe = vehicle.subscribe(on_telemetry)
+        fc.drop_acks = 1
+        result, _ = await run_with_clock(
+            clock, vehicle.set_mode_ordered(CopterMode.GUIDED, origin=SendOrigin.SKILL)
+        )
+        assert result is MavResult.ACCEPTED
+        await clock.run_for(2.0)
+        unsubscribe()
+        guided = [h for h in heartbeats if h[2] == "GUIDED"]
+        assert len(guided) >= 3
+        answer = guided[0][0]
+        assert ack_seq < answer
+        assert all(h[1] == answer for h in guided[1:]), guided
+        # From outside: no answer of ours.
+        fc.set_mode_external(CopterMode.AUTO)
+        await clock.run_for(1.0)
+        assert vehicle.telemetry.fc_mode == "AUTO"
+        assert vehicle.telemetry.mode_answer_seq == answer
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_a_lost_answer_to_the_mode_already_shown_is_recorded_at_the_retry() -> None:
+    """#161 round-7 review: our command asks for the mode the telemetry already shows (it
+    is stale: the flight controller took another mode whose HEARTBEAT was held back), and
+    its answer is lost. No HEARTBEAT can count as the answer while it waits (it shows the
+    mode at send), so the retry that sees the mode records that HEARTBEAT as the answer,
+    and the next HEARTBEAT carries it."""
+
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(3.0)
+        fc = vehicle.fc
+        fc.set_mode_external(CopterMode.GUIDED)
+        await clock.run_for(1.0)
+        assert vehicle.telemetry.fc_mode == "GUIDED"
+        fc.heartbeat_held = True
+        fc.mode = CopterMode.AUTO  # taken, its HEARTBEAT held back
+        before = vehicle.telemetry.mode_answer_seq
+        fc.drop_acks = 1
+        task = asyncio.ensure_future(
+            vehicle.set_mode_ordered(CopterMode.GUIDED, origin=SendOrigin.SKILL)
+        )
+        await clock.run_for(0.3)
+        assert fc.mode == CopterMode.GUIDED and not task.done()
+        fc.release_heartbeat()
+        await clock.run_for(0.05)
+        assert vehicle.telemetry.mode_answer_seq == before  # shows the mode at send
+        result, seq = await run_with_clock(clock, task)
+        assert result is MavResult.ACCEPTED and seq is not None
+        assert before is None or before < seq
+        await clock.run_for(1.5)
+        t = vehicle.telemetry
+        assert t.fc_heartbeat_seq is not None and t.fc_heartbeat_seq > seq
+        assert t.mode_answer_seq == seq
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_each_heartbeat_carries_the_newest_one_that_showed_another_mode() -> None:
+    """``other_mode_seq``: recorded as received, so a reader that runs only after a newer
+    HEARTBEAT still sees that another mode showed in between."""
+
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(3.0)
+        fc = vehicle.fc
+        fc.set_mode_external(CopterMode.GUIDED)
+        await clock.run_for(1.0)
+        t = vehicle.telemetry
+        assert t.fc_mode == "GUIDED"
+        guided_before = t.fc_heartbeat_seq
+        fc.set_mode_external(CopterMode.LOITER)
+        await clock.run_for(0.0)
+        assert vehicle.telemetry.fc_mode == "LOITER"
+        loiter = vehicle.telemetry.fc_heartbeat_seq
+        assert vehicle.telemetry.other_mode_seq is not None
+        assert guided_before is not None and vehicle.telemetry.other_mode_seq >= guided_before
+        assert loiter is not None and vehicle.telemetry.other_mode_seq < loiter
+        # LOITER, then AUTO before any reader runs: AUTO carries LOITER's HEARTBEAT.
+        fc.set_mode_external(CopterMode.AUTO)
+        await clock.run_for(0.0)
+        assert vehicle.telemetry.fc_mode == "AUTO"
+        assert vehicle.telemetry.other_mode_seq == loiter
+        await clock.run_for(2.0)  # more AUTO HEARTBEATs: unchanged
+        assert vehicle.telemetry.other_mode_seq == loiter
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
 def test_streams_requested_after_connect_and_reconnect() -> None:
     async def run() -> None:
         clock, vehicle, events = await _started()
@@ -463,10 +659,10 @@ def test_mission_current_with_and_without_total() -> None:
 
     async def run() -> None:
         _, vehicle, _ = await _started()
-        vehicle._from_fc(mavlink.MAVLink_mission_current_message(14, 15), "MISSION_CURRENT")  # pyright: ignore[reportPrivateUsage]
+        vehicle._from_fc(mavlink.MAVLink_mission_current_message(14, 15), "MISSION_CURRENT", 1)  # pyright: ignore[reportPrivateUsage]
         t = vehicle.telemetry
         assert (t.mission_seq_current, t.mission_total) == (14, 15)
-        vehicle._from_fc(mavlink.MAVLink_mission_current_message(3, 0), "MISSION_CURRENT")  # pyright: ignore[reportPrivateUsage]
+        vehicle._from_fc(mavlink.MAVLink_mission_current_message(3, 0), "MISSION_CURRENT", 2)  # pyright: ignore[reportPrivateUsage]
         t = vehicle.telemetry
         assert (t.mission_seq_current, t.mission_total) == (3, None)
         await vehicle.close()

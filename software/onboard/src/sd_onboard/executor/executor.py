@@ -16,6 +16,7 @@ import logging
 import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from itertools import pairwise
 from typing import Any, Final, Literal, Protocol
 from uuid import UUID
 
@@ -188,6 +189,11 @@ _PREFLIGHT_EVERY_MS: Final = 1000
 _ALT_GOTO_SPEED_MS: Final = 3.0
 _ALT_GOTO_BELOW_M: Final = 5.0
 _RTL_RETRY_MS: Final = 3000
+_MODE_CONFIRM_MS: Final = int(MODE_CONFIRM_TIMEOUT_S * 1000)
+# A cylinder lifted (a candidate rejected): the search drops a way around it only when
+# that is at least this much shorter, so a cylinder handed from the drone to the ground
+# (the same person, another id) does not stop the search for nothing.
+_STRAIGHTEN_GAIN_M: Final = 30.0
 _LOOP_ALIVE_MS: Final = 1500  # our HEARTBEAT stops when the tick has not run for this long
 _MIN_GPS_SATS: Final = 8
 _CRITICAL: Final = frozenset(
@@ -418,6 +424,8 @@ class Executor:
         self._keepout_watch = False  # an order heads for a cylinder, still far off: every tick
         self._keepouts_seen: set[UUID] = set()  # the cylinders the reflex has looked at
         self._keepouts_through: set[UUID] = set()  # came with the drone inside: left on the leg
+        # A lift a reroute that stops first held back: the order it is for (tried again).
+        self._lift_pending: UUID | None = None
         # Takes one still for an order (perception, ``PerceptionLoop.capture``).
         self.camera: Callable[[UUID], Awaitable[UUID | None]] | None = None
         self._gcs_continue = False  # "Continuing Pilot Control" seen since the last tick
@@ -545,17 +553,34 @@ class Executor:
                 return False
             await self.clock.sleep(0.05)
         self.auth.pending_mode = mode
+        rc_at_send = self.vehicle.telemetry.rc_mode_pwm
+        accepted_ms: int | None = None
+        answer_seq: int | None = None
         try:
-            result = await self.vehicle.set_mode(mode, origin=origin)
+            result, answer_seq = await self.vehicle.set_mode_ordered(mode, origin=origin)
             if result is not MavResult.ACCEPTED:
                 return False
+            accepted_ms = self.now_ms()
             deadline = self.clock.monotonic() + MODE_CONFIRM_TIMEOUT_S
             while self.clock.monotonic() <= deadline:
-                if self.vehicle.telemetry.fc_custom_mode == int(mode):
+                t = self.vehicle.telemetry
+                if t.fc_custom_mode == int(mode):
                     self.auth.confirmed(mode)
                     return True
                 await self.clock.sleep(0.05)
             return False
+        except asyncio.CancelledError:
+            # Accepted: the flight controller may show it after all. A HEARTBEAT showing
+            # AUTO until this call's own deadline is then our own doing (``Authority``).
+            if (
+                accepted_ms is not None
+                and answer_seq is not None
+                and self.auth.pending_mode == mode
+            ):
+                self.auth.sent_and_cancelled(
+                    mode, accepted_ms + _MODE_CONFIRM_MS, rc_at_send, answer_seq
+                )
+            raise
         finally:
             if self.auth.pending_mode == mode:
                 self.auth.pending_mode = None
@@ -1259,7 +1284,7 @@ class Executor:
         self.auth.released()
         self.fallback.stop()
         if target in (S.HOLD, S.RTL) and fc_mode is not None:
-            self.auth.confirmed(CopterMode(fc_mode))
+            self.auth.confirmed(CopterMode(fc_mode), resumed=True)
         self._enter(target, hold_reason="operator_released", cause="release")
         self._ack(ref_id, "done")
         if target == S.HOLD and fc_mode == int(CopterMode.BRAKE):
@@ -1406,6 +1431,8 @@ class Executor:
                 inside = math.dist(here, centre) < old.radius_m
                 if old.keepout_id in self._keepouts_through or (not seen and inside):
                     self._keepouts_through.add(grown.keepout_id)
+                # Grown, not lifted: the reflex does not try a shorter rest for the old id.
+                self._keepouts_seen.discard(old.keepout_id)
                 self._keepouts_seen.add(grown.keepout_id)
                 self._keepouts_changed = True
                 self.emit(
@@ -1625,6 +1652,11 @@ class Executor:
             self._take(Trigger.FC_SILENT, held_by="fc_silent", event="fc_silent")
         if t.fc_connected:
             self._watch_landing()
+            # Only while the executor steers: in HELD or FAILSAFE nothing is ours.
+            in_control = self.state in AIRBORNE_CONTROLLED and not self.control_suspended
+            late = self.auth.adopt_late(t, now) if in_control else None
+            if late is not None:
+                self.emit("mode_late", {"fc_mode": late.name})
             self._classify(now)
             self._keep_flying_home(now)
             self._check_gnss(now)
@@ -1681,9 +1713,10 @@ class Executor:
         inside = {
             k.keepout_id for k, c in zip(keepouts, cyl, strict=True) if over_a_person(here, [c])
         }
-        new = {k.keepout_id for k in keepouts} - self._keepouts_seen
+        ids = {k.keepout_id for k in keepouts}
+        new, lifted = ids - self._keepouts_seen, self._keepouts_seen - ids
         self._keepouts_through = inside & (self._keepouts_through | new)
-        self._keepouts_seen = {k.keepout_id for k in keepouts}
+        self._keepouts_seen = ids
         if isinstance(active.handler, Replans):
             self._replan_reflex(active, active.handler, here, rest, cyl, v.groundspeed_ms)
             return
@@ -1691,6 +1724,22 @@ class Executor:
         if active.skill in REROUTABLE and run is not None:
             entry = entry_m([here, *rest], cyl)
             if entry is None:
+                stopping = isinstance(active.handler, SurveyHandler) and active.handler.stopping
+                if lifted:
+                    self._lift_pending = active.command_id
+                if self._lift_pending != active.command_id or not run.detours():
+                    self._lift_pending = None
+                elif stopping:
+                    # Never while a reroute stops first: its route was judged from where
+                    # the drone was, not where it stops. The stop's own plan takes the
+                    # cylinders in force when it plans, which may be before this lift:
+                    # tried again on every tick until the stop has planned.
+                    self._keepout_watch = True
+                else:
+                    # Around a cylinder that is gone: the rest from the pattern, around
+                    # those still in force, if shorter; else flown on as it is (clear).
+                    self._lift_pending = None
+                    self._reroute(active, run, charter, stop_first=False, here=here)
                 return
             # A cylinder ahead, closer than the drone can turn away from at this speed: it
             # stops first, and the way around is planned again from where it stopped. Inside
@@ -1935,12 +1984,21 @@ class Executor:
         self._apply_limit(action)
 
     def _reroute(
-        self, active: _Active, run: SurveyRun, charter: MissionCharter, *, stop_first: bool
+        self,
+        active: _Active,
+        run: SurveyRun,
+        charter: MissionCharter,
+        *,
+        stop_first: bool,
+        here: Xy | None = None,
     ) -> bool:
-        """The rest of a search around the cylinders, as a new mission for the same order.
-        With ``stop_first`` the drone stops before the rest is planned again from there
-        (``SurveyHandler.rerouted``)."""
-        rest = run.waypoints[run.next_index :]
+        """The rest of a search around the cylinders, as a new mission for the same order:
+        the pattern's rest (``SurveyRun.pattern_rest``), not the last way around, so a way
+        around a cylinder that is gone is not flown on. With ``stop_first`` the drone stops
+        before the rest is planned again from there (``SurveyHandler.rerouted``). With
+        ``here`` (a cylinder lifted, the route clear) only a rest at least
+        ``_STRAIGHTEN_GAIN_M`` shorter than the waypoints left from ``here`` replaces them."""
+        rest = run.pattern_rest()
         new = SurveyRun(
             active.command_id, list(rest), run.alt_m, run.speed_ms, target_state=run.target_state
         )
@@ -1949,14 +2007,21 @@ class Executor:
             plan = new.plan(ctx)
         except PlanError:
             return False
-        if self._route_refusal(active, ctx, plan, refused="keepout_reroute_refused"):
+        straighten = here is not None
+        if straighten:
+            old = [here, *(ctx.plane.point(p) for p in run.waypoints[run.next_index :])]
+            route = [ctx.plane.xy(p.lat, p.lon) for p in plan.path]
+            if _length(route) > _length(old) - _STRAIGHTEN_GAIN_M:
+                return False
+        refused = "keepout_straighten_refused" if straighten else "keepout_reroute_refused"
+        if self._route_refusal(active, ctx, plan, refused=refused):
             return False
         handler = SurveyHandler.rerouted(
             new, charter.home, stop_first=(list(rest), ctx) if stop_first else None
         )
         self._drop_active(stage=None, save_resume=False)
         self.emit(
-            "keepout_reroute",
+            "keepout_straighten" if straighten else "keepout_reroute",
             {
                 "command_id": str(active.command_id),
                 "skill": active.skill,
@@ -2001,6 +2066,7 @@ class Executor:
         if isinstance(target, Refusal):
             return
         self._drop_active(stage="superseded", codes=("ONB_CONTROL_HELD",))
+        self.auth.drop_ours()  # a mode of ours that shows after this is not taken as ours
         self._taken_by = "fc_failsafe"
         self._enter(target, held_by=held_by, cause=str(key))
         self.emit(event, {})
@@ -2552,3 +2618,7 @@ class Executor:
 
 def _utc(clock: Clock) -> str:
     return clock.utc_now().isoformat().replace("+00:00", "Z")
+
+
+def _length(route: list[Xy]) -> float:
+    return sum(math.dist(a, b) for a, b in pairwise(route))
