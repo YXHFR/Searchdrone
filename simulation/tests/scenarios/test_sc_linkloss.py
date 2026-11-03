@@ -529,7 +529,9 @@ async def test_ll10_find_onboard_dies(sim: Any, migrated_db: Any, tmp_path: Path
             await sc.until(lambda: sc.fc_mode() in HOME_MODES, 6.0, "the Lua cap")
             took = time.monotonic() - down
             assert cap_at - 2.0 <= took <= cap_at + 2.0, took
-            assert fc_texts(sc, "SD failsafe", down), sim.harness.state.texts[-10:]
+            # The script sets the mode, then sends its text: the HEARTBEAT showing the mode
+            # can be received first, in the same millisecond. Wait for the text.
+            await sc.until(lambda: fc_texts(sc, "SD failsafe", down), 3.0, "the cap's text")
             await sc.until(lambda: not sim.harness.state.armed, 240, "landed")
         finally:
             sc.radio(mavlink=True, sdlink=True)
