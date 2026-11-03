@@ -27,6 +27,7 @@ from sd_onboard.link_client import OnboardLink
 from sd_onboard.logs import setup_logging
 from sd_onboard.perception.loop import Feed, PerceptionLoop
 from sd_onboard.perception.sources import DirStillSource
+from sd_onboard.rangefinder import LaserReader
 
 __all__ = ["main", "serve"]
 
@@ -84,6 +85,7 @@ async def serve(loaded: Loaded, stop: asyncio.Event | None = None) -> int:
     if perception is not None:
         perception.on_targets = executor.on_detections  # E8: cylinders from our own finds
         executor.camera = perception.capture  # capture_stills and inspect_detection
+    executor.laser = _laser(loaded, vehicle)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with contextlib.suppress(NotImplementedError, RuntimeError):
@@ -164,6 +166,17 @@ def _perception(
         on=lambda: link.event("executor.perception_on", "info", {}),
         extra=extra,
     )
+
+
+def _laser(loaded: Loaded, vehicle: Vehicle) -> LaserReader | None:
+    """The downward laser's reader, fed every reading; None without a laser (the height
+    floor then uses the map alone)."""
+    rf = loaded.config.rangefinder
+    if not rf.fitted:
+        return None
+    laser = LaserReader(rf)
+    vehicle.subscribe(laser.observe)
+    return laser
 
 
 def _log_side_task(task: asyncio.Future[None]) -> None:
