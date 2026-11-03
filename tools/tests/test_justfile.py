@@ -56,6 +56,8 @@ RECIPES = [
     "pick-detector",
     "test-train",
     "world-fetch",
+    "floor-fetch",
+    "floor-push",
     "world-snapshot",
     "sim-farm",
     "sim-farm-status",
