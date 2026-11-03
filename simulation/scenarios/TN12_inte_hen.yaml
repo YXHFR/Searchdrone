@@ -1,7 +1,7 @@
 # TN12: "Inte hen" while the drone waits: straight back, and the search goes on from
 # where it broke off.
 scenario: TN12
-title: "Inte hen under väntan: retur direkt, sökningen fortsätter"
+title: "Inte hen under väntan: tillbaka direkt, sökningen fortsätter"
 mode: exercise
 laser: none
 start_alt_m: 40
