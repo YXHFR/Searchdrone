@@ -178,6 +178,32 @@ The step-wise closer look straight over the target takes stills with both camera
 The sim farm's archive keeps the main camera's pictures only. The flight itself does not change:
 the same height, speed and search pattern.
 
+## Laser and map packs
+
+`rangefinder=tf02` or `rangefinder=grf250` (or `SD_SIM__RANGEFINDER`) fits a simulated
+laser pointing down; `none` is the default. It needs SITL (`physics=builtin`, or `gz`
+with the same wiring), not `mock`. The laser (`sd_sim.rangefinder`) is its own process: SITL
+sends it its true position (`SIM_STATE`) on serial6 (port `rangefinder_mavlink`), it
+casts a ray through the world's solids (`sd_sim.obstacles`: the ground, every tree as
+Gazebo draws it, power lines) and answers with `DISTANCE_SENSOR`, which ArduPilot's
+MAVLink rangefinder driver reads and reports to the onboard computer like a real one.
+SITL gets the parameter layer `rangefinder.parm` and `sd-onboard` its `[rangefinder]`
+settings with the layer among the parameter files it reads back. The profiles follow the
+data sheets: TF02-Pro 0.1–40 m over a light surface and 13.5 m over dark ground (±5 cm,
+100 Hz), GRF-250 10–250 m (±0.5 m, 50 Hz, first return). A test can switch faults on at
+start (`Stack(rangefinder_faults={"rf_dropout_at_s": 20, ...})`) or at once
+(`stack.set_rangefinder_fault("dropout" | "stuck" | "garbage" | "out_of_range" | None)`).
+Every reading goes to `runs/<run>/rangefinder.csv`.
+
+`python -m sd_sim.floor_pack --world <world> --out <folder>` writes a map pack in the
+format the drone loads (`sd_safety.floor_pack`) from the simulated world itself: its
+ground and its trees' real heights, so the map is right unless a test puts errors in
+(`--tree-bias-m`, `--missing-trees`, `--hole east,north,radius`, `--scan-year`).
+`Stack.write_floor_pack()` writes the run's pack, with the run's tree stands and power
+lines, to the data folder. `sd_sim.inspect_metrics` measures a closer look against the
+same truth: the nearest distance to a tree or line, how far under the height floor the
+drone went and how close it came to the target.
+
 ## Parts
 
 - `launch` builds the SITL command line (`sitl.build_sitl_argv`), starts each process with a minimal environment and waits for it to be healthy. Process ids go to `build/sim/i<N>/pids.json`, logs to `runs/<run>/logs/`.

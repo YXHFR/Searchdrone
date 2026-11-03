@@ -50,6 +50,8 @@ __all__ = [
 DB_HOST = "127.0.0.1"
 DB_PORT = 5433  # ports.yaml postgres_local
 VEHICLE_ID = "sim-01"
+# sd-onboard's expected_param_files as config/onboard.example.toml has it.
+SAFETY_PARAMS = "simulation/sitl/params/searchdrone-safety.parm"
 CLI_TIMEOUT_S = 60.0
 
 
@@ -130,12 +132,16 @@ def onboard_env(
     model: Mapping[str, str] | None = None,
     still_dir: Path | None = None,
     tele: tuple[StillsCamera, Path] | None = None,
+    laser: tuple[tuple[float, float], Path] | None = None,
 ) -> dict[str, str]:
     """``sd-onboard`` in the simulator: MAVLink through mavtap, SD-link through linksim.
     ``model``: the trained detector's environment (``DetectorChoice.env``), passed on
     only when ``detector=model`` chose it. ``still_dir``: perception on, reading the
     vehicle's stills camera there. ``tele`` (with ``still_dir``): the tele camera and the
-    folder its stills go to; perception runs the detector on them too."""
+    folder its stills go to; perception runs the detector on them too. ``laser``: the
+    simulated laser's tested range and its SITL parameter layer, which the flight
+    controller is read back against with the safety layer (``[rangefinder] model =
+    "other"``: SITL's driver is MAVLink, not the real laser's)."""
     if tele is not None and still_dir is None:
         raise ValueError("telekamerans bilder läses bara med stillbildskameran (still_dir)")
     env = {
@@ -167,6 +173,14 @@ def onboard_env(
             "SD_ONBOARD__PERCEPTION__TELE__WIDTH_PX": str(tcam.width),
             "SD_ONBOARD__PERCEPTION__TELE__HEIGHT_PX": str(tcam.height),
             "SD_ONBOARD__PERCEPTION__TELE__HFOV_DEG": str(tcam.hfov_deg),
+        }
+    if laser is not None:
+        (low, high), layer = laser
+        env |= {
+            "SD_ONBOARD__RANGEFINDER__MODEL": "other",
+            "SD_ONBOARD__RANGEFINDER__MIN_TESTED_M": f"{low:g}",
+            "SD_ONBOARD__RANGEFINDER__MAX_TESTED_M": f"{high:g}",
+            "SD_ONBOARD__EXPECTED_PARAM_FILES": f"{SAFETY_PARAMS},{layer}",
         }
     return env
 

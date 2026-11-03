@@ -587,6 +587,18 @@ ground-pictures-fetch:
 ortho-fetch *args:
     uv run --no-sync python tools/terrain/fetch_ortho.py "$@"
 
+# The height map of a closer look (a floor pack): tree heights from Lantmäteriet's forest
+# laser scan and ground model with your own Geotorget login, power lines from
+# OpenStreetMap, to ${SD_DATA_DIR}/floor/<name>/ (keys: area, name, out, keep_cache, lines).
+# Never committed; laspy and tifffile are added only for this run
+floor-fetch *args:
+    uv run --no-sync --with 'laspy[lazrs]==2.7.0' --with 'lazrs==0.8.2' --with 'tifffile==2026.10.15' python tools/terrain/fetch_floor_map.py "$@"
+
+# Copy a floor pack, after checking it, to <dir>/floor/<name>/ on the onboard computer
+# (keys: name, host, dir, out)
+floor-push *args:
+    uv run --no-sync python tools/terrain/fetch_floor_map.py push "$@"
+
 # The simulator in photo mode: the orthophoto on the open ground, the real trees on it and
 # global illumination for the camera (keys: site, gi, and those of just sim)
 sim-photo *args:
