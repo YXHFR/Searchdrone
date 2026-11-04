@@ -23,10 +23,11 @@ takeoff_delay_after_arm_s = 0.0
 [perception]                                      # stills -> detections -> reports to the ground
 enabled = false                                   # needs a camera writing stills to still_dir
 still_dir = ""                                    # folder the camera writes <name>.ppm + .json to
-width_px = 1280                                   # the stills camera
-height_px = 720
-hfov_deg = 66.0
-period_s = 0.5                                    # how often the folder is looked at
+width_px = 4608                                   # the stills camera: Raspberry Pi Camera
+height_px = 2592                                  # Module 3 at its full 12 MP (4608 x 2592)
+hfov_deg = 66.0                                   # its standard lens; a smaller still of the
+                                                  # same shape is placed with this field of view
+period_s = 0.5                                    # pause between looks at the folder
 keep_stills = false                               # save stills with detections in state_dir
 
 [perception.tele]                                 # a second stills camera beside the first, same way

@@ -98,7 +98,10 @@ class Camera:
         return 2 * alt_m * math.tan(math.radians(self.hfov_deg) / 2)
 
 
-PLAN_CAMERA: Final = Camera(width_px=1280, hfov_deg=66.0)  # the onboard stills camera
+# The onboard stills camera: Raspberry Pi Camera Module 3 at its full 4608 px, 66 degrees.
+# The pixel count only sets how large a person is (the plan's chance of seeing them); the
+# ground a still covers and the track spacing follow from the field of view.
+PLAN_CAMERA: Final = Camera(width_px=4608, hfov_deg=66.0)
 
 
 @dataclass(frozen=True)

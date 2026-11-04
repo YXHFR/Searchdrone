@@ -67,6 +67,40 @@ def test_footprint_and_px_per_m() -> None:
     assert px_per_m(CAM, 40.0) == pytest.approx(1280 / width)
 
 
+# The Camera Module 3 at its full 4608 x 2592 and its 66-degree lens.
+FULL = PinholeCamera(4608, 2592, 66.0)
+
+
+@pytest.mark.parametrize("att", [Attitude(), Attitude(roll_deg=8.0, pitch_deg=-5.0, yaw_deg=40.0)])
+def test_the_ground_a_still_covers_follows_the_field_of_view_not_its_pixels(
+    att: Attitude,
+) -> None:
+    small = FULL.scaled(1280, 720)
+    assert (small.width_px, small.height_px, small.hfov_deg) == (1280, 720, 66.0)
+    full, quarter = footprint(FULL, att, 50.0), footprint(small, att, 50.0)
+    assert full is not None and quarter is not None
+    for a, b in zip(full, quarter, strict=True):
+        assert a == pytest.approx(b, abs=1e-9)
+    # The pixels set the detail only: about 71 px per metre at 50 m against about 20.
+    assert px_per_m(FULL, 50.0) == pytest.approx(70.95, abs=0.01)
+    assert px_per_m(small, 50.0) == pytest.approx(70.95 * 1280 / 4608, abs=0.01)
+    # The same spot on the ground is the same share of either picture.
+    u, v = project(6.0, -4.0, 50.0, FULL, att) or (0.0, 0.0)
+    su, sv = project(6.0, -4.0, 50.0, small, att) or (0.0, 0.0)
+    assert (su, sv) == pytest.approx((u * 1280 / 4608, v * 720 / 2592), abs=1e-6)
+
+
+def test_a_still_of_another_shape_is_not_a_smaller_view() -> None:
+    assert FULL.scaled(4608, 2592) is FULL
+    off_centre = PinholeCamera(4608, 2592, 66.0, cx=2400.0, cy=1300.0)
+    assert off_centre.scaled(2304, 1296).centre == pytest.approx((1200.0, 650.0))
+    for w, h in ((1280, 960), (4608, 3456), (2000, 2000)):
+        with pytest.raises(ValueError, match="shape"):
+            FULL.scaled(w, h)
+    with pytest.raises(ValueError, match="pixel"):
+        FULL.scaled(0, 0)
+
+
 @settings(max_examples=300, deadline=None)
 @given(
     u=st.floats(0, 1280),

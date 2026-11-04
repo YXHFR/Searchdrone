@@ -19,8 +19,21 @@ neither ends nor adds to a streak. Kept stills (for a run's record) are capped a
 
 An order can ask for a still of its own (``capture``: ``capture_stills`` and
 ``inspect_detection``): the next still from the source, reported with the order's
-``command_id``, at most ``CAPTURE_WAIT_S`` after the asking. Target detections go to
-``on_targets`` too: the executor puts a keep-out cylinder around each that is sure enough.
+``command_id``; a source that gives none in ``CAPTURE_WAIT_S`` gives the order none.
+Target detections go to ``on_targets`` too: the executor puts a keep-out cylinder around
+each that is sure enough.
+
+Orders come first. On a CPU a full-resolution still takes the detector seconds (45 tiles,
+about 7 s on a PC, more on a Pi 5), so the loop never runs two detections at once and
+never starts its own while an order wants stills: a round already under way gives way
+before its next poll or detection (its stills are dropped, never reported, so no ground
+counts as searched from them). A detection that is already running cannot be stopped;
+the order waits for it. A worker thread holds the detector until it ends, even when the
+one waiting for it gave up (an order's time limit), so a detection left running never
+overlaps the next. How long an order may take follows from the detector's speed: the
+time per tile (``DETECT_S_PER_TILE`` until measured, then the slowest recent
+measurement) times the tiles of each camera's still, at most ``DETECT_MAX_S`` a still
+(``still_s``, ``capture_limit_s``, ``round_limit_s``; the executor's watchdogs use them).
 
 A second camera (``extra``: the tele camera beside the main one, looking the same way)
 has its own still source and pinhole camera. Each round the loop first polls every
@@ -47,14 +60,24 @@ skips stills taken while it is above ``MAX_TURN_RATE_DPS``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
-from collections.abc import Callable, Sequence
+import time
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from uuid import UUID
 
-from sd_detect import ClassRegistry, Still, build_sources, default_registry, detect_all
+from sd_detect import (
+    ClassRegistry,
+    Still,
+    build_sources,
+    default_registry,
+    detect_all,
+    tile_grid,
+)
 from sd_detect.sources import BuiltSources
 from sd_geo import PinholeCamera
 from sd_mav.vehicle import FcTelemetry
@@ -66,6 +89,8 @@ from sd_schemas.link import GeoDetectionMsg
 
 __all__ = [
     "CAPTURE_WAIT_S",
+    "DETECT_MAX_S",
+    "DETECT_S_PER_TILE",
     "FAIL_REPORT",
     "KEEP_MAX",
     "MAIN",
@@ -84,6 +109,13 @@ KEEP_MAX = 200  # kept stills (JPEG + JSON pairs) in ``keep_dir``
 MAX_TURN_RATE_DPS = 10.0  # faster attitude change: the still is skipped
 CAPTURE_WAIT_S = 3.0  # an order's still: no still from the source this long -> none
 _CAPTURE_POLL_S = 0.1
+# The detector's time per tile until one is measured: on the side of a slow CPU (a PC
+# takes 0.16-0.21 s with 2-4 threads; a Pi 5 is slower, not yet measured).
+DETECT_S_PER_TILE = 0.5
+DETECT_MAX_S = 60.0  # one still's detection is never waited for longer than this
+_DETECT_MIN_S = 1.0  # ... nor counted as shorter (reading and placing the still)
+_SPARE_S = 2.0  # added to every derived wait (a poll, a busy event loop)
+_SLOWER_SHARE = 0.2  # a faster measurement moves the time per tile this share towards it
 FAIL_REPORT = 10  # stills failing in a row before the ground is told
 MAIN = "main"  # the main camera's name (``source`` and ``camera``)
 
@@ -143,6 +175,32 @@ def pose_from(t: FcTelemetry, now_ms: int) -> Pose | None:
         speed_ms=t.groundspeed_ms,
         source_ts_ms=t.attitude_mono_ms,
     )
+
+
+def _tiles(sources: Iterable[object]) -> int:
+    """Tiles the detector cut the last still into: the most any source took (a tiled
+    model's ``last_tiles``); 1 when every source looks at the whole picture."""
+    return max([1, *(int(getattr(s, "last_tiles", 1)) for s in sources)])
+
+
+def _tiles_for(sources: Iterable[object], width: int, height: int) -> int:
+    """Tiles a ``width`` x ``height`` still will take: the most any source cuts it into
+    (a tiled model's ``tiles_for``); 1 when every source looks at the whole picture."""
+    counts = [1]
+    for s in sources:
+        tiles_for = getattr(s, "tiles_for", None)
+        n: object = tiles_for(width, height) if callable(tiles_for) else None
+        if isinstance(n, int):
+            counts.append(n)
+    return max(counts)
+
+
+class _Yielded(Exception):  # noqa: N818  (not an error: the loop's round gave way)
+    """A background round gave way to an order's stills."""
+
+
+class _Busy(Exception):  # noqa: N818
+    """The detector stayed busy longer than an order may wait for it."""
 
 
 def _angle_diff(a: float, b: float) -> float:
@@ -215,7 +273,96 @@ class PerceptionLoop:
         self.rate = AttitudeRate()
         self._last_still_ms: dict[str, int] = {}  # per camera
         self.on_targets = on_targets
-        self._lock = asyncio.Lock()  # one still at a time: the loop's or an order's
+        # One worker thread (a poll or a detection) at a time, held until the thread ends.
+        self._slot = asyncio.Lock()
+        self._orders = 0  # orders taking stills now: the loop's own rounds wait
+        self.s_per_tile = DETECT_S_PER_TILE  # the detector's time per tile (``_timed``)
+        self._tiles_seen: dict[str, int] = {}  # per camera: tiles of its last still
+
+    # --- the detector's time (the orders' waits follow from it) ----------------------------
+
+    def _tiles_of(self, camera: str) -> int:
+        """Tiles a still of ``camera`` takes: as its last one did, else from its size."""
+        seen = self._tiles_seen.get(camera)
+        if seen is not None:
+            return seen
+        cam = self._camera(camera)
+        if self._built is None:  # not built yet: the usual 640 px tiles
+            return len(tile_grid(cam.width_px, cam.height_px))
+        return _tiles_for(self._built.sources.values(), cam.width_px, cam.height_px)
+
+    def _timed(self, camera: str, seconds: float, tiles: int) -> None:
+        """A detection took ``seconds`` over ``tiles``: a slower time per tile counts at
+        once, a faster one only little by little (a busy CPU now and then must not make the
+        orders' waits too short)."""
+        self._tiles_seen[camera] = tiles
+        per = seconds / max(1, tiles)
+        if per >= self.s_per_tile:
+            self.s_per_tile = per
+        else:
+            self.s_per_tile += _SLOWER_SHARE * (per - self.s_per_tile)
+
+    def still_s(self, camera: str = MAIN) -> float:
+        """How long the detector is expected to take on a still of ``camera``."""
+        need = self.s_per_tile * self._tiles_of(camera)
+        return min(DETECT_MAX_S, max(_DETECT_MIN_S, need))
+
+    def _slot_wait_s(self) -> float:
+        """The longest an order waits for the detector: a detection already running (the
+        slowest camera's)."""
+        return max(self.still_s(c) for c in self.cameras) + _SPARE_S
+
+    def capture_limit_s(self) -> float:
+        """The longest ``capture`` can take: a detection already running, the wait for the
+        source's still and the detector on it."""
+        return self._slot_wait_s() + CAPTURE_WAIT_S + self.still_s(MAIN) + _SPARE_S
+
+    def round_limit_s(self) -> float:
+        """The longest ``capture_round`` can take: as ``capture_limit_s``, for every
+        camera one after the other."""
+        each = sum(CAPTURE_WAIT_S + self.still_s(c) + _SPARE_S for c in self.cameras)
+        return self._slot_wait_s() + each
+
+    @contextlib.contextmanager
+    def _order(self) -> Iterator[None]:
+        """While an order takes stills the loop's own rounds give way."""
+        self._orders += 1
+        try:
+            yield
+        finally:
+            self._orders -= 1
+
+    async def _work[T](self, fn: Callable[[], T], *, background: bool) -> T:
+        """``fn`` in a worker thread, one at a time. The slot is freed when the thread
+        ends, not when the caller stops waiting, so a detection left running (an order
+        that ran out of time) never overlaps the next. The loop's own work (``background``)
+        waits as long as it takes and never starts while an order takes stills
+        (``_Yielded``); an order waits at most ``_slot_wait_s`` (``_Busy``), on the event
+        loop's own clock (a watchdog: it runs while the thread holds the slot)."""
+        if background and self._orders:
+            raise _Yielded
+        if background:
+            await self._slot.acquire()
+        else:
+            try:
+                await asyncio.wait_for(self._slot.acquire(), self._slot_wait_s())
+            except TimeoutError:
+                raise _Busy from None
+        if background and self._orders:  # an order came while this waited
+            self._slot.release()
+            raise _Yielded
+        try:
+            task = asyncio.ensure_future(asyncio.to_thread(fn))
+        except BaseException:
+            self._slot.release()
+            raise
+        task.add_done_callback(self._free)
+        return await asyncio.shield(task)
+
+    def _free[U](self, task: asyncio.Future[U]) -> None:
+        self._slot.release()
+        if not task.cancelled():
+            task.exception()  # retrieved: a caller that gave up must not log it as lost
 
     @property
     def built(self) -> BuiltSources:
@@ -257,7 +404,10 @@ class PerceptionLoop:
         ``captured_utc``: when it was taken (``_poll``); without it the source's time, else
         now, before the detector runs."""
         stamp = captured_utc or captured.taken_utc or self.clock.utc_now()
-        pinhole = self._camera(camera)
+        frame = captured.still.frame
+        # A smaller still of the camera's shape (a sensor mode, the simulator's render) is
+        # placed with the same field of view; one of another shape is refused (ValueError).
+        pinhole = self._camera(camera).scaled(frame.width, frame.height)
         self.stats.stills += 1
         last = self._last_still_ms.get(camera)
         self._last_still_ms[camera] = now_ms
@@ -273,9 +423,12 @@ class PerceptionLoop:
             self.stats.skipped_turning += 1
             return None
         start = self.clock.monotonic_ms()
+        took = time.perf_counter()
         found = detect_all(captured.still, self.built.sources, self.registry)
+        tiles = _tiles(self.built.sources.values())
+        self._timed(camera, time.perf_counter() - took, tiles)  # the CPU's real time
         out = process(
-            captured.still.frame,
+            frame,
             found,
             pose,
             pinhole,
@@ -286,6 +439,7 @@ class PerceptionLoop:
             sources=sorted(self.built.sources),
             latency_ms=max(0, self.clock.monotonic_ms() - start),
             rate_hz=rate_hz,
+            tiles=tiles,
             command_id=command_id,
             inspect_step=inspect_step,
         )
@@ -327,11 +481,11 @@ class PerceptionLoop:
         if targets:
             self.on_targets(targets)
 
-    async def _poll(self, camera: str) -> _Polled | None:
+    async def _poll(self, camera: str, *, background: bool = False) -> _Polled | None:
         """A camera's newest still, stamped with when it was taken (the source's time,
         else now: right after the poll, before any detector runs) and the telemetry then."""
         rate = self.rate.update(self.telemetry())
-        captured = await asyncio.to_thread(self._source(camera).poll)
+        captured = await self._work(self._source(camera).poll, background=background)
         if captured is None:
             return None
         stamp = captured.taken_utc or self.clock.utc_now()
@@ -340,20 +494,28 @@ class PerceptionLoop:
         return _Polled(camera, captured, t, now_ms, rate, stamp)
 
     async def _detect(
-        self, p: _Polled, command_id: UUID | None = None, inspect_step: int | None = None
+        self,
+        p: _Polled,
+        command_id: UUID | None = None,
+        inspect_step: int | None = None,
+        *,
+        background: bool = False,
     ) -> Perception | None:
         """The detector on a polled still; its report, if it could be placed."""
         ran = self._detected()
-        out = await asyncio.to_thread(
-            self.handle,
-            p.captured,
-            p.t,
-            p.now_ms,
-            p.rate,
-            command_id,
-            p.camera,
-            p.utc,
-            inspect_step,
+        out = await self._work(
+            partial(
+                self.handle,
+                p.captured,
+                p.t,
+                p.now_ms,
+                p.rate,
+                command_id,
+                p.camera,
+                p.utc,
+                inspect_step,
+            ),
+            background=background,
         )
         if out is not None:
             self._deliver(out)
@@ -364,39 +526,44 @@ class PerceptionLoop:
     async def _one(
         self, command_id: UUID | None = None, camera: str = MAIN, inspect_step: int | None = None
     ) -> Perception | None:
-        """Poll a camera's source once; the still's report, if there was one and it could
-        be placed."""
+        """Poll a camera's source once for an order; the still's report, if there was one
+        and it could be placed."""
         polled = await self._poll(camera)
         return None if polled is None else await self._detect(polled, command_id, inspect_step)
 
+    async def _order_still(
+        self, command_id: UUID, camera: str, inspect_step: int | None, what: str
+    ) -> Perception | None:
+        """An order's still from ``camera``: polled until one is placed on the ground or
+        the source gave none in ``CAPTURE_WAIT_S``. ``_Busy`` when the detector stayed busy
+        longer than an order may wait."""
+        deadline = self.clock.monotonic() + CAPTURE_WAIT_S
+        while True:
+            try:
+                out = await self._one(command_id, camera, inspect_step)
+            except _Busy:
+                raise
+            except Exception:
+                self.stats.failed += 1
+                log.exception("perception failed on %s", what)
+                return None
+            if out is not None or self.clock.monotonic() >= deadline:
+                return out
+            await self.clock.sleep(_CAPTURE_POLL_S)
+
     async def capture(self, command_id: UUID) -> UUID | None:
-        """One still for an order: its ``still_id``, or ``None`` when none came in
-        ``CAPTURE_WAIT_S`` or it could not be placed on the ground."""
+        """One still for an order: its ``still_id``, or ``None`` when the source gave none
+        in ``CAPTURE_WAIT_S``, the detector stayed busy too long or the still could not be
+        placed on the ground. At most ``capture_limit_s``."""
         if self._build_failed:
             return None
-        deadline = self.clock.monotonic() + CAPTURE_WAIT_S
-        # A still stuck in the loop must not hold the order past its wait: a watchdog, so on
-        # the event loop's (wall) clock, which runs even when the stuck still holds the lock.
-        try:
-            await asyncio.wait_for(self._lock.acquire(), CAPTURE_WAIT_S)
-        except TimeoutError:
-            log.warning("perception busy: no still for the order")
-            return None
-        try:
-            while True:
-                try:
-                    out = await self._one(command_id)
-                except Exception:
-                    self.stats.failed += 1
-                    log.exception("perception failed on an order's still")
-                    return None
-                if out is not None:
-                    return out.report.still_id
-                if self.clock.monotonic() >= deadline:
-                    return None
-                await self.clock.sleep(_CAPTURE_POLL_S)
-        finally:
-            self._lock.release()
+        with self._order():
+            try:
+                out = await self._order_still(command_id, MAIN, None, "an order's still")
+            except _Busy:
+                log.warning("perception busy: no still for the order")
+                return None
+        return None if out is None else out.report.still_id
 
     async def capture_round(
         self, command_id: UUID, inspect_step: int
@@ -404,33 +571,21 @@ class PerceptionLoop:
         """One round of a closer look: a still from every camera, the main one first, each
         reported with ``command_id`` and ``inspect_step``. For each still placed on the
         ground: (camera, still_id, its target detections). A camera that gives none in
-        ``CAPTURE_WAIT_S`` is left out of the round."""
+        ``CAPTURE_WAIT_S`` is left out of the round. At most ``round_limit_s``."""
         if self._build_failed:
             return []
-        try:
-            await asyncio.wait_for(self._lock.acquire(), CAPTURE_WAIT_S)
-        except TimeoutError:
-            log.warning("perception busy: no stills for the closer look")
-            return []
         shots: list[tuple[str, UUID, list[GeoDetectionMsg]]] = []
-        try:
+        with self._order():
             for camera in self.cameras:
-                deadline = self.clock.monotonic() + CAPTURE_WAIT_S
-                while True:
-                    try:
-                        out = await self._one(command_id, camera, inspect_step)
-                    except Exception:
-                        self.stats.failed += 1
-                        log.exception("perception failed on a closer look's still")
-                        break
-                    if out is not None:
-                        shots.append((camera, out.report.still_id, self._targets(out)))
-                        break
-                    if self.clock.monotonic() >= deadline:
-                        break
-                    await self.clock.sleep(_CAPTURE_POLL_S)
-        finally:
-            self._lock.release()
+                try:
+                    out = await self._order_still(
+                        command_id, camera, inspect_step, "a closer look's still"
+                    )
+                except _Busy:
+                    log.warning("perception busy: no stills for the closer look")
+                    break
+                if out is not None:
+                    shots.append((camera, out.report.still_id, self._targets(out)))
         return shots
 
     def _targets(self, out: Perception) -> list[GeoDetectionMsg]:
@@ -498,21 +653,24 @@ class PerceptionLoop:
 
     async def _round(self) -> None:
         """Every camera's newest still first (stamped as it is polled), then the detector
-        on each, so a slow detector on one still never delays the next still's stamp. An
-        order's still may come between two detections (each holds the lock alone)."""
+        on each, so a slow detector on one still never delays the next still's stamp. The
+        round gives way to an order before each poll and each detection: its stills not yet
+        run are dropped (never reported: nothing counts as searched from them)."""
         polled: list[_Polled] = []
-        async with self._lock:
-            for camera in self.cameras:
-                try:  # one bad still must not end perception
-                    got = await self._poll(camera)
-                except Exception as exc:
-                    self._fail(camera, exc)
-                    continue
-                if got is not None:
-                    polled.append(got)
+        for camera in self.cameras:
+            try:  # one bad still must not end perception
+                got = await self._poll(camera, background=True)
+            except _Yielded:
+                return
+            except Exception as exc:
+                self._fail(camera, exc)
+                continue
+            if got is not None:
+                polled.append(got)
         for p in polled:
             try:
-                async with self._lock:
-                    await self._detect(p)
+                await self._detect(p, background=True)
+            except _Yielded:
+                return
             except Exception as exc:
                 self._fail(p.camera, exc)

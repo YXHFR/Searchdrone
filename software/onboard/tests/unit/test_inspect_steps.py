@@ -490,6 +490,35 @@ async def test_the_time_limit_ends_the_steps(monkeypatch: pytest.MonkeyPatch) ->
         assert done["end"] == "timeout"
 
 
+@pytest.mark.parametrize(
+    ("spare_s", "end"), [(inspect_steps.DETECT_SPARE_MAX_S, "steps_max"), (0.0, "timeout")]
+)
+async def test_the_rounds_of_stills_do_not_count_in_the_time_limit(
+    monkeypatch: pytest.MonkeyPatch, spare_s: float, end: str
+) -> None:
+    """A detector on a CPU takes seconds a still (a full-resolution main and tele still
+    every round): the rounds' time does not count in INSPECT_MAX_S, so a slow detector
+    does not end the look early; only up to DETECT_SPARE_MAX_S of it, though."""
+    monkeypatch.setattr(inspect_steps, "DETECT_SPARE_MAX_S", spare_s)
+
+    async with rig() as r:
+
+        class Slow(Rounds):
+            async def __call__(
+                self, command_id: UUID, step: int
+            ) -> list[tuple[str, UUID, list[GeoDetectionMsg]]]:
+                await r.clock.sleep(8)  # the detector on a main and a tele still
+                return await super().__call__(command_id, step)
+
+        await r.install(over().model_copy(update={"alt_max_agl_m": 120.0}))
+        await r.takeoff(115)
+        r.ex.floor_pack = meadow()
+        r.ex.capture_round = Slow()
+        await r.send(order(r), 0.5)
+        done = await awaiting(r, 600)
+        assert done["end"] == end
+
+
 async def test_no_stills_at_all_fails_the_look() -> None:
     async with rig() as r:
         rounds = Rounds()

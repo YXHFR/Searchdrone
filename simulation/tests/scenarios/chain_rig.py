@@ -159,6 +159,7 @@ class ChainOnboard(SitlOnboard):
                 on_targets=self.ex.on_detections,
             )
         self.ex.camera = self.perception.capture
+        self.ex.capture_limit_s = self.perception.capture_limit_s  # as the app wires it
 
     def _send(self, out: Perception) -> None:
         for d in out.report.detections:

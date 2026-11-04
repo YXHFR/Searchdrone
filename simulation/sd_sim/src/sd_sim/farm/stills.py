@@ -22,7 +22,8 @@ Real proportions, so the pictures teach the same sizes the real data shows:
   sets the detector is measured on: ``heridal`` the centre of a 12 MP drone camera at
   25-45 m, as HERIDAL's 4000 x 3000 pictures; ``kios`` a 1920 x 1080 video camera at
   45-85 m, as KIOS (heights set so the person boxes come out the size of the real
-  sets'). The camera is never lower than ``TREE_CLEARANCE_M`` over the trees
+  sets'); ``cm3``, only when asked for (``profile=cm3``), our own wide camera at its
+  full 4608 x 2592 from 30-60 m. The camera is never lower than ``TREE_CLEARANCE_M`` over the trees
   under it;
 * **places** (``PLACES``): in the open, at a forest edge, under a tree's crown (partly
   hidden) and on a path; never in water or a house.
@@ -121,6 +122,9 @@ PROFILES: dict[str, Profile] = {
     # KIOS: 1920 x 1080 video with a wide lens; 75 degrees at 45-85 m gives 3.6-6.8 cm
     # per pixel.
     "kios": Profile("kios", 1920, 1080, 75.0, (45.0, 85.0), "full HD drone video"),
+    # Our own wide camera: Raspberry Pi Camera Module 3 at its full 4608 x 2592, 66 degrees
+    # across. 30-60 m gives 0.8-1.7 cm per pixel. Only with profile=cm3 (not drawn).
+    "cm3": Profile("cm3", 4608, 2592, 66.0, (30.0, 60.0), "Raspberry Pi Camera Module 3, 12 MP"),
 }
 PROFILE_SHARE = {"heridal": 0.5, "kios": 0.5}
 

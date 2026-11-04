@@ -126,7 +126,8 @@ def test_with_people_in_the_world_sd_onboard_reads_the_stills(
     assert env[MODEL_ENV] == str(choice.manifest)
     assert env["SD_ONBOARD__PERCEPTION__ENABLED"] == "true"
     assert env["SD_ONBOARD__PERCEPTION__STILL_DIR"] == str(tmp_path / "run" / "stills")
-    assert env["SD_ONBOARD__PERCEPTION__WIDTH_PX"] == "1280"
+    assert env["SD_ONBOARD__PERCEPTION__WIDTH_PX"] == "2304"
+    assert env["SD_ONBOARD__PERCEPTION__HEIGHT_PX"] == "1296"
 
 
 def test_onboard_env_has_no_model_by_default(tmp_path: Path) -> None:
