@@ -121,7 +121,7 @@ describe("alertView", () => {
       "Den flyger hem när du trycker FLYG HEM eller när ett skydd slår till",
     );
     expect(say(v)).toContain("lågt batteri eller förlorad länk");
-    expect(say(v)).toContain("rakt genom förbudszoner");
+    expect(say(v)).toContain("Vägen hem kan gå rakt genom förbudszoner runt personer");
     expect(say(v)).toContain("Ta över med RC");
     expect(say(v)).not.toContain("avbrutits");
   });
