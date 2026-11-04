@@ -141,11 +141,13 @@ def test_sitl_budget() -> None:
     ("job", "mode", "shards", "seeds", "sk06_seeds"),
     [
         ("sitl-search", "search", "SEARCH_SHARDS", "", ""),
+        ("sitl-inspect", "inspect", "INSPECT_SHARDS", "", ""),
         ("sitl-search-nightly", "search-nightly", "SEARCH_NIGHTLY_SHARDS", "1-50", "1-100"),
     ],
 )
 def test_search_budget(job: str, mode: str, shards: str, seeds: str, sk06_seeds: str) -> None:
-    """The search chain's sets fit the shards and workers of their own sitl.yml jobs."""
+    """The search chain's and the closer look's sets fit the shards and workers of their
+    own sitl.yml jobs."""
     doc = yaml.safe_load(SITL_YML.read_text(encoding="utf-8"))
     count, workers = int(doc["env"][shards]), int(doc["env"]["WORKERS"])
     assert doc["jobs"][job]["strategy"]["matrix"]["shard"] == list(range(1, count + 1))
