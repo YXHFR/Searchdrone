@@ -13,9 +13,23 @@ from types import SimpleNamespace
 
 import pytest
 from onboard_helpers import PLANE, Rig, charter, rig, square
-from test_inspect import SKILLS, detection, install, keepout, xy
+from test_inspect import (
+    SKILLS,
+    _exiting,  # pyright: ignore[reportPrivateUsage]
+    _outside_all,  # pyright: ignore[reportPrivateUsage]
+    _search_over_a_person,  # pyright: ignore[reportPrivateUsage]
+    detection,
+    install,
+    keepout,
+    track_xy,
+    xy,
+)
 
 from sd_mav.mission import MISSION
+from sd_onboard.executor import executor as executor_module
+from sd_onboard.executor.keepout_reflex import remaining
+from sd_onboard.skills import goto as goto_module
+from sd_onboard.skills.goto import GotoHandler
 from sd_onboard.skills.survey_sector import SurveyRun
 from sd_safety.constants import (
     GOTO_ALT_STEP_TOL_M,
@@ -199,3 +213,121 @@ def test_a_first_leg_that_comes_down_gets_no_passage() -> None:
     assert SurveyRun(new_id(), [], 40.0, 7.0).passage(ctx(40.0)) is None  # type: ignore[arg-type]
     live = SimpleNamespace(vehicle=SimpleNamespace(alt_rel_home_m=40.0), charter=charter())
     assert run.passage(live) is None  # type: ignore[arg-type]
+
+
+# --- the time inside, and the way out (review of #202) -----------------------------------
+
+
+async def test_the_time_inside_an_unconfirmed_cylinder_counts_from_when_the_drone_came_in() -> None:
+    """A route planned mid-passage counts the time the drone spent inside already. A
+    cylinder that replaces the one the drone is in (grown, handed over) is the same
+    person: no fresh budget. Confirmed cylinders are never passed: no time kept."""
+    async with rig() as r:
+        await r.install(_sim_charter())  # type: ignore[arg-type]
+        await r.takeoff()
+        here = xy(r)
+        first = keepout(*here, 40.0, source="candidate")
+        install(r, first)
+        await r.run(3.0)
+        inside = r.ex._keepout_inside_s()  # pyright: ignore[reportPrivateUsage]
+        assert set(inside) == {first.keepout_id}
+        assert inside[first.keepout_id] == pytest.approx(3.0, abs=0.3)
+        handed = keepout(*here, 45.0, source="detection")
+        install(r, handed)
+        await r.run(1.0)
+        inside = r.ex._keepout_inside_s()  # pyright: ignore[reportPrivateUsage]
+        assert set(inside) == {handed.keepout_id}
+        assert inside[handed.keepout_id] >= 3.8
+        # The plan and the gate see the same time.
+        ctx = r.ex._plan_context(new_id())  # pyright: ignore[reportPrivateUsage]
+        assert ctx.keepout_inside_s[handed.keepout_id] >= 3.8
+        gate = r.ex._gate_context(r.ex.vehicle_state())  # pyright: ignore[reportPrivateUsage]
+        assert gate.keepout_inside_s[handed.keepout_id] >= 3.8
+        install(r, keepout(*here, 45.0))  # confirmed
+        await r.run(0.2)
+        assert r.ex._keepout_inside_s() == {}  # pyright: ignore[reportPrivateUsage]
+        # Out of every cylinder and back into a new one: from 0 again.
+        install(r)
+        await r.run(0.2)
+        again = keepout(*here, 40.0, source="candidate")
+        install(r, again)
+        await r.run(1.0)
+        inside = r.ex._keepout_inside_s()  # pyright: ignore[reportPrivateUsage]
+        assert inside[again.keepout_id] == pytest.approx(1.0, abs=0.3)
+
+
+async def test_the_brake_before_the_way_out_holds_where_the_drone_stops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review of #202: the brake is a goto ``from_stop``: its spot follows the drone until
+    it stands still, never the point where the brake began (overshot at speed, then flown
+    back to, maybe deeper into the cylinder)."""
+    monkeypatch.setattr(executor_module, "still", lambda _v: False)
+    monkeypatch.setattr(goto_module, "still", lambda _v: False)  # it moves on all the while
+    async with rig() as r:
+        await _search_over_a_person(r, monkeypatch)
+        await _exiting(r)
+        assert r.ex._exit_braking is not None  # pyright: ignore[reportPrivateUsage]
+        active = r.ex.active
+        assert active is not None and isinstance(active.handler, GotoHandler)
+        handler = active.handler
+        assert handler._stopping  # pyright: ignore[reportPrivateUsage]
+        await r.run(0.3)
+        assert handler.target is not None
+        spot = PLANE.xy(handler.target[0], handler.target[1])
+        assert math.dist(spot, xy(r)) <= 2.0  # where the drone is, not behind it
+
+
+async def test_a_confirmed_cylinder_on_the_way_out_makes_it_plan_the_way_out_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review of #202: the way out is an internal goto the reflex used to skip. A
+    confirmed cylinder that comes over the rest of it (here over its end) stops the drone
+    and the way out is planned again from there, into no confirmed cylinder."""
+    async with rig() as r:
+        _, person, _, start = await _search_over_a_person(r, monkeypatch, radius=40.0)
+        await _exiting(r)
+        plane = r.ex.plane()
+        active = r.ex.active
+        assert plane is not None and active is not None
+        now = xy(r)
+        end = remaining(active.handler, active.plan, now, plane)[-1]
+        d = math.dist(now, end)
+        centre = (end[0] + 5.0 * (end[0] - now[0]) / d, end[1] + 5.0 * (end[1] - now[1]) / d)
+        found = keepout(*centre, 15.0)  # confirmed, over the end of the way out
+        assert math.dist(now, centre) > 15.0
+        install(r, person, found)
+        await r.until(lambda: "executor.keepout_exit_replan" in r.up.kinds(), 10)
+        await r.until(lambda: r.ex.state == S.HOLD, 120)
+        assert _outside_all(r) and r.ex.hold_reason == "limit"
+        assert all(math.dist(p, centre) >= found.radius_m - 0.5 for p in track_xy(r, start))
+
+
+async def test_an_unconfirmed_cylinder_that_is_confirmed_on_the_way_out_is_not_crossed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The way out may cross another person's unconfirmed cylinder; confirmed while the
+    drone flies it, that one is never entered."""
+    async with rig() as r:
+        _, person, _, _ = await _search_over_a_person(r, monkeypatch, radius=40.0)
+        await _exiting(r)
+        plane = r.ex.plane()
+        active = r.ex.active
+        assert plane is not None and active is not None
+        now = xy(r)
+        end = remaining(active.handler, active.plan, now, plane)[-1]
+        d = math.dist(now, end)
+        u = ((end[0] - now[0]) / d, (end[1] - now[1]) / d)
+        # Across the rest of the way out, ahead of the drone and clear of it.
+        centre = (now[0] + 30.0 * u[0], now[1] + 30.0 * u[1])
+        other = keepout(*centre, 10.0, source="candidate")
+        install(r, person, other)
+        await r.run(0.2)
+        assert "executor.keepout_exit_replan" not in r.up.kinds()  # unconfirmed: crossed
+        mark = len(r.fc.track)
+        assert math.dist(xy(r), centre) > other.radius_m
+        install(r, person, other.model_copy(update={"source": "confirmed"}))
+        await r.until(lambda: "executor.keepout_exit_replan" in r.up.kinds(), 10)
+        await r.until(lambda: r.ex.state == S.HOLD, 120)
+        assert all(math.dist(p, centre) >= other.radius_m - 0.5 for p in track_xy(r, mark))
+        assert _outside_all(r)

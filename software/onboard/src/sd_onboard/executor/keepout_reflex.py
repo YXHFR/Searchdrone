@@ -28,6 +28,9 @@ held there) never climbs and hovers over the person (owner decision 2026-11-03):
 leaves by the shortest way out (:func:`exit_point`, through unconfirmed cylinders if need
 be, never into a confirmed one) as an internal goto (``INTERNAL_KEEPOUT_EXIT``) that
 replaces the order and ends in the keep-out hover outside; with no way out it flies home.
+A drone that still moves first brakes and holds where it stops. A cylinder that comes
+while it leaves is checked against the rest of the way out: when that now enters a
+confirmed cylinder or ends inside any, the drone brakes and the way out is planned again.
 
 Local cylinders (from the drone's own detections) give way once a ground install at
 least ``LOCAL_KEEPOUT_HANDOVER_MS`` later holds a cylinder that covers them; until then,
@@ -40,9 +43,10 @@ moving order in a hover.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from itertools import pairwise
 from typing import Final, Protocol, runtime_checkable
+from uuid import UUID
 
 # The climb over a person lives with the handlers: the look straight over a target
 # climbs out of a cylinder that comes around it on its own (``skills.inspect_steps``).
@@ -58,6 +62,7 @@ from sd_safety.keepout import (
     passes,
     reroute,
     route_violation,
+    spent_for,
     split,
     xy_route_violation,
 )
@@ -187,11 +192,13 @@ def path_clear(
     plane: Plane,
     charter: MissionCharter,
     passage: Passage | None,
+    inside_s: Mapping[UUID, float] | None = None,
 ) -> bool:
     """No leg enters a cylinder (a search route with a ``passage`` may pass straight
-    through unconfirmed ones, never going down: ``sd_safety.keepout.route_violation``, the
-    gate's own check) and every leg lies inside the charter's area."""
-    if route_violation(path, keepouts, plane, passage) is not None:
+    through unconfirmed ones, never going down, the pass the drone is on counting the time
+    ``inside_s`` it spent inside already: ``sd_safety.keepout.route_violation``, the gate's
+    own check) and every leg lies inside the charter's area."""
+    if route_violation(path, keepouts, plane, passage, inside_s) is not None:
         return False
     area = polygon_from_geojson(charter.area, plane)
     route = [plane.xy(p.lat, p.lon) for p in path]
@@ -199,19 +206,24 @@ def path_clear(
 
 
 def problem_m(
-    route: list[Xy], keepouts: tuple[Keepout, ...], plane: Plane, passage: Passage | None
+    route: list[Xy],
+    keepouts: tuple[Keepout, ...],
+    plane: Plane,
+    passage: Passage | None,
+    inside_s: Mapping[UUID, float] | None = None,
 ) -> float | None:
     """How far along ``route`` (from its first point) the first cylinder lies that it may
     not fly into (:func:`entry_m`), or None. With a ``passage`` an unconfirmed cylinder
-    every leg passes (``sd_safety.keepout.passes``) is no problem; one a leg does not pass
-    counts as a confirmed one."""
+    the route passes (``sd_safety.keepout.passes``, the pass the drone is on counting the
+    time ``inside_s`` it spent inside already) is no problem; one it does not pass counts
+    as a confirmed one."""
     if passage is None:
         return entry_m(route, circles(keepouts, plane))
     hard, soft = split(keepouts)
     cyl = circles(hard, plane)
-    legs = list(pairwise(route))
-    for c, r in circles(soft, plane):
-        if not all(passes(a, b, c, r, passage, first=j == 0) for j, (a, b) in enumerate(legs)):
+    spent = spent_for(soft, passage, inside_s)
+    for (c, r), s in zip(circles(soft, plane), spent, strict=True):
+        if not passes(route, c, r, passage, spent_m=s):
             cyl.append((c, r))
     return entry_m(route, cyl)
 

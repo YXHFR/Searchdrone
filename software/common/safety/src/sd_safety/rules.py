@@ -618,7 +618,8 @@ def _keepout(f: Facts) -> list[Finding]:
     The cylinders a closer look flies over (``suspended_keepout_ids``) are left out.
     Onboard, the planned path of a search route under a charter that allows overflight
     may pass straight through unconfirmed cylinders at its planned speed
-    (``sd_safety.keepout.passage_for``, ``GateRequest.planned_speed_ms``)."""
+    (``sd_safety.keepout.passage_for``, ``GateRequest.planned_speed_ms``); the pass the
+    drone is on counts the time it spent inside already (``keepout_inside_s``)."""
     suspended = set(f.ctx.suspended_keepout_ids)
     keepouts = tuple(k for k in f.ctx.keepouts if k.keepout_id not in suspended)
     plane = f.plane
@@ -634,7 +635,8 @@ def _keepout(f: Facts) -> list[Finding]:
             return _keepout_finding(hit.keepout_id, "route")
     if f.req.planned_path:
         passage = passage_for(f.req.skill, f.ctx.charter, f.req.planned_speed_ms)
-        hit = route_violation(f.req.planned_path, keepouts, plane, passage)
+        inside = f.ctx.keepout_inside_s
+        hit = route_violation(f.req.planned_path, keepouts, plane, passage, inside)
         if hit is not None:
             return _keepout_finding(hit.keepout_id, "route")
     ring = t.ring if t is not None and f.req.skill in KEEPOUT_TARGET_SKILLS else None

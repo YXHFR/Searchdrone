@@ -47,7 +47,15 @@ from sd_safety.constants import (
     MISSION_MAX_ITEMS,
     SURVEY_MAX_AREA_M2,
 )
-from sd_safety.keepout import Passage, circles, passage_for, reroute, split, xy_route_violation
+from sd_safety.keepout import (
+    Passage,
+    circles,
+    passage_for,
+    reroute,
+    spent_for,
+    split,
+    xy_route_violation,
+)
 from sd_safety.targets import Plane, polygon_from_geojson
 from sd_schemas.base import Id, LatLon, LatLonAlt
 from sd_schemas.executor import ExecutorState, ResumePoint, SurveyResumePoint
@@ -152,12 +160,14 @@ class SurveyRun:
         passage = self.passage(ctx)
         hard, soft = split(ctx.keepouts) if passage is not None else (list(ctx.keepouts), [])
         cyl, scyl = circles(hard, plane), circles(soft, plane)
+        # The pass the drone is on counts the time it spent inside already.
+        spent = spent_for(soft, passage, ctx.keepout_inside_s) if passage is not None else []
         here = plane.xy(ctx.vehicle.lat, ctx.vehicle.lon)
         route = [here, *(plane.point(p) for p in self.flown_points)]
-        if xy_route_violation(route, cyl, scyl, passage) is None:
+        if xy_route_violation(route, cyl, scyl, passage, spent_m=spent) is None:
             return
         area = polygon_from_geojson(ctx.charter.area, plane)
-        out = reroute(route, cyl, area=area, soft=scyl, passage=passage)
+        out = reroute(route, cyl, area=area, soft=scyl, passage=passage, spent_m=spent)
         if out is None or len(out) < 2:
             raise PlanError("KEEPOUT_VIOLATION", "ingen väg runt förbudscylindrarna")
         points = [LatLon(lat=lat, lon=lon) for lat, lon in (plane.latlon(*p) for p in out[1:])]

@@ -126,6 +126,10 @@ KEEPOUT_PAIR_WINDOW_S: Final = 60.0
 # chord at the route's speed). 12 s lets a typical cylinder (30 m + sigma95 up to 12 m) be
 # crossed through its centre at the default search speed: 2 x 42 m / 7 m/s = 12 s (the
 # analysis: "74 m at 7 m/s, about 10 s"). Confirmed finds always keep the full cylinder.
+# The bound is the stretch inside at the route's planned speed. The flight controller
+# slows ahead of a corner, and a corner may lie as close as KEEPOUT_ARC_MARGIN_M (5 m)
+# past the edge (sd_safety.keepout.passes), so a pass that ends near a turn can take
+# 2-4 s longer than this; that time is not in the bound.
 KEEPOUT_PASS_MAX_S: Final = 12.0
 
 # --- the height floor of a closer look (sd_safety.floor) -----------------------------------

@@ -140,7 +140,14 @@ from sd_safety.constants import (
 )
 from sd_safety.floor import FloorPack, FloorPackError, floor_at, load_floor_pack
 from sd_safety.gnss import GnssSample, GpsHealth, SpoofDetector, SpoofFinding
-from sd_safety.keepout import Circle, circles, passage_for, xy_route_violation
+from sd_safety.keepout import (
+    Circle,
+    circles,
+    passage_for,
+    split,
+    unconfirmed,
+    xy_route_violation,
+)
 from sd_safety.limits import (
     ABSOLUTE_MAX_ALT_AGL_M,
     ABSOLUTE_MAX_RANGE_FROM_PILOT_M,
@@ -516,6 +523,12 @@ class Executor:
         # The way out of the cylinders (``_exit_keepouts``) brakes first when the drone
         # moves: the order it replaced (command id, skill) while that brake runs, else None.
         self._exit_braking: dict[str, str] | None = None
+        # The order the way out replaced (command id, skill) for as long as it runs: a
+        # cylinder that comes meanwhile may make it plan the way out again (``_exit_reflex``).
+        self._exit_data: dict[str, str] | None = None
+        # When (monotonic s) the drone came inside each unconfirmed cylinder it is in now,
+        # by keepout_id (``_keepout_inside_s``): the pass it is on counts that time.
+        self._soft_since: dict[UUID, float] = {}
         self._keepouts_changed = False  # the reflex runs on the next tick
         self._keepout_watch = False  # an order heads for a cylinder, still far off: every tick
         self._keepouts_seen: set[UUID] = set()  # the cylinders the reflex has looked at
@@ -1290,6 +1303,7 @@ class Executor:
             resume_point=self.resume_point,
             clock=self.clock,
             keepouts=self.keepouts_in_force(),
+            keepout_inside_s=self._keepout_inside_s(),
             floor_pack=self.floor_pack,
         )
 
@@ -1347,6 +1361,7 @@ class Executor:
             brain_pending_approvals=0,
             operator_present=True,
             keepouts=self.keepouts_in_force(),
+            keepout_inside_s=self._keepout_inside_s(),
         )
 
     def on_cancel(self, command_id: UUID) -> None:
@@ -1914,6 +1929,7 @@ class Executor:
         self._last_tick_ms = now
         t = self.vehicle.telemetry
         self._finish_active()
+        self._keepout_inside_s()  # the time inside counts from the tick it came inside
         # A leg flown one at a time is checked from where the drone is on every tick.
         replans = self.active is not None and isinstance(self.active.handler, Replans)
         if self._keepouts_changed or self._keepout_watch or replans:
@@ -1969,6 +1985,9 @@ class Executor:
         if active is not None and active.skill == INTERNAL_FIND_GOTO:
             self._find_move_reflex()
             return
+        if active is not None and active.skill == INTERNAL_KEEPOUT_EXIT:
+            self._exit_reflex(active)
+            return
         if (
             active is None
             or active.cmd is None
@@ -2000,7 +2019,7 @@ class Executor:
             # straight through counts (``keepout_reflex.problem_m``).
             descends = v.alt_rel_home_m > run.alt_m + GOTO_ALT_STEP_TOL_M
             passage = None if descends else passage_for(active.cmd.skill, charter, run.speed_ms)
-            entry = problem_m([here, *rest], keepouts, plane, passage)
+            entry = problem_m([here, *rest], keepouts, plane, passage, self._keepout_inside_s())
             if entry is None:
                 stopping = isinstance(active.handler, SurveyHandler) and active.handler.stopping
                 if lifted:
@@ -2098,6 +2117,29 @@ class Executor:
         )
         return True
 
+    def _keepout_inside_s(self) -> dict[UUID, float]:
+        """How long (s) the drone has been inside each unconfirmed cylinder it is in now,
+        by keepout_id: a search route that starts inside one continues the pass the drone
+        is on and counts that time (``sd_safety.keepout.passes``). A cylinder that comes
+        around the drone starts at 0, unless the drone was inside unconfirmed cylinders
+        already: then it takes the longest of their times (a cylinder grown, merged or
+        handed over to the ground's is the same person, and gives no fresh budget)."""
+        plane = self.plane()
+        if plane is None:
+            self._soft_since = {}
+            return {}
+        now = self.clock.monotonic()
+        v = self.vehicle_state()
+        here = plane.xy(v.lat, v.lon)
+        before = self._soft_since
+        inherit = min(before.values(), default=now)
+        self._soft_since = {
+            k.keepout_id: before.get(k.keepout_id, inherit)
+            for k in self.keepouts_in_force()
+            if unconfirmed(k) and math.dist(here, plane.xy(k.lat, k.lon)) < k.radius_m
+        }
+        return {kid: now - t for kid, t in self._soft_since.items()}
+
     def _exiting_keepouts(self) -> bool:
         """Whether the way out of the cylinders (``_exit_keepouts``) is under way."""
         return self.active is not None and self.active.skill == INTERNAL_KEEPOUT_EXIT
@@ -2113,10 +2155,12 @@ class Executor:
         home (``keepout_rtl``): return home goes past every cylinder. False when the drone
         is in no cylinder (the caller hovers where it is).
 
-        A drone that still moves brakes first, back to where it is now (the same internal
-        goto, ``_exit_braking``): a turn at speed onto the way out would carry it on, maybe
-        into a cylinder ahead. The way out is planned from where it stopped
-        (:meth:`_leave_after_brake`)."""
+        A drone that still moves brakes first and holds where it stops (the same internal
+        goto, ``from_stop``, ``_exit_braking``): a turn at speed onto the way out would
+        carry it on, maybe into a cylinder ahead, and a spot fixed while it still moves
+        would be overshot and flown back to. The way out is planned from where it stopped
+        (:meth:`_leave_after_brake`). Cylinders that come while it leaves are checked
+        against the rest of the way out (:meth:`_exit_reflex`)."""
         plane, charter = self.plane(), self.charter
         if plane is None or charter is None:
             return False
@@ -2133,9 +2177,46 @@ class Executor:
         self.emit("keepout_hold", {**data, str(KeepoutHoldField.INSIDE): False})
         if self.active is active:
             self._drop_active(stage="superseded", codes=("KEEPOUT_VIOLATION",))
-        self._exit_goto(target, v.lat, v.lon, v.alt_rel_home_m, charter)
-        self._exit_braking = data
+        self._exit_brake(target, data, charter)
         return True
+
+    def _exit_brake(
+        self, target: ExecutorState, data: dict[str, str], charter: MissionCharter
+    ) -> None:
+        """The brake before a way out: the internal goto ``from_stop`` at the height the
+        drone has, which holds it where it stops (``GotoHandler._stop_first``)."""
+        v = self.vehicle_state()
+        self._exit_goto(target, v.lat, v.lon, v.alt_rel_home_m, charter, from_stop=True)
+        self._exit_braking = data
+        self._exit_data = data
+
+    def _exit_reflex(self, active: _Active) -> None:
+        """Cylinders changed while the drone leaves cylinders (``_exit_keepouts``). The way
+        out is planned from where the drone was, against the cylinders then: when the rest
+        of it now enters a confirmed cylinder (or goes deeper into one: one installed on the
+        line, or an unconfirmed one it crosses that is now confirmed), or ends inside any
+        cylinder, the drone brakes where it is and the way out is planned again from where
+        it stops (:meth:`_leave_after_brake`: through unconfirmed ones if need be, into no
+        confirmed one, or home when there is none). While it brakes nothing is flown yet:
+        the way out after the stop takes the cylinders in force then."""
+        plane, charter, data = self.plane(), self.charter, self._exit_data
+        if self._exit_braking is not None or plane is None or charter is None or data is None:
+            return
+        v = self.vehicle_state()
+        here = plane.xy(v.lat, v.lon)
+        rest = remaining(active.handler, active.plan, here, plane)
+        end = rest[-1] if rest else here
+        keepouts = self.keepouts_in_force()
+        hard, _ = split(keepouts)
+        into_hard = leg_entry_m(here, end, circles(hard, plane)) is not None
+        if not into_hard and not over_a_person(end, circles(keepouts, plane)):
+            return
+        target = self.target_of(Trigger.LIMIT_ALT)
+        if isinstance(target, Refusal):
+            return
+        self.emit("keepout_exit_replan", {**data, "into_confirmed": into_hard})
+        self._drop_active(stage=None, save_resume=False)
+        self._exit_brake(target, data, charter)
 
     def _leave_after_brake(self) -> bool:
         """The brake before the way out has ended: the way out from here, or home. False
@@ -2143,7 +2224,10 @@ class Executor:
         data, self._exit_braking = self._exit_braking, None
         if data is None:
             return False
-        return self._leave(data, told=True, drop=None)
+        if self._leave(data, told=True, drop=None):
+            return True
+        self._exit_data = None  # out of every cylinder: the keep-out hover here
+        return False
 
     def _leave(self, data: dict[str, str], *, told: bool, drop: _Active | None) -> bool:
         """The way out from where the drone is (``_exit_keepouts``), or home when there is
@@ -2174,17 +2258,26 @@ class Executor:
         if drop is not None and self.active is drop:
             self._drop_active(stage="superseded", codes=("KEEPOUT_VIOLATION",))
         self._exit_goto(target, out.lat, out.lon, v.alt_rel_home_m, charter)
+        self._exit_data = data
         return True
 
     def _exit_goto(
-        self, target: ExecutorState, lat: float, lon: float, alt_m: float, charter: MissionCharter
+        self,
+        target: ExecutorState,
+        lat: float,
+        lon: float,
+        alt_m: float,
+        charter: MissionCharter,
+        *,
+        from_stop: bool = False,
     ) -> None:
-        """The internal goto of the way out (``INTERNAL_KEEPOUT_EXIT``) at ``alt_m``."""
+        """The internal goto of the way out (``INTERNAL_KEEPOUT_EXIT``) at ``alt_m``;
+        ``from_stop``: the brake before it, to where the drone stops."""
         self._exit_braking = None
         speed = min(_EXIT_SPEED_MS, charter.max_speed_ms)
         goto = GotoHandler()
         ctx = self._plan_context(new_id())
-        goto.prepare(ctx, lat, lon, alt_m, speed)
+        goto.prepare(ctx, lat, lon, alt_m, speed, from_stop=from_stop)
         plan = goto_plan(ctx, lat, lon, alt_m, speed)
         self._enter(target, cause="KEEPOUT_VIOLATION")
         self._internal(INTERNAL_KEEPOUT_EXIT, goto, plan, SendOrigin.LIMIT)
@@ -2212,7 +2305,8 @@ class Executor:
         if active.cmd is None or charter is None:
             return ("ONB_STALE_ORDER",)
         passage = passage_for(active.cmd.skill, charter, plan.speed_ms)
-        if not path_clear(plan.path, ctx.keepouts, ctx.plane, charter, passage):
+        inside = ctx.keepout_inside_s
+        if not path_clear(plan.path, ctx.keepouts, ctx.plane, charter, passage, inside):
             return ("KEEPOUT_VIOLATION",)
         now = StateRef(state_epoch=self.boot_id, state_seq=self.last_transition_state_seq)
         cmd = active.cmd.model_copy(update={"based_on": now})
@@ -3186,7 +3280,8 @@ class Executor:
             codes, plan = (exc.code,), None
         if plan is not None:
             passage = passage_for(cmd.skill, charter, plan.speed_ms)
-            if not path_clear(plan.path, ctx.keepouts, ctx.plane, charter, passage):
+            inside = ctx.keepout_inside_s
+            if not path_clear(plan.path, ctx.keepouts, ctx.plane, charter, passage, inside):
                 codes = ("KEEPOUT_VIOLATION",)
             else:
                 decision = evaluate(self._gate_request(cmd, plan), self._gate_context(ctx.vehicle))
