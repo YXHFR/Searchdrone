@@ -344,10 +344,10 @@ def test_weakening_the_release_check_needs_the_owner(path: str, text: str) -> No
 
 
 def test_read_protected_matches_check_owner_gate() -> None:
+    # The owner turned owner-ok off (2026-11-04): no path is protected, and the release
+    # check reads the same empty list from the file's text.
     text = (cmg.REPO / cmg.OWNER_GATE).read_text(encoding="utf-8")
-    import check_owner_gate
-
-    assert cmg.read_protected(text) == list(check_owner_gate.PROTECTED)
+    assert cmg.read_protected(text) == []
 
 
 def test_local_git_lists_renames_and_deletes(tmp_path: Path) -> None:
