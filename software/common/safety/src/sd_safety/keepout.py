@@ -37,11 +37,13 @@ drone); that time counts towards the pass, so a route planned again mid-passage 
 fresh budget. Without it the first leg may only leave the cylinder without going deeper.
 Confirmed finds, and every cylinder without a passage (live without the permit, every
 other move), are never entered. :func:`reroute` with a passage first drops the corners
-inside unconfirmed cylinders and joins their neighbours straight; a cylinder that the
-route then may not pass is gone around like a confirmed one. :func:`escape` is the way
-out of a drone boxed in: the shortest straight leg to a point clear of every cylinder that
-enters no confirmed one (an unconfirmed one may be crossed even without a passage: staying
-over a possible person is worse).
+inside unconfirmed cylinders and joins their neighbours straight, and pushes a corner
+within ``KEEPOUT_ARC_MARGIN_M`` of one that a leg next to it comes into out to that margin
+(where the pushed corner is clear of every other margin and inside the charter); a
+cylinder that the route then may not pass is gone around like a confirmed one.
+:func:`escape` is the way out of a drone boxed in: the shortest straight leg to a point
+clear of every cylinder that enters no confirmed one (an unconfirmed one may be crossed
+even without a passage: staying over a possible person is worse).
 """
 
 from __future__ import annotations
@@ -356,8 +358,10 @@ def reroute(
     a way around it, or None when there is none that stays inside ``area``.
 
     ``soft`` are the unconfirmed cylinders. Without a ``passage`` they count as ``cyl``.
-    With one, the corners inside them are dropped and the route is planned around ``cyl``
-    alone; each unconfirmed cylinder the route may not pass (:func:`passes`, with
+    With one, the corners inside them are dropped, the corners within
+    ``KEEPOUT_ARC_MARGIN_M`` of one that a leg next to them comes into are pushed out to
+    that margin where they can be (``_off_the_edges``), and the route is planned around
+    ``cyl`` alone; each unconfirmed cylinder the route may not pass (:func:`passes`, with
     ``spent_m`` as in :func:`xy_route_violation`) then counts as confirmed and the route is
     planned again (``_PROMOTE_TRIES`` at most), so the result is clear by
     :func:`xy_route_violation` with the same passage and ``spent_m``.
@@ -376,7 +380,7 @@ def reroute(
     if not route:
         return []
     hard, left = list(cyl), list(range(len(soft)))
-    pts = [route[0], *(p for p in route[1:] if not any(math.dist(p, c) < r for c, r in soft))]
+    pts = _off_the_edges(route, cyl, soft, area)
     for _ in range(_PROMOTE_TRIES):
         out = _reroute(pts, hard, area, exit_dir, exit_reserve_m)
         if out is None:
@@ -391,6 +395,51 @@ def reroute(
         hard += [soft[i] for i in bad]
         left = [i for i in left if i not in bad]
     return None
+
+
+def _off_the_edges(
+    route: Sequence[Xy], cyl: Sequence[Circle], soft: Sequence[Circle], area: Polygon | None
+) -> list[Xy]:
+    """``route`` ready to pass the unconfirmed cylinders ``soft``: the corners inside them
+    dropped (their neighbours joined straight), and a corner less than
+    ``KEEPOUT_ARC_MARGIN_M`` outside one that a leg next to it comes into (a turn the
+    flight controller cuts into it, :func:`passes`) pushed straight away from its centre
+    to just past that margin. The first point (where the drone is) never moves. A corner
+    whose pushed place would lie within the margin of another cylinder (or of a confirmed
+    one), or whose legs would leave ``area``, stays where it is: :func:`reroute` then
+    goes around that cylinder."""
+    pts = [route[0], *(p for p in route[1:] if not any(math.dist(p, c) < r for c, r in soft))]
+    edges = [(c, r + KEEPOUT_ARC_MARGIN_M) for c, r in [*cyl, *soft]]
+    kept: set[int] = set()
+    moved = True
+    while moved:  # a corner moved changes the legs next to it: look again
+        moved = False
+        for i in (i for i in range(1, len(pts)) if i not in kept):
+            near = next((s for s in soft if _turns_over(pts, i, *s)), None)
+            if near is None:
+                continue
+            (cx, cy), r = near
+            p = pts[i]
+            k = (r + KEEPOUT_ARC_MARGIN_M + _MARGIN_EPS_M) / math.dist(p, (cx, cy))
+            q = (cx + (p[0] - cx) * k, cy + (p[1] - cy) * k)
+            legs = [(pts[i - 1], q), *([(q, pts[i + 1])] if i + 1 < len(pts) else [])]
+            clear = all(math.dist(q, c) >= e for c, e in edges)
+            if clear and (area is None or all(area.leg_outside_by(a, b) <= 0.0 for a, b in legs)):
+                pts[i], moved = q, True
+            else:
+                kept.add(i)
+    return pts
+
+
+def _turns_over(pts: Sequence[Xy], i: int, c: Xy, r: float) -> bool:
+    """Whether corner ``i`` lies within ``KEEPOUT_ARC_MARGIN_M`` of the circle and a leg
+    next to it comes inside it."""
+    if math.dist(pts[i], c) >= r + KEEPOUT_ARC_MARGIN_M:
+        return False
+    nxt = pts[i + 1 : i + 2]
+    return chord_m(pts[i - 1], pts[i], c, r) > 0.0 or any(
+        chord_m(pts[i], b, c, r) > 0.0 for b in nxt
+    )
 
 
 def _reroute(
