@@ -40,6 +40,7 @@ from sd_schemas.base import LatLonAlt
 __all__ = [
     "FENCE",
     "MISSION",
+    "SURVEY_EXTRA_ITEMS",
     "MissionError",
     "MissionItem",
     "download",
@@ -120,6 +121,10 @@ def _deg7(value: float, limit: float) -> int:
     return round(value * 1e7)
 
 
+# The items a search mission has besides its points: home, the speed and the hover at the end.
+SURVEY_EXTRA_ITEMS: Final = 3
+
+
 def survey_mission(
     home: LatLonAlt,
     points: Sequence[tuple[float, float]],
@@ -129,8 +134,8 @@ def survey_mission(
     """The AUTO mission that flies ``points`` (lat, lon) at ``alt_m`` above home."""
     if not points:
         raise ValueError("a mission needs at least one point")
-    if len(points) + 3 > MISSION_MAX_ITEMS:
-        raise ValueError(f"{len(points)} points, at most {MISSION_MAX_ITEMS - 3}")
+    if len(points) + SURVEY_EXTRA_ITEMS > MISSION_MAX_ITEMS:
+        raise ValueError(f"{len(points)} points, at most {MISSION_MAX_ITEMS - SURVEY_EXTRA_ITEMS}")
     if not math.isfinite(alt_m) or alt_m < 0:
         raise ValueError(f"height {alt_m}")
     if not math.isfinite(speed_ms) or speed_ms <= 0:

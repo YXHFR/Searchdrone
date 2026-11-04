@@ -16,6 +16,7 @@ from sd_mav.fake import CMAC_HOME, FakeFlightController, FakeVehicle
 from sd_mav.mission import (
     FENCE,
     MISSION,
+    SURVEY_EXTRA_ITEMS,
     MissionError,
     MissionItem,
     download,
@@ -68,6 +69,15 @@ def test_mission_encoder(points: list[tuple[float, float]], alt: float, speed: f
     assert all(i.command not in (19, 20) for i in items)  # no timed hover, no return
     for item in items:  # everything the encoder makes passes the allowlist
         assert check(item.to_message(1), ctx()) is None
+
+
+def test_survey_extra_items_is_the_layout() -> None:
+    """``SURVEY_EXTRA_ITEMS`` is what the encoder adds (the onboard size check uses it):
+    the most points fill the mission exactly, one more is refused."""
+    most = MISSION_MAX_ITEMS - SURVEY_EXTRA_ITEMS
+    assert len(survey_mission(HOME_LLA, [HOME] * most, 40, 5)) == MISSION_MAX_ITEMS
+    with pytest.raises(ValueError):
+        survey_mission(HOME_LLA, [HOME] * (most + 1), 40, 5)
 
 
 def test_mission_encoder_refuses_bad_input() -> None:
