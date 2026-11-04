@@ -516,6 +516,21 @@ class Scenario:
         assert live["snapshot"] is not None, live
         return dict(live["snapshot"])
 
+    async def released_onboard(self) -> bool:
+        """Resume has reached the onboard executor: it hovers because the pilot let go.
+
+        Not just "no longer HELD": the snapshot comes at 2 Hz and the ground sends Resume
+        a moment after its 202, so right after a take-over the latest snapshot can still
+        show the state from before it (an order sent then finds the executor HELD and is
+        refused with ONB_CONTROL_HELD)."""
+        snap = await self.onboard_state()
+        return (
+            snap["executor_state"] == "HOLD"
+            and snap["hold_reason"] == "operator_released"
+            and not snap["manual_control"]
+            and not snap["control_suspended"]
+        )
+
     async def gate(self, command_id: str) -> list[dict[str, Any]]:
         res = await self.r.panel.get(
             f"/api/v1/missions/{self.mid}/gate_decisions", params={"command_id": command_id}
