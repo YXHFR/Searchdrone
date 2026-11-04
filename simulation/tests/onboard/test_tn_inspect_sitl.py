@@ -50,7 +50,12 @@ from sd_safety.constants import (
     SDLINK_HOLD_S,
 )
 from sd_schemas.executor import ExecutorState as S
-from sd_schemas.inspect import AUTO_FLOOR_ABOVE_GROUND_M, CLIMB_MIN_MS, match_radius_m
+from sd_schemas.inspect import (
+    AUTO_FLOOR_ABOVE_GROUND_M,
+    CLIMB_MIN_MS,
+    LOWER_OFFER_S,
+    match_radius_m,
+)
 from sd_schemas.rangefinder import LASER_GAP_S
 from sd_sim import inspect_world, paths
 from sd_sim.errors import InfraError
@@ -481,15 +486,25 @@ def test_tn14_the_battery_reserve_during_the_look_flies_home(seed: int) -> None:
                 look = TnLook(f, w)
                 await look.start(battery_rtl_pct=25.0)
                 await look.order()
-                await look.flown("yes", until=lambda: look.t_yes is not None)
+                # The reserve comes at a fixed step, never racing the descent: the drone
+                # hovers at the automatic floor for "Gå lägre?" (unanswered, it waits out
+                # LOWER_OFFER_S), and the pack goes under the reserve there. A pack let to
+                # drain past it instead could reach the floor first, and a reserve during
+                # the wait after ``inspect.done`` is another case (the wait's own abort).
+                await look.wait_event("inspect.lower_offer", 180)
+                t_offer = time.monotonic()
+                assert not look.of("inspect.done") and not look.of("inspect.aborted")
                 for attempt in range(3):  # the reset is a MAVLink command: it may go unheard
                     try:
-                        await asyncio.to_thread(sim.harness.battery_set_remaining, 26.0)
+                        # Under the charter's 25 %, well over the flight controller's own
+                        # low level (BATT_LOW_MAH, 15 %): the onboard limit takes it home.
+                        await asyncio.to_thread(sim.harness.battery_set_remaining, 24.0)
                         break
                     except InfraError:
                         if attempt == 2:
                             raise
-                await look.flown("yes", limit_s=200, until=lambda: f.ex.state == S.RTL)
+                await f.until(lambda: f.ex.state == S.RTL, 20, "home on the reserve")
+                assert time.monotonic() - t_offer < LOWER_OFFER_S, "the offer's wait ran out"
                 assert f.ex.state == S.RTL, (f.ex.state, look.events[-5:])
                 await f.until(lambda: bool(look.of("inspect.aborted")), 5, "the look aborted")
                 (aborted,) = look.of("inspect.aborted")
