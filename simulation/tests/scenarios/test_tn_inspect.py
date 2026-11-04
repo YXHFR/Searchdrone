@@ -260,10 +260,7 @@ async def test_tn10_stop_fly_home_and_takeover_during_the_descent(
         assert await card_state(sc, cid) == "ready"
         assert (await sc.press("resume")).status_code == 202
 
-        async def let_go() -> bool:
-            return (await sc.onboard_state())["executor_state"] != "HELD"
-
-        await sc.until(let_go, 30, "released onboard")
+        await sc.until(sc.released_onboard, 30, "released onboard")
 
         # The pilot's takeover: LOITER at once, the look over.
         await going_down()
@@ -274,7 +271,7 @@ async def test_tn10_stop_fly_home_and_takeover_during_the_descent(
         assert (look["outcome"], look["detail"]) == ("aborted", "override"), look
         await sc.until(lambda: sc.tel.groundspeed_ms < 0.5, 10, "standing")
         assert (await sc.press("resume")).status_code == 202
-        await sc.until(let_go, 30, "released onboard")
+        await sc.until(sc.released_onboard, 30, "released onboard")
 
         # FLY HOME: SMART_RTL within its time, the look over, landed at home.
         await going_down()
