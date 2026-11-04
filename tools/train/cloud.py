@@ -24,22 +24,26 @@ What happens:
    confirmed open licence and not kept on this computer, ever leaves it. A set that may
    only be measured on (GPL, no licence, non-commercial, WiSARD) is never uploaded.
    Nothing that looks like an orthophoto is sent either (``check_no_orthophotos``).
-2. The cost is printed (GPU price per hour from ``PRICES``, times the hours) and you
-   are asked before anything is started.
+2. The cost is printed (the GPU's price per hour from ``PRICES`` plus the container's
+   CPU and memory, ``EXTRA_PER_HOUR``, times the hours) and you are asked before
+   anything is started.
 3. ``train_detector.py`` and then ``export_onnx.py`` run on the GPU (``modal_app.py``),
    with their checkpoints on the volume (``gpu_call.py``). The training saves
    ``last.pt`` every ``save_minutes`` (default 10) and after every epoch, not when it is
-   stopped. A Modal call lasts at most 24 hours, so each call is given a deadline a
-   little before (and before ``max_hours`` runs out); then the script is stopped and the
-   next call starts from the last save, until the run is done. Up to about 15 minutes of
-   training (since the last save, and the volume is committed every 5 minutes) may be
-   done again. Modal never retries a call by itself; every second of every call is
-   counted against ``max_hours``, for this run folder in all (``LEDGER``), so it is a
-   real ceiling. A stopped command (Ctrl+C, a lost line) carries on the same way when
-   run again.
+   stopped. A Modal call lasts at most 24 hours, so each call is given a time budget a
+   little shorter (and within what is left of ``max_hours``), measured in the container
+   on its own clock; then the script is stopped and the next call starts from the last
+   save, until the run is done. Up to about 15 minutes of training (since the last
+   save, and the volume is committed every 5 minutes) may be done again. ``fresh=1``
+   goes to the first call only. No retries are asked of Modal, though it may move a
+   call to another machine after a preemption; this side stops waiting, and cancels
+   the call, when its time is up, and counts every second it waited against
+   ``max_hours``, for this run folder in all (``LEDGER``), so the ceiling holds. A
+   stopped command (Ctrl+C, a lost line) carries on the same way when run again.
 4. ``best.pt`` and ``settings.json`` come back to ``<data>/train/<run>`` (never over a
-   local training's folder: ``check_local_run``) and the ONNX file
-   and its manifest to ``<data>/models/detector``, where the local training puts them, so
+   local training's folder: ``check_local_run``) and the ONNX file and its manifest to
+   ``<data>/models/detector`` (never over a model exported here: ``check_local_model``),
+   where the local training puts them, so
    ``just bench-detector``, ``just pick-detector`` and the simulator use them unchanged.
 
 The Modal token is read by Modal itself from ``~/.modal.toml`` or the environment
@@ -80,9 +84,16 @@ VOLUME = "searchdrone-train"
 REMOTE_DATA = PurePosixPath("/data")
 
 # USD per GPU hour, from modal.com/pricing, read 2026-11-04. The container's CPU and
-# memory are billed on top (a few percent of the GPU's price); the volume is not counted.
+# memory are billed on top (EXTRA_PER_HOUR); the volume is not counted.
 PRICES_SOURCE = "modal.com/pricing, läst 2026-11-04"
 PRICES: dict[str, float] = {"A100-80GB": 2.50, "H100": 3.95, "L40S": 1.95}
+# The container beside the GPU (modal_app.py asks for these), and their price from the
+# same page: USD per CPU core hour and per GiB hour.
+CPU_CORES = 8.0
+MEMORY_MIB = 32768
+CPU_CORE_HOUR = 0.0472
+GIB_HOUR = 0.0080
+EXTRA_PER_HOUR = CPU_CORES * CPU_CORE_HOUR + MEMORY_MIB / 1024 * GIB_HOUR  # about 0.63
 DEFAULT_GPU = "A100-80GB"
 # How much faster than the RTX 3070 the README's times are for: a rough guess from the
 # cards' published mixed-precision throughput, not measured on this training.
@@ -108,6 +119,9 @@ LEDGER = "train/.modal-hours-{run}.json"
 # Each call ends this long after its deadline at most: the script's own stop
 # (STOP_GRACE_S) and the last commit of the volume. Modal's timeout is set to it.
 FINISH_SLACK_S = 5 * 60
+# How long the container may take to start before its own clock (the budget, Modal's
+# timeout) begins; this side waits at most that much longer, then cancels the call.
+START_SLACK_S = 15 * 60
 # A call shorter than this is not worth starting (the container and data take minutes).
 MIN_CALL_S = 15 * 60
 # The local run folder of a run made here, with what came back from which run on the
@@ -399,9 +413,15 @@ def guess_hours(model: str, gpu: str, epochs: int, scales: int = 1, upscale: int
 @dataclass(frozen=True)
 class Cost:
     gpu: str
-    price: float  # USD per hour
+    gpu_price: float  # USD per hour, the GPU alone
+    extra: float  # USD per hour, the container's CPU and memory
     hours: float  # the guess
     max_hours: float  # the ceiling
+
+    @property
+    def price(self) -> float:
+        """USD per hour, all billed."""
+        return self.gpu_price + self.extra
 
     @property
     def usd(self) -> float:
@@ -414,9 +434,11 @@ class Cost:
     def lines(self, guessed: bool) -> list[str]:
         how = "grov gissning" if guessed else "din uppskattning (hours=)"
         return [
-            f"GPU: {self.gpu}, {self.price:.2f} $/h ({PRICES_SOURCE}).",
-            f"Ungefärlig kostnad: {self.gpu} {self.price:.2f} $/h x {self.hours:.1f} h "
-            f"= {self.usd:.0f} $ ({how}). CPU och minne tillkommer, några procent.",
+            f"Per timme: {self.gpu} {self.gpu_price:.2f} $ + processor och minne "
+            f"({CPU_CORES:g} kärnor, {MEMORY_MIB // 1024} GiB) {self.extra:.2f} $ "
+            f"= {self.price:.2f} $/h ({PRICES_SOURCE}).",
+            f"Ungefärlig kostnad: {self.price:.2f} $/h x {self.hours:.1f} h "
+            f"= {self.usd:.0f} $ ({how}).",
             f"Högst: {self.max_hours:g} h x {self.price:.2f} $/h = {self.max_usd:.0f} $ "
             "(max_hours=; sedan stannar den, och samma kommando fortsätter).",
         ]
@@ -427,7 +449,7 @@ def cost(gpu: str, hours: float, max_hours: float) -> Cost:
         raise BenchError(f"gpu= ska vara en av {', '.join(PRICES)}, inte {gpu!r}.", 2)
     if not (hours > 0 and math.isfinite(hours)) or not (max_hours > 0 and math.isfinite(max_hours)):
         raise BenchError("hours= och max_hours= ska vara positiva tal.", 2)
-    return Cost(gpu, PRICES[gpu], hours, max_hours)
+    return Cost(gpu, PRICES[gpu], EXTRA_PER_HOUR, hours, max_hours)
 
 
 # --- where things go ----------------------------------------------------------------
@@ -478,8 +500,9 @@ def places(data: Path, model: str, out: str = "", name: str = "") -> Places:
 
 def train_argv(args: Mapping[str, str], sets: Sequence[str], where: Places, init: str) -> list[str]:
     """``train_detector.py``'s arguments in the container: the keys as given, with the
-    data folder, the run folder, the sets and ``init=`` moved to the volume."""
-    moved = {"data", "out", "sets", "init", *OWN_KEYS}
+    data folder, the run folder, the sets and ``init=`` moved to the volume. ``fresh``
+    is left out: it goes to the first call only (``run_until_done``)."""
+    moved = {"data", "out", "sets", "init", "fresh", *OWN_KEYS}
     argv = [f"{k}={v}" for k, v in args.items() if k not in moved]
     argv += [
         f"data={REMOTE_DATA}",
@@ -513,12 +536,14 @@ class Backend(Protocol):
     def upload(self, uploads: Sequence[Upload]) -> None: ...
 
     def run(
-        self, train: Sequence[str], export: Sequence[str], deadline: float, timeout_s: int
+        self, train: Sequence[str], export: Sequence[str], budget_s: float, timeout_s: int
     ) -> dict[str, Any]:
-        """One call on the GPU (``gpu_call.call``), stopped at ``deadline`` (wall clock)
-        and by Modal after ``timeout_s``: ``{"status": "done" | "stopped" | "failed",
-        "code": int | None, "seconds": float}``. ``stopped``: the deadline came first;
-        the next call carries on from the last save on the volume."""
+        """One call on the GPU (``gpu_call.call``): the scripts are stopped ``budget_s``
+        after the container starts, by its own clock; Modal stops the call after
+        ``timeout_s``, and this side stops waiting and cancels it ``START_SLACK_S``
+        later. ``{"status": "done" | "stopped" | "failed", "code": int | None,
+        "seconds": float}``. ``stopped``: the time was up; the next call carries on from
+        the last save on the volume."""
         ...
 
     def fetch(self, remote: PurePosixPath, local: Path) -> None: ...
@@ -607,11 +632,12 @@ def _add_seconds(ledger: Path, seconds: float) -> None:
 
 
 def call_budget(left_s: float) -> float:
-    """How long the next call may train (to its deadline) when ``left_s`` of
-    ``max_hours`` is left: under Modal's 24 hours with a margin, and so that the call,
-    with its stop and last commit (``STOP_GRACE_S``, ``FINISH_SLACK_S``), ends within
-    ``left_s``. 0: not worth starting."""
-    budget = min(CALL_LIMIT_S - STOP_MARGIN_S, left_s) - STOP_GRACE_S - FINISH_SLACK_S
+    """How long the next call may train when ``left_s`` of ``max_hours`` is left: under
+    Modal's 24 hours with a margin, and so that the call, with its start, its stop and
+    last commit (``START_SLACK_S``, ``STOP_GRACE_S``, ``FINISH_SLACK_S``), ends within
+    ``left_s`` even by this side's clock. 0: not worth starting."""
+    room = min(CALL_LIMIT_S - STOP_MARGIN_S, left_s)
+    budget = room - STOP_GRACE_S - FINISH_SLACK_S - START_SLACK_S
     return budget if budget >= MIN_CALL_S else 0.0
 
 
@@ -621,28 +647,34 @@ def run_until_done(
     export: Sequence[str],
     max_hours: float,
     ledger: Path,
-    clock: Callable[[], float] = time.time,
+    first: Sequence[str] = (),
+    again: str = "samma kommando",
+    clock: Callable[[], float] = time.monotonic,
 ) -> float:
     """Call the GPU until the run is done, together at most ``max_hours`` for the run
-    (all calls, also earlier commands', from ``ledger``). Each call's seconds are
-    counted, the client's wall time or the container's, whichever is longer, also when
-    the call fails or is interrupted. Returns the hours used by this command."""
+    (all calls, also earlier commands', from ``ledger``). ``first`` (``fresh=1``) is
+    added to the first call's training arguments only, so the later calls carry on from
+    ``last.pt``. Each call's seconds are counted, the client's wall time or the
+    container's, whichever is longer, also when the call fails or is interrupted.
+    ``again`` is what to run to carry on. Returns the hours used by this command."""
     used_here = 0.0
+    extra = list(first)
     while True:
         spent = hours_used(ledger) * 3600
         budget = call_budget(max_hours * 3600 - spent)
         if not budget:
             raise BenchError(
                 f"max_hours={max_hours:g} är slut ({spent / 3600:.1f} h använda av den här "
-                "körningen). Kör samma kommando med större max_hours= för att fortsätta "
+                f"körningen). Kör {again} med större max_hours= för att fortsätta "
                 "från senaste sparningen.",
                 1,
             )
         timeout_s = math.ceil(budget + STOP_GRACE_S + FINISH_SLACK_S)
         started = clock()
         res: Mapping[str, Any] = {}
+        argv, extra = [*train, *extra], []
         try:
-            res = backend.run(train, export, started + budget, timeout_s)
+            res = backend.run(argv, export, budget, timeout_s)
         finally:
             seconds = max(clock() - started, float(res.get("seconds", 0.0)))
             _add_seconds(ledger, seconds)
@@ -653,7 +685,7 @@ def run_until_done(
         if status != "stopped":
             raise BenchError(
                 f"Träningen på Modal slutade med kod {res.get('code')}; se utskriften ovan. "
-                "Samma kommando fortsätter från senaste sparningen.",
+                f"Kör {again} för att fortsätta från senaste sparningen.",
                 1,
             )
         say(f"Anropet stoppades efter {seconds / 3600:.1f} h; fortsätter från senaste sparningen.")
@@ -668,13 +700,7 @@ def check_local_run(where: Places) -> None:
         raise BenchError(
             f"{folder} har en lokal träning (last.pt). Välj en annan mapp med out=.", 2
         )
-    marker = folder / MARKER
-    ours = False
-    try:
-        body = json.loads(marker.read_text(encoding="utf-8"))
-        ours = body.get("volume") == VOLUME and body.get("remote_run") == where.remote_run.name
-    except (OSError, ValueError, AttributeError):
-        ours = False
+    ours = bool(_read_marker(where))
     if not ours and any((folder / f).exists() for f in ("best.pt", "settings.json")):
         raise BenchError(
             f"{folder} har redan en träning som inte kommer från den här körningen i Modal. "
@@ -683,25 +709,73 @@ def check_local_run(where: Places) -> None:
         )
 
 
-def _write_marker(where: Places) -> None:
+def _read_marker(where: Places) -> dict[str, Any]:
+    """The run folder's ``MARKER`` when it names this run on the volume, else ``{}``."""
+    try:
+        body = json.loads((where.local_run / MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if (
+        not isinstance(body, dict)
+        or body.get("volume") != VOLUME
+        or body.get("remote_run") != where.remote_run.name
+    ):
+        return {}
+    return body
+
+
+def _write_marker(where: Places, onnx_sha256: str = "") -> None:
+    """Mark the run folder as this run's; ``onnx_sha256`` adds an ONNX file fetched for
+    it (written before that file is moved in place, so a stop between never locks the
+    next fetch out)."""
+    old = _read_marker(where)
+    shas = [s for s in old.get("onnx_sha256", []) if isinstance(s, str)]
+    if onnx_sha256 and onnx_sha256 not in shas:
+        shas.append(onnx_sha256)
+    body = {
+        "volume": VOLUME,
+        "remote_run": where.remote_run.name,
+        "name": where.name,
+        "onnx_sha256": shas,
+    }
     where.local_run.mkdir(parents=True, exist_ok=True)
-    body = {"volume": VOLUME, "remote_run": where.remote_run.name}
-    (where.local_run / MARKER).write_text(json.dumps(body) + "\n", encoding="utf-8")
+    tmp = where.local_run / f".{MARKER}.tmp"
+    tmp.write_text(json.dumps(body) + "\n", encoding="utf-8")
+    tmp.replace(where.local_run / MARKER)
 
 
-def remote_error(exc: BaseException) -> BenchError:
+def check_local_model(where: Places) -> None:
+    """Refuse to write over ``<name>.onnx`` or ``<name>.json`` in the models folder
+    unless they are what an earlier fetch of this run brought (the ONNX file's SHA-256
+    is in ``MARKER``). Checked before anything is sent and again before the fetch."""
+    onnx = where.local_models / f"{where.name}.onnx"
+    manifest = where.local_models / f"{where.name}.json"
+    if not onnx.exists() and not manifest.exists():
+        return
+    body = _read_marker(where)
+    ours = body.get("name") == where.name and (
+        not onnx.exists()
+        or hashlib.sha256(onnx.read_bytes()).hexdigest() in body.get("onnx_sha256", [])
+    )
+    if not ours:
+        raise BenchError(
+            f"{onnx.name} finns redan i {where.local_models} och kommer inte från den här "
+            "körningen i Modal. Välj ett annat namn med name=.",
+            2,
+        )
+
+
+def remote_error(exc: BaseException, again: str = "samma kommando") -> BenchError:
     """A short Swedish message for an error from Modal or the network, instead of a
-    traceback. Modal's own message is kept to its first line."""
+    traceback: only the kind of error, never its text (which may hold anything)."""
     if isinstance(exc, ImportError):
         return BenchError(
             "Modal är inte installerat här. Kör via: just train-detector-cloud ...", 2
         )
-    first = (str(exc).strip().splitlines() or [""])[0][:200]
     return BenchError(
-        f"Modal eller nätet svarade inte som väntat ({type(exc).__name__}"
-        + (f": {first}" if first else "")
-        + "). Kontrollera nätet och inloggningen (cd tools/train && uv run --no-sync modal "
-        "token new). Samma kommando fortsätter sedan där det slutade.",
+        f"Modal eller nätet svarade inte som väntat ({type(exc).__name__}). Kontrollera "
+        "nätet och inloggningen (cd tools/train && uv run --no-sync modal token info). "
+        f"Kör sedan {again} för att fortsätta där det slutade.",
         1,
     )
 
@@ -709,17 +783,28 @@ def remote_error(exc: BaseException) -> BenchError:
 def fetch_results(backend: Backend, where: Places) -> None:
     """Fetch ``best.pt``, ``settings.json``, the ONNX file and its manifest. Each file
     is written beside and then moved in place; the run folder is marked as this run's
-    first (``MARKER``) and checked again (``check_local_run``)."""
+    first (``MARKER``), after the checks again (``check_local_run``,
+    ``check_local_model``). The manifest must name ``<name>.onnx`` itself, and its
+    SHA-256 must match the file."""
     check_local_run(where)
+    check_local_model(where)
     _write_marker(where)
+    onnx = where.local_models / f"{where.name}.onnx"
     for remote, local in where.results():
         local.parent.mkdir(parents=True, exist_ok=True)
         tmp = local.with_name(f".{local.name}.part")
         backend.fetch(remote, tmp)
+        if local == onnx:
+            _write_marker(where, hashlib.sha256(tmp.read_bytes()).hexdigest())
         tmp.replace(local)
-    manifest = json.loads((where.local_models / f"{where.name}.json").read_text(encoding="utf-8"))
-    onnx = where.local_models / manifest["onnx"]
-    if hashlib.sha256(onnx.read_bytes()).hexdigest() != manifest["sha256"]:
+    try:
+        manifest = json.loads((where.local_models / f"{where.name}.json").read_text("utf-8"))
+        named, sha = manifest["onnx"], manifest["sha256"]
+    except (OSError, ValueError, KeyError, TypeError):
+        raise BenchError(f"{where.name}.json är inget giltigt manifest; kör igen.", 1) from None
+    if named != onnx.name:
+        raise BenchError(f"Manifestet pekar på {named!r}, inte {onnx.name}; kör igen.", 1)
+    if hashlib.sha256(onnx.read_bytes()).hexdigest() != sha:
         raise BenchError(f"{onnx.name} stämmer inte med manifestets SHA-256; kör igen.", 1)
 
 
@@ -776,8 +861,11 @@ def main(
                 f"COCO-vikterna saknas ({weights.name}). Kör: just detector-fetch yes=1", 2
             )
         check_local_run(where)
+        check_local_model(where)
+        fresh = flag(args, "fresh")
+        again = "samma kommando utan fresh=1" if fresh else "samma kommando"
         ledger = data / LEDGER.format(run=where.remote_run.name)
-        before = hours_used(ledger)
+        before = 0.0 if fresh else hours_used(ledger)
         uploads = plan(data, sets, model, limit, init_local, init_sha)
         say(f"Tränar {model} på {', '.join(sets)} i Modal ({len(uploads)} filer behövs).")
         for line in price.lines(guessed):
@@ -787,10 +875,17 @@ def main(
                 f"Körningen har redan använt {before:.1f} h av max_hours={max_hours:g} "
                 f"(ungefär {before * price.price:.0f} $)."
             )
+        if fresh:
+            say(
+                "fresh=1: körningen börjar om från noll i Modal, och dess timmar räknas om "
+                "från 0. Fortsätt sedan med samma kommando utan fresh=1."
+            )
         say(f"Resultatet hamnar i {where.local_run} och {where.local_models}.")
         if not confirm(flag(args, "yes")):
             say("Avbrutet; inget startades.")
             return 1
+        if fresh:
+            ledger.unlink(missing_ok=True)
         started = time.monotonic()
         try:
             client = backend(gpu)
@@ -801,14 +896,19 @@ def main(
                 export_argv(model, where),
                 max_hours,
                 ledger,
+                first=["fresh=1"] if fresh else [],
+                again=again,
             )
             fetch_results(client, where)
-        except (BenchError, KeyboardInterrupt):
+        except KeyboardInterrupt:
+            warn(f"Avbruten. Kör {again} för att fortsätta där det sparades senast.")
+            return 130
+        except BenchError:
             raise
         except Exception as exc:  # Modal's and the network's errors, in plain words
-            raise remote_error(exc) from exc
+            raise remote_error(exc, again) from exc
         say(
-            f"Klart på {used:.1f} GPU-timmar (ungefär {used * price.price:.0f} $), "
+            f"Klart på {used:.1f} timmar i Modal (ungefär {used * price.price:.0f} $), "
             f"{(time.monotonic() - started) / 3600:.1f} h i allt."
         )
         say(f"Modellen: {where.local_models / (where.name + '.json')}")

@@ -37,7 +37,23 @@ class FakeImage:
         return self
 
 
+class FakeCall:
+    def __init__(self, log: list[Any], late: bool) -> None:
+        self.log, self.late = log, late
+
+    def get(self, timeout: float) -> dict[str, Any]:
+        self.log.append(("get", timeout))
+        if self.late:
+            raise TimeoutError
+        return {"status": "done", "code": 0, "seconds": 1.0}
+
+    def cancel(self, terminate_containers: bool = False) -> None:
+        self.log.append(("cancel", terminate_containers))
+
+
 class FakeFunction:
+    late = False
+
     def __init__(self, fn: Any, kw: dict[str, Any], log: list[Any]) -> None:
         self.fn, self.kw, self.log = fn, kw, log
 
@@ -45,9 +61,9 @@ class FakeFunction:
         self.log.append(("options", kw))
         return self
 
-    def remote(self, *args: Any) -> dict[str, Any]:
-        self.log.append(("remote", args))
-        return {"status": "done", "code": 0, "seconds": 1.0}
+    def spawn(self, *args: Any) -> FakeCall:
+        self.log.append(("spawn", args))
+        return FakeCall(self.log, self.late)
 
 
 def fake_modal(local: bool) -> tuple[types.ModuleType, list[Any]]:
@@ -112,6 +128,7 @@ def test_it_imports_in_the_container_at_root(monkeypatch: pytest.MonkeyPatch) ->
     function = next(kw for kind, kw in log if kind == "function")
     assert "retries" not in function
     assert function["timeout"] == cloud.CALL_LIMIT_S
+    assert (function["cpu"], function["memory"]) == (cloud.CPU_CORES, cloud.MEMORY_MIB)
 
 
 def test_here_the_image_gets_only_the_listed_files(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -130,9 +147,19 @@ def test_here_the_image_gets_only_the_listed_files(monkeypatch: pytest.MonkeyPat
         assert not name.endswith((".pt", ".pth", ".onnx"))
 
 
-def test_a_call_uses_the_gpu_timeout_and_deadline_given(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_call_uses_the_gpu_timeout_and_budget_given(monkeypatch: pytest.MonkeyPatch) -> None:
     app, _mod, log = load(monkeypatch, local=True, at=str(SOURCE))
     res = app.ModalBackend("H100").run(["a=1"], ["b=2"], 1234.5, 3600)
     assert res["status"] == "done"
     assert ("options", {"gpu": "H100", "timeout": 3600}) in log
-    assert ("remote", (["a=1"], ["b=2"], 1234.5)) in log
+    assert ("spawn", (["a=1"], ["b=2"], 1234.5)) in log
+    assert ("get", 3600 + cloud.START_SLACK_S) in log
+    assert not any(kind == "cancel" for kind, _ in log)
+
+
+def test_a_call_that_runs_over_is_cancelled(monkeypatch: pytest.MonkeyPatch) -> None:
+    app, _mod, log = load(monkeypatch, local=True, at=str(SOURCE))
+    monkeypatch.setattr(app.train_on_gpu, "late", True)
+    res = app.ModalBackend("H100").run(["a=1"], ["b=2"], 10.0, 60)
+    assert res["status"] == "stopped"
+    assert ("cancel", True) in log

@@ -161,14 +161,12 @@ Modals anslutning (gRPC) går inte igenom den sessionens proxy.
    cd tools/train && uv run --no-sync modal token new; cd ../..
    ```
 
-   Har du redan en nyckel (modal.com, Settings, API Tokens) går det också så här.
-   Den sparas i `~/.modal.toml` i din hemmapp:
+   Nyckeln sparas i `~/.modal.toml` i din hemmapp.
 
-   ```bash
-   cd tools/train && uv run --no-sync modal token set --token-id ak-... --token-secret as-...; cd ../..
-   ```
-
-   Vill du inte spara den på disken kan du i stället sätta den bara för terminalen du är i:
+   Har du redan en nyckel (modal.com, Settings, API Tokens), eller vill du inte spara
+   den på disken, kan du i stället sätta den bara för terminalen du är i. Den frågar
+   efter nyckeln utan att visa den, så den hamnar inte i kommandohistoriken. Skriv den
+   aldrig direkt på kommandoraden:
 
    ```bash
    read -rp "Token id: " MODAL_TOKEN_ID; read -rsp "Token secret: " MODAL_TOKEN_SECRET; echo
@@ -183,8 +181,8 @@ Modals anslutning (gRPC) går inte igenom den sessionens proxy.
    cd tools/train && uv run --no-sync modal token info && uv run --no-sync modal app list; cd ../..
    ```
 
-5. Prova med en liten körning först. Den kostar högst ungefär 2,50 $ (`max_hours=1`
-   på A100-80GB, plus några procent för processor och minne) och visar att hela vägen
+5. Prova med en liten körning först. Den kostar högst ungefär 3,15 $ (`max_hours=1`
+   på A100-80GB, med processor och minne) och visar att hela vägen
    fungerar, ända till ONNX-filen hemma. Egen mapp och eget namn, så att den inte rör
    en riktig modell:
 
@@ -204,8 +202,8 @@ just train-detector-cloud gpu=A100-80GB model=yolox_s
 
 Det här händer:
 
-1. Den skriver ut vad det ungefär kostar: vad grafikkortet kostar per timme gånger
-   timmarna, och det högsta det kan kosta (`max_hours=`, 24 timmar om du inte anger
+1. Den skriver ut vad det ungefär kostar: vad grafikkortet, processorn och minnet
+   kostar per timme gånger timmarna, och det högsta det kan kosta (`max_hours=`, 24 timmar om du inte anger
    något). Sedan frågar den om du vill starta. Skriv `ja`. Med `yes=1` frågar den inte.
 2. Den laddar upp bilderna till en privat lagringsplats hos Modal (en *volym* som heter
    `searchdrone-train`). Bara det som träningen läser skickas: `train`- och
@@ -215,36 +213,41 @@ Det här händer:
 3. Träningen körs, med samma utskrifter som hemma. Den sparar var tionde minut och
    efter varje epok. Ett anrop hos Modal får vara högst 24 timmar, så den stoppas lite
    före och startar om från senaste sparningen, tills den är klar. Det som tränats
-   sedan senaste sparningen görs om, högst ungefär en kvart. Modal försöker aldrig
-   igen på egen hand; varje sekund räknas mot `max_hours=`.
+   sedan senaste sparningen görs om, högst ungefär en kvart. Den ber inte Modal att
+   försöka igen. Flyttar Modal ändå anropet till en annan dator slutar den vänta när
+   tiden är slut och stoppar anropet; varje sekund räknas mot `max_hours=`.
 4. Den gör ONNX-filen och hämtar hem `best.pt`, `person_yolox_s.onnx` och
    `person_yolox_s.json` till samma ställen som `just train-detector` och
-   `just export-detector` använder. Den skriver aldrig över en träning du gjort på
-   din egen dator: finns `last.pt`, eller en `best.pt` som inte kommer från Modal, i
-   mappen stannar den innan något laddas upp. Välj då en annan mapp med `out=`. Sedan går du vidare med steg 6 ovan
-   (`just bench-detector`, `just pick-detector`) precis som vanligt.
+   `just export-detector` använder. Den skriver aldrig över något du gjort på din egen
+   dator: finns `last.pt`, eller en `best.pt` som inte kommer från Modal, i mappen,
+   eller en ONNX-fil med samma namn som du exporterat själv, stannar den innan något
+   laddas upp. Välj då en annan mapp med `out=` eller ett annat namn med `name=`.
+   Sedan går du vidare med steg 6 ovan (`just bench-detector`, `just pick-detector`)
+   precis som vanligt.
 
 Avbryter du med Ctrl+C, eller tappar nätet, stannar grafikkortet och du slutar betala.
 Den sparar inte just då. Kör samma kommando igen så fortsätter den från senaste
-sparningen (var tionde minut och efter varje epok). Går något fel hos Modal eller med
+sparningen (var tionde minut och efter varje epok). Hade du med `fresh=1` (börja om
+från noll), ta bort det när du kör igen: annars börjar den om igen. Går något fel hos Modal eller med
 nätet skriver den vad, på svenska, och vad du kan göra.
 
 **Vad det kostar**
 
-Priser från modal.com/pricing, lästa 2026-11-04:
+Priser från modal.com/pricing, lästa 2026-11-04. Utöver grafikkortet betalar du för
+processorn och minnet bredvid det (8 kärnor och 32 GiB), ungefär 0,63 $ i timmen:
 
-| `gpu=` | Kostar per timme | Ungefär för `yolox_s`, 20 epoker |
-|---|---|---|
-| `A100-80GB` (standard) | 2,50 $ | 1 timme, ungefär 2,50 $ |
-| `H100` | 3,95 $ | 40 minuter, ungefär 2,60 $ |
-| `L40S` | 1,95 $ | 1,2 timmar, ungefär 2,30 $ |
+| `gpu=` | Grafikkortet | Allt per timme | Ungefär för `yolox_s`, 20 epoker |
+|---|---|---|---|
+| `A100-80GB` (standard) | 2,50 $ | 3,13 $ | 1 timme, ungefär 3,15 $ |
+| `H100` | 3,95 $ | 4,58 $ | 40 minuter, ungefär 3,05 $ |
+| `L40S` | 1,95 $ | 2,58 $ | 1,2 timmar, ungefär 3,10 $ |
 
 Timmarna är en grov gissning, inte uppmätta. Fler epoker, fler `scales=` och
 `upscale=` gör det längre. Vet du bättre, ange `hours=` så räknar den med det.
 `max_hours=` är taket för hela körningen, alla anrop och alla gånger du kört
 kommandot för samma mapp tillsammans: när de timmarna är slut stannar den, och samma
 kommando med ett större `max_hours=` fortsätter. Den visar hur mycket som redan är
-använt innan den frågar. Processor och minne kostar några procent till.
+använt innan den frågar. `fresh=1` börjar om och räknar timmarna från 0.
 Lagringen i volymen kostar lite eller inget; se modal.com/pricing.
 
 **Vad som aldrig laddas upp**

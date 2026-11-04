@@ -10,7 +10,6 @@ import importlib
 import json
 import os
 import sys
-import time
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -64,7 +63,9 @@ class FakeModal:
         self.volume: dict[str, bytes] = {}
         self.sent: list[list[str]] = []
         self.calls: list[tuple[list[str], list[str], float, int]] = []
+        self.resumed: list[bool] = []  # per call: carried on from last.pt
         self.runs = runs or ["done"]
+        self.manifest_onnx = ""  # what the manifest names ("": <name>.onnx)
 
     def remote_sizes(self) -> dict[str, int]:
         return {k: len(v) for k, v in self.volume.items()}
@@ -74,11 +75,17 @@ class FakeModal:
         for u in uploads:
             self.volume[u.remote.as_posix()] = u.local.read_bytes()
 
-    def run(self, train: Any, export: Any, deadline: float, timeout_s: int) -> dict[str, Any]:
-        self.calls.append((list(train), list(export), deadline, timeout_s))
+    def run(self, train: Any, export: Any, budget_s: float, timeout_s: int) -> dict[str, Any]:
+        self.calls.append((list(train), list(export), budget_s, timeout_s))
         status = self.runs[len(self.calls) - 1]
         if status == "lost":
-            raise ConnectionError("the line went down\nmore lines")
+            raise ConnectionError("secret-looking text\nmore lines")
+        targs = dict(a.split("=", 1) for a in train)
+        if "out" in targs:
+            last = f"{PurePosixPath(targs['out']).relative_to(cloud.REMOTE_DATA)}/last.pt"
+            # as train_detector.py: fresh=1 starts over, otherwise last.pt is carried on from
+            self.resumed.append(last in self.volume and targs.get("fresh") != "1")
+            self.volume[last] = b"state"
         if status == "done":
             args = dict(a.split("=", 1) for a in export)
             run = PurePosixPath(args["train"]).relative_to(cloud.REMOTE_DATA)
@@ -87,7 +94,8 @@ class FakeModal:
             self.volume[f"{run}/best.pt"] = b"best"
             self.volume[f"{run}/settings.json"] = b"{}"
             self.volume[f"{models}/{args['name']}.onnx"] = onnx
-            manifest = {"onnx": f"{args['name']}.onnx", "sha256": hashlib.sha256(onnx).hexdigest()}
+            named = self.manifest_onnx or f"{args['name']}.onnx"
+            manifest = {"onnx": named, "sha256": hashlib.sha256(onnx).hexdigest()}
             self.volume[f"{models}/{args['name']}.json"] = json.dumps(manifest).encode()
         return {"status": status, "code": 0, "seconds": 3600.0}
 
@@ -287,11 +295,15 @@ def test_chunks_split_by_count_and_size(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_the_cost_is_gpu_price_times_hours_with_its_source() -> None:
     c = cloud.cost("A100-80GB", 4.0, 24.0)
-    assert c.usd == pytest.approx(10.0) and c.max_usd == pytest.approx(60.0)
+    assert pytest.approx(0.63, abs=0.01) == cloud.EXTRA_PER_HOUR  # 8 cores, 32 GiB
+    assert c.price == pytest.approx(2.50 + cloud.EXTRA_PER_HOUR)
+    assert c.usd == pytest.approx(4 * c.price) and c.max_usd == pytest.approx(24 * c.price)
     text = "\n".join(c.lines(guessed=True))
-    assert "A100-80GB 2.50 $/h x 4.0 h = 10 $" in text
-    assert "modal.com/pricing, läst 2026-11-04" in text
-    assert cloud.cost("H100", 2.0, 1.0).usd == pytest.approx(3.95)  # capped at max_hours
+    assert "A100-80GB 2.50 $ + processor och minne (8 kärnor, 32 GiB) 0.63 $ = 3.13 $/h" in text
+    assert "3.13 $/h x 4.0 h = 13 $" in text and "Högst: 24 h x 3.13 $/h = 75 $" in text
+    assert "modal.com/pricing, läst 2026-11-04" in text and "procent" not in text
+    h100 = cloud.cost("H100", 2.0, 1.0)
+    assert h100.usd == pytest.approx(3.95 + cloud.EXTRA_PER_HOUR)  # capped at max_hours
     assert cloud.PRICES == {"A100-80GB": 2.50, "H100": 3.95, "L40S": 1.95}
     with pytest.raises(BenchError, match="gpu="):
         cloud.cost("T4", 1.0, 1.0)
@@ -429,18 +441,19 @@ def test_the_command_uploads_trains_until_done_and_brings_the_model_home(
     )
     out = capsys.readouterr().out
     assert code == 0, out
-    assert "H100 3.95 $/h x 2.0 h = 8 $" in out
+    assert "4.58 $/h x 2.0 h = 9 $" in out
     assert "wisard laddas inte upp" in out
     sent = [p for batch in fake.sent for p in batch]
     assert not any("wisard" in p or "CCC" in p for p in sent)
     assert len(fake.calls) == 2
-    train, _export, deadline, timeout_s = fake.calls[0]
+    train, _export, budget, timeout_s = fake.calls[0]
     assert "sets=heridal" in train and "epochs=3" in train and f"data={bank}" not in train
-    assert not any(a.startswith(("gpu=", "yes=", "hours=")) for a in train)
-    # Modal's timeout under its 24 hours; the deadline leaves room for the stop and commit
-    assert timeout_s == cloud.CALL_LIMIT_S - cloud.STOP_MARGIN_S
-    slack = cloud.STOP_GRACE_S + cloud.FINISH_SLACK_S
-    assert deadline == pytest.approx(time.time() + timeout_s - slack, abs=60)
+    assert not any(a.startswith(("gpu=", "yes=", "hours=", "fresh=")) for a in train)
+    # a duration, not a time of day: the container measures it on its own clock. The
+    # call (with its start, stop and last commit) stays under Modal's 24 hours.
+    assert budget == timeout_s - cloud.STOP_GRACE_S - cloud.FINISH_SLACK_S
+    assert timeout_s + cloud.START_SLACK_S == cloud.CALL_LIMIT_S - cloud.STOP_MARGIN_S
+    assert fake.resumed == [False, True]
     run = bank / "train" / "yolox_s"
     assert (run / "best.pt").read_bytes() == b"best"
     assert json.loads((run / cloud.MARKER).read_text())["volume"] == cloud.VOLUME
@@ -480,8 +493,9 @@ def test_max_hours_is_a_ceiling_for_the_run_over_all_commands(bank: Path) -> Non
     args = [f"data={bank}", "model=yolox_s", "yes=1", "max_hours=2"]
     assert cloud.main(args, backend=lambda gpu: fake) == 1
     assert len(fake.calls) == 2  # 1 h each (FakeModal), then too little is left
-    assert fake.calls[0][3] == 2 * 3600  # the first call can never run past max_hours
-    assert fake.calls[1][3] == 3600
+    # this side waits at most timeout + START_SLACK_S: never past max_hours
+    assert fake.calls[0][3] + cloud.START_SLACK_S == 2 * 3600
+    assert fake.calls[1][3] + cloud.START_SLACK_S == 3600
     assert cloud.main(args, backend=lambda gpu: fake) == 1  # the same command: nothing left
     assert len(fake.calls) == 2
     assert cloud.main([*args[:-1], "max_hours=3"], backend=lambda gpu: fake) == 1
@@ -509,7 +523,8 @@ def test_a_call_budget_is_never_more_than_what_is_left() -> None:
     for left in (0, 600, 3600, 10 * 3600, 30 * 3600):
         budget = cloud.call_budget(left)
         if budget:
-            assert budget + cloud.STOP_GRACE_S + cloud.FINISH_SLACK_S <= left
+            slack = cloud.STOP_GRACE_S + cloud.FINISH_SLACK_S + cloud.START_SLACK_S
+            assert budget + slack <= left
             assert budget <= cloud.CALL_LIMIT_S - cloud.STOP_MARGIN_S
     assert cloud.call_budget(600) == 0
 
@@ -520,8 +535,8 @@ def test_a_lost_line_gives_a_plain_message_not_a_traceback(
     fake = FakeModal(runs=["lost"])
     assert cloud.main([f"data={bank}", "model=yolox_s", "yes=1"], backend=lambda gpu: fake) == 1
     err = capsys.readouterr().err
-    assert "ConnectionError: the line went down" in err and "more lines" not in err
-    assert "modal token new" in err and "Traceback" not in err
+    assert "(ConnectionError)" in err and "secret-looking" not in err
+    assert "modal token info" in err and "Traceback" not in err
 
     def no_modal(gpu: str) -> cloud.Backend:
         raise ModuleNotFoundError("No module named 'modal'")
@@ -575,3 +590,57 @@ def test_a_failed_run_says_so_and_fetches_nothing(bank: Path) -> None:
     fake = FakeModal(runs=["failed"])
     assert cloud.main([f"data={bank}", "model=yolox_s", "yes=1"], backend=lambda gpu: fake) == 1
     assert not (bank / "models" / "detector").exists()
+
+
+def test_fresh_goes_to_the_first_call_only_and_resets_the_hours(bank: Path) -> None:
+    remote = cloud.places(bank, "yolox_s").remote_run.name
+    ledger = bank / cloud.LEDGER.format(run=remote)
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text('{"seconds": 36000}')  # 10 h of an earlier run in this folder
+    fake = FakeModal(runs=["stopped", "stopped", "done"])
+    fake.volume[f"train/{remote}/last.pt"] = b"old run"
+    args = [f"data={bank}", "model=yolox_s", "yes=1", "fresh=1", "max_hours=12"]
+    assert cloud.main(args, backend=lambda gpu: fake) == 0
+    assert ["fresh=1" in train for train, *_ in fake.calls] == [True, False, False]
+    assert fake.resumed == [False, True, True]  # starts over once, then carries on
+    assert cloud.hours_used(ledger) == pytest.approx(3.0)  # counted from 0 again
+
+
+def test_the_message_after_a_stop_says_to_leave_fresh_out(
+    bank: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeModal(runs=["lost"])
+    args = [f"data={bank}", "model=yolox_s", "yes=1", "fresh=1"]
+    assert cloud.main(args, backend=lambda gpu: fake) == 1
+    assert "samma kommando utan fresh=1" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("found", ["person_yolox_s.onnx", "person_yolox_s.json"])
+def test_a_model_exported_here_is_never_written_over(bank: Path, found: str) -> None:
+    models = bank / "models" / "detector"
+    models.mkdir(parents=True)
+    (models / found).write_bytes(b"local export")
+    fake = FakeModal()
+    assert cloud.main([f"data={bank}", "model=yolox_s", "yes=1"], backend=lambda gpu: fake) == 2
+    assert fake.sent == [] and fake.calls == []
+    assert (models / found).read_bytes() == b"local export"
+    args = [f"data={bank}", "model=yolox_s", "yes=1", "name=person_cloud"]
+    assert cloud.main(args, backend=lambda gpu: fake) == 0  # another name is fine
+
+
+def test_the_same_cloud_model_may_come_back_but_not_over_a_new_local_export(bank: Path) -> None:
+    args = [f"data={bank}", "model=yolox_s", "yes=1"]
+    assert cloud.main(args, backend=lambda gpu: FakeModal()) == 0
+    assert cloud.main(args, backend=lambda gpu: FakeModal()) == 0  # its own ONNX file
+    onnx = bank / "models" / "detector" / "person_yolox_s.onnx"
+    onnx.write_bytes(b"exported here meanwhile")
+    assert cloud.main(args, backend=lambda gpu: FakeModal()) == 2
+    assert onnx.read_bytes() == b"exported here meanwhile"
+
+
+@pytest.mark.parametrize("named", ["../person_yolox_s.onnx", "sub/person_yolox_s.onnx", "x.onnx"])
+def test_the_manifest_must_name_the_onnx_file_itself(bank: Path, named: str) -> None:
+    fake = FakeModal()
+    fake.manifest_onnx = named
+    assert cloud.main([f"data={bank}", "model=yolox_s", "yes=1"], backend=lambda gpu: fake) == 1
+    assert not (bank / "models" / named).exists()

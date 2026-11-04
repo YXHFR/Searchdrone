@@ -8,8 +8,10 @@ so the GPU runs the same ``train_detector.py`` and ``export_onnx.py`` as this co
 The volume ``cloud.VOLUME`` is mounted as the data folder (``/data``); the runs, their
 checkpoints and tile caches live there, and it is committed every few minutes.
 
-No Modal retries: a call that is lost ends the command, and the same command carries on
-from the last save, so every GPU second is counted by the client against ``max_hours``.
+No retries are asked of Modal: a call that fails ends the command, and the same command
+carries on from the last save. Modal may still move a call to another machine after a
+preemption; the client waits at most the call's timeout plus ``cloud.START_SLACK_S``,
+then cancels it, and counts all of that against ``max_hours``, so the ceiling holds.
 
 This module is imported both here and in the container, where Modal places it at
 ``/root/modal_app.py``: nothing at import time may depend on where it lies. Needs
@@ -30,9 +32,12 @@ from typing import Any
 import modal
 from cloud import (
     CALL_LIMIT_S,
+    CPU_CORES,
     DEFAULT_GPU,
     IN_CONTAINER,
+    MEMORY_MIB,
     REMOTE_DATA,
+    START_SLACK_S,
     VOLUME,
     Upload,
     image_files,
@@ -83,10 +88,10 @@ image = build_image(HERE)
     gpu=DEFAULT_GPU,
     volumes={str(REMOTE_DATA): volume},
     timeout=CALL_LIMIT_S,
-    cpu=8.0,
-    memory=32768,
+    cpu=CPU_CORES,
+    memory=MEMORY_MIB,
 )
-def train_on_gpu(train: list[str], export: list[str], deadline: float) -> dict[str, Any]:
+def train_on_gpu(train: list[str], export: list[str], budget_s: float) -> dict[str, Any]:
     started = time.monotonic()
     stop = threading.Event()
 
@@ -100,7 +105,7 @@ def train_on_gpu(train: list[str], export: list[str], deadline: float) -> dict[s
     keeper = threading.Thread(target=commit_now_and_then, daemon=True)
     keeper.start()
     try:
-        result = call(train, export, deadline, IN_CONTAINER / "tools" / "train")
+        result = call(train, export, budget_s, IN_CONTAINER / "tools" / "train")
     finally:
         stop.set()
         volume.commit()
@@ -125,11 +130,16 @@ class ModalBackend:
                 batch.put_file(u.local, "/" + u.remote.as_posix())
 
     def run(
-        self, train: Sequence[str], export: Sequence[str], deadline: float, timeout_s: int
+        self, train: Sequence[str], export: Sequence[str], budget_s: float, timeout_s: int
     ) -> dict[str, Any]:
         with modal.enable_output(), app.run():
             fn = train_on_gpu.with_options(gpu=self.gpu, timeout=timeout_s)
-            return fn.remote(list(train), list(export), deadline)
+            handle = fn.spawn(list(train), list(export), budget_s)
+            try:
+                return handle.get(timeout=timeout_s + START_SLACK_S)
+            except TimeoutError:  # e.g. moved after a preemption: the ceiling holds
+                handle.cancel(terminate_containers=True)
+                return {"status": "stopped", "code": None, "seconds": 0.0}
 
     def fetch(self, remote: PurePosixPath, local: Path) -> None:
         with local.open("wb") as fh:
