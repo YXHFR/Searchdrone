@@ -45,6 +45,9 @@ env:
   # The closer look's scenarios (TN01-TN16 and TN19, three fixed seeds each) in shards
   # of their own.
   INSPECT_SHARDS: "6"
+  # Two sims per runner: TN11 and TN12 lost the flight controller or SD-link with three
+  # or more at once, and those failures are not rerun as infrastructure faults.
+  INSPECT_WORKERS: "2"
   GITLEAKS_VERSION: "8.30.1"
   GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 
@@ -271,7 +274,7 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: |
           just ci-sitl physics=builtin brain=scripted mode=inspect "shard=$SHARD" \
-            "shards=$INSPECT_SHARDS" "workers=$WORKERS"
+            "shards=$INSPECT_SHARDS" "workers=$INSPECT_WORKERS"
       - *summary
       - *scan
       - *results
