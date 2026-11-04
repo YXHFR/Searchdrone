@@ -56,8 +56,8 @@ working when the main loop, the database, the AI or the onboard computer hang:
   AI); not during a flight home. `GET /api/v1/vehicles/{id}/actions/{action_id}` shows
   the result.
 - The **companion watchdog**: no heartbeat from the onboard computer for 3 s in GUIDED
-  gives STOP's steps, for 20 s FLY HOME's; never while the pilot's STOP or FLY HOME
-  stands or the pilot steers by hand. The **battery guard** flies home at the mission's
+  or AUTO gives STOP's steps, and the drone hovers; it never flies home on its own. Never
+  while the pilot's STOP or FLY HOME stands or the pilot steers by hand. The **battery guard** flies home at the mission's
   level, also after a STOP (but not against a STOP pressed during its own flight home).
   It also flies home when the wind check's `ENERGY_HOME` says the battery will not last
   the way home, but only with `BATT_CAPACITY` and `BATT_LOW_MAH` read from the flight

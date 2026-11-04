@@ -728,7 +728,7 @@ async def test_orbit_flies_the_ring_and_hovers() -> None:
         )
         assert r.ex.state == S.TRANSIT, r.up.acks[-2:]
         items = r.fc.missions[MISSION]
-        assert len(items) == 4 + 25  # home, speed, 24 corners and back, loiter, RTL
+        assert len(items) == 3 + 25  # home, speed, 24 corners and back, the hover at the end
         await r.until(lambda: r.fc.mission_current >= 3, 60)
         start = len(r.fc.track)
         await r.until(lambda: "done" in r.up.stages(cmd.command_id), 400)

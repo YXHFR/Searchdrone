@@ -1,8 +1,10 @@
 """``survey_sector``: search a polygon in a lawnmower pattern as an AUTO mission.
 
-The mission is home, speed, the search points, a 30 s loiter at the last point and
-return-to-launch, so it ends safely even if the onboard computer dies. When the last
-search point is reached the executor switches to LOITER (HOLD). ``resume`` flies a new
+The mission is home, speed, the search points and a hover without end at the last point
+(``sd_mav.mission.survey_mission``): it never flies home by itself, so if the onboard
+computer stops steering the drone hovers there until someone decides (the ground raises
+MISSION_FALLBACK). When the last search point is reached the executor switches to
+LOITER (HOLD). ``resume`` flies a new
 mission from the point where the search was interrupted.
 
 Every mission goes around the keep-out cylinders in force when it is planned
@@ -24,7 +26,7 @@ from typing import Any, ClassVar, Final
 from shapely import Polygon as ShapelyPolygon
 
 from sd_geo import PatternError, lawnmower
-from sd_mav.mission import last_nav_seq, survey_mission
+from sd_mav.mission import SURVEY_EXTRA_ITEMS, last_nav_seq, survey_mission
 from sd_mav.modes import CopterMode
 from sd_onboard.skills import register_handler
 from sd_onboard.skills._common import STOP_WAIT_S, still
@@ -167,7 +169,7 @@ class SurveyRun:
 
     def plan(self, ctx: PlanContext) -> SkillPlan:
         self.around_keepouts(ctx)
-        if len(self.flown_points) + 4 > MISSION_MAX_ITEMS:
+        if len(self.flown_points) + SURVEY_EXTRA_ITEMS > MISSION_MAX_ITEMS:
             raise PlanError("ONB_SURVEY_TOO_LARGE", f"{len(self.flown_points)} punkter")
         here = ctx.here()
         alt = ctx.alt_amsl(self.alt_m)
@@ -210,7 +212,7 @@ class SurveyRun:
                     len(self.waypoints) - 1, next_index(seq, self.base_index, self.seq_offset)
                 )
                 if seq > last:
-                    break  # already past the last search point (on the loiter item)
+                    break  # already past the last search point (on the hover at the end)
             reached = await io.wait_message(
                 lambda m: m.get_type() == "MISSION_ITEM_REACHED" and int(m.seq) >= last, TICK_S
             )

@@ -318,13 +318,16 @@ def test_mission_item_allowlist() -> None:
     assert not sends(mission_item(1, 178, 2, 1, 0.0, -1), c)
     assert not sends(mission_item(1, 178, 2, 0, 5.0, -1), c)
     assert not sends(mission_item(1, 178, 2, 1, 5.0, 40), c)
-    assert sends(mission_item(5, 19, 3, 30, lat=lat, lon=lon, z=40), c)
-    assert not sends(mission_item(5, 19, 3, 30, lat=lat, lon=lon, z=121), c)
-    assert not sends(mission_item(5, 19, 3, 30, lat=-35.0, lon=149.0, z=40), c)
-    assert sends(mission_item(6, 20, 2), c)
-    assert not sends(mission_item(6, 20, 2, 1), c)
-    assert not sends(mission_item(0, 20, 2), c)
-    for cmd in (21, 22, 31, 177, 179, 181, 183, 185, 207, 208, 209, 218, 5001, 5003):
+    # The end: a hover at the last point with no end. No timed hover, no return home.
+    assert sends(mission_item(5, 17, 3, lat=lat, lon=lon, z=40), c)
+    assert not sends(mission_item(5, 17, 3, lat=lat, lon=lon, z=121), c)
+    assert not sends(mission_item(5, 17, 3, lat=-35.0, lon=149.0, z=40), c)
+    assert not sends(mission_item(5, 17, 3, 0, 0, 5, lat=lat, lon=lon, z=40), c)  # a radius
+    assert not sends(mission_item(5, 17, 0, lat=lat, lon=lon, z=40), c)  # absolute height
+    assert not sends(mission_item(0, 17, 0, lat=lat, lon=lon, z=584.0), c)  # the home slot
+    assert not sends(mission_item(5, 19, 3, 30, lat=lat, lon=lon, z=40), c)
+    assert not sends(mission_item(6, 20, 2), c)
+    for cmd in (19, 20, 21, 22, 31, 177, 179, 181, 183, 185, 207, 208, 209, 218, 5001, 5003):
         assert not sends(mission_item(3, cmd, 3, 1, lat=lat, lon=lon, z=40), c), cmd
     assert not sends(_wp(2, lat, lon, 40), ctx(origin="startup"))
     assert not sends(_wp(2, lat, lon, 40), ctx(Profile.GROUND, "ground"))

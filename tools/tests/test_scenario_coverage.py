@@ -14,7 +14,7 @@ SCENARIOS = [f"SC{n:02d}" for n in range(20)]
 ELSEWHERE = {
     "SC10": ["test_ground_kill_gcs_failsafe", "test_hung_ground_station_lets_the_gcs_failsafe_act"],
     "SC15": ["test_stop_bypasses_onboard", "test_home_bypasses_onboard"],
-    "SC17": ["test_onboard_kill_in_guided", "test_watchdog_respects_stop"],
+    "SC17": ["test_onboard_kill_in_guided_hovers", "test_watchdog_respects_stop"],
 }
 NAME = re.compile(r"^test_((?:sc\d{2}_?)+)")
 

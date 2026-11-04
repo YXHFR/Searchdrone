@@ -44,6 +44,8 @@ __all__ = [
     "Latches",
 ]
 
+# "watchdog_rtl" is no longer set by anyone (the watchdog only stops); an old one still
+# counts as a FLY HOME latch (``sd_schemas.mission.LatchAction``).
 HOME_LATCHES: Final = frozenset({"return_home", "watchdog_rtl"})
 # set_by of a latch taken over from the onboard Hello (the ground's own system latches,
 # battery and watchdog, use "system:ground").

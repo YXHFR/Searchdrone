@@ -111,6 +111,16 @@ async def until_state(sc: Scenario, want: str, within_s: float) -> None:
         await asyncio.sleep(0.25)
 
 
+async def until_text(sc: Scenario, needle: str, since: float, within_s: float) -> None:
+    """A flight controller text: it and the mode change reach the harness separately, so
+    the mode can be seen first. The failure lists the last texts, in s after ``since``."""
+    deadline = time.monotonic() + within_s
+    while not fc_texts(sc, needle, since):
+        texts = [(round(t - since, 2), x) for t, x in sc.sim.harness.state.texts[-10:]]
+        assert time.monotonic() < deadline, f"no {needle!r}: {texts}"
+        await asyncio.sleep(0.05)
+
+
 # --- GPS lost -----------------------------------------------------------------------------
 
 
@@ -118,11 +128,15 @@ async def until_state(sc: Scenario, want: str, within_s: float) -> None:
 async def test_gp1_gps_lost(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
     async with scenario(sim, migrated_db, tmp_path) as sc:
         await out_to_p1(sc)
+        # The texts count from before the PARAM_SET: set_sim_param waits for the value to
+        # read back, and the harness records the flight controller's texts during that
+        # wait, so a text can be stamped before the call returns.
+        sent = time.monotonic()
         await gps(sc, on=False)
         off = time.monotonic()
         try:
             await sc.until(lambda: sc.fc_mode() in HOME_MODES, DR_RTL_BY_S, "dead reckoning RTL")
-            assert fc_texts(sc, "Dead Reckoning started", off), sim.harness.state.texts[-10:]
+            await until_text(sc, "Dead Reckoning started", sent, 3.0)
             await until_state(sc, "FAILSAFE", 5.0)
             await asyncio.sleep(3.1)  # the ground's gate sees the new snapshot
             lat, lon = pin("P1")
