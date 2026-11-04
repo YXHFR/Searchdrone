@@ -17,7 +17,7 @@ from gate_fixtures import CHARTER, IMPLEMENTED, PLANE, goto, onboard_ctx, point,
 from test_keepout import cylinder
 
 from sd_safety import evaluate, keepout
-from sd_safety.constants import KEEPOUT_PASS_MAX_S
+from sd_safety.constants import KEEPOUT_PASS_GAP_S, KEEPOUT_PASS_MAX_S
 from sd_safety.keepout import (
     KEEPOUT_ARC_MARGIN_M,
     UNCONFIRMED_SOURCES,
@@ -121,15 +121,64 @@ def test_a_lawnmower_turn_just_outside_the_edge_is_no_passage() -> None:
     assert all(x <= PASS.max_chord_m for x in chords)  # the old per-leg check let it pass
     assert not passes(route, c, r, PASS)
     assert xy_route_violation(route, [], [(c, r)], PASS) == 0
-    # Planned again, the two turns move out to the margin (follow-up to #202): the leg
-    # between them now stays outside, so the rows are two passes, each in time, and no
-    # turn is within the margin.
+    # The two turns moved out to the margin keep the leg between them outside, but only
+    # for 33 m (under 5 s at 7 m/s, less than KEEPOUT_PASS_GAP_S): the two rows are still
+    # one pass, 155 m over the person, and planned again the route goes around it (owner
+    # decision 2026-11-04).
+    pushed: list[Xy] = [(-200, 0), (4.01, -1.5), (4.01, 31.5), (-200, 30)]
+    assert all(math.dist(p, c) >= r + KEEPOUT_ARC_MARGIN_M for p in pushed[1:3])
+    assert chord_m(pushed[1], pushed[2], c, r) == 0.0
+    assert not passes(pushed, c, r, PASS)
     out = reroute(route, [], area=BOX, soft=[(c, r)], passage=PASS)
     assert out is not None and xy_route_violation(out, [], [(c, r)], PASS) is None
-    assert len(out) == len(route) and out[0] == route[0] and out[-1] == route[-1]
-    assert all(math.dist(p, c) >= r + KEEPOUT_ARC_MARGIN_M for p in out[1:-1])
-    chords = [chord_m(a, b, c, r) for a, b in pairwise(out)]
-    assert chords[1] == 0.0 and max(chords) <= PASS.max_chord_m
+    assert all(not leg_enters(a, b, c, r) for a, b in pairwise(out))
+
+
+def _two_rows(r: float, gap_m: float) -> list[Xy]:
+    """East along y=0 through the circle of radius ``r`` at the origin, north 10 m at
+    x=e, back west along y=10: ``gap_m`` of route outside between the two stretches in."""
+    x_in = math.sqrt(r * r - 100.0)  # where the row y=10 comes in
+    e = (gap_m - 10.0 + r + x_in) / 2.0
+    route: list[Xy] = [(-150, 0), (e, 0), (e, 10), (-150, 10)]
+    assert math.dist(route[1], (0.0, 0.0)) >= r + KEEPOUT_ARC_MARGIN_M
+    return route
+
+
+def test_a_short_break_outside_is_the_same_pass() -> None:
+    """Owner decision 2026-11-04: out of an unconfirmed cylinder for less than
+    KEEPOUT_PASS_GAP_S (at the route's speed) between two stretches in it, both are one
+    pass and share the budget. Just under the gap they add up; just over, two passes."""
+    gap = PASS.gap_m()
+    assert gap == pytest.approx(7.0 * KEEPOUT_PASS_GAP_S)
+    c, r = (0.0, 0.0), 30.0  # 60 m + 56.6 m inside: too long for one pass
+    under, over = _two_rows(r, gap - 1.0), _two_rows(r, gap + 1.0)
+    assert not passes(under, c, r, PASS)
+    assert passes(over, c, r, PASS)
+    # Under the gap but in time together: one pass, let through.
+    small = 20.0  # 40 m + 34.6 m
+    assert passes(_two_rows(small, gap - 1.0), c, small, PASS)
+    # Planned again, the one that runs long goes around; the one with a break flies on.
+    out = reroute(under, [], area=BOX, soft=[(c, r)], passage=PASS)
+    assert out is not None and all(not leg_enters(a, b, c, r) for a, b in pairwise(out))
+    assert reroute(over, [], area=BOX, soft=[(c, r)], passage=PASS) == over
+    # Without a known speed (no budget) every stretch in is one pass.
+    assert Passage(max_chord_m=0.0, max_s=0.0).gap_m() == math.inf
+
+
+def test_a_pass_the_drone_left_just_now_goes_on() -> None:
+    """On board the pass the drone left less than the gap ago is still in
+    ``keepout_inside_s``: a route back in within the gap adds up with it, one in after
+    the gap is a new pass. With its time unknown, nothing back in within the gap."""
+    c, r = (0.0, 0.0), 30.0
+    back: list[Xy] = [(40, 0), (40, 20), (-100, 20)]  # 44.7 m inside, 20 m + 17.6 m out
+    assert passes(back, c, r, PASS, spent_m=30.0)
+    assert not passes(back, c, r, PASS, spent_m=PASS.max_chord_m - 40.0)
+    later: list[Xy] = [(40, 0), (40, 100), (-100, 20)]  # out for more than the gap
+    assert passes(later, c, r, PASS, spent_m=PASS.max_chord_m)
+    # Straight out with the time inside unknown, then back in at once: no.
+    out_back: list[Xy] = [(10, 0), (40, 0), (40, 20), (-100, 20)]
+    assert not passes(out_back, c, r, PASS)
+    assert passes(out_back, c, r, PASS, spent_m=0.0)
 
 
 def test_legs_one_after_another_inside_one_cylinder_are_one_pass() -> None:

@@ -19,7 +19,9 @@
   came (``SeenKeepout.came``): a new shape is no new grace.
   A ``passable`` cylinder (an unconfirmed person, a charter that allows overflight) may
   also be crossed: each stay inside straight through, level or climbing, at most
-  ``KEEPOUT_PASS_MAX_S`` (no hover, circle, turn or descent over a possible person). In
+  ``KEEPOUT_PASS_MAX_S`` (no hover, circle, turn or descent over a possible person);
+  stays with less than ``KEEPOUT_PASS_GAP_S`` outside between them are one pass and add
+  up (owner decision 2026-11-04). In
   live without the permit, and for every confirmed find, the full rules hold.
   ``keepout_min_distance_m`` is the smallest horizontal distance from the track to an
   active cylinder's edge after the drone was outside it (negative: inside).
@@ -37,7 +39,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final
 
-from sd_safety.constants import GOTO_ALT_STEP_TOL_M, KEEPOUT_PASS_MAX_S
+from sd_safety.constants import GOTO_ALT_STEP_TOL_M, KEEPOUT_PASS_GAP_S, KEEPOUT_PASS_MAX_S
 from sd_safety.targets import Plane, distance_m, point_segment_distance
 from sd_sim.invariants import Sample
 
@@ -395,7 +397,8 @@ def keepout_never_entered(
     """E8 for each cylinder. A ``passable`` one (an unconfirmed person under a charter
     that allows overflight) may also be crossed straight through: every stay inside is a
     passage (:func:`_passage_broken`), except that the stay it came around the drone
-    with, or braked it into, may keep the full cylinder's rules instead."""
+    with, or braked it into, may keep the full cylinder's rules instead. Stays with less
+    than ``KEEPOUT_PASS_GAP_S`` outside between them are one pass (:func:`_pass_too_long`)."""
     broken: list[str] = []
     for k in keepouts:
         rows = _edge_distances(k, track)
@@ -407,11 +410,36 @@ def keepout_never_entered(
         if not k.passable:
             broken.append(full)
             continue
-        for n, (a, b) in enumerate(_stays(rows, tolerance_m)):
+        stays = _stays(rows, tolerance_m)
+        for n, (a, b) in enumerate(stays):
             why = _passage_broken(k, rows, a, b)
-            if why is not None and n == 0 and _entered(k, rows[: b + 2], tolerance_m) is None:
-                why = None  # the first stay kept the full rules (a way out, braking in)
+            if n == 0 and _entered(k, rows[: b + 2], tolerance_m) is None:
+                why, stays = None, stays[1:]  # the first stay kept the full rules
             if why is not None:
                 broken.append(why)
                 break
+        else:
+            why = _pass_too_long(k, rows, stays)
+            if why is not None:
+                broken.append(why)
     return broken
+
+
+def _pass_too_long(
+    k: SeenKeepout, rows: Sequence[tuple[float, float, Sample]], stays: Sequence[tuple[int, int]]
+) -> str | None:
+    """Why stays one after another with less than ``KEEPOUT_PASS_GAP_S`` outside between
+    them (one pass, owner decision 2026-11-04) are inside longer than
+    ``KEEPOUT_PASS_MAX_S`` (and ``PASS_SLACK_S``) together; None when no pass is."""
+    total, end = 0.0, -math.inf
+    for a, b in stays:
+        if rows[a][0] - end >= KEEPOUT_PASS_GAP_S:
+            total = 0.0  # out long enough: a new pass
+        total += rows[b][0] - rows[a][0]
+        end = rows[b][0]
+        if total > KEEPOUT_PASS_MAX_S + PASS_SLACK_S:
+            return (
+                f"E8: banan var {total:.0f} s i den obekräftade cylindern {k.keepout_id} "
+                f"i en passage med korta avbrott (högst {KEEPOUT_PASS_MAX_S:.0f} s)"
+            )
+    return None

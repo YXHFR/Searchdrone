@@ -7,6 +7,7 @@ from dataclasses import replace
 
 import pytest
 
+from sd_safety.constants import KEEPOUT_PASS_GAP_S
 from sd_safety.targets import Plane
 from sd_sim import params, paths
 from sd_sim import search_invariants as si
@@ -329,3 +330,18 @@ def test_a_way_out_of_a_passable_cylinder_keeps_the_full_rules() -> None:
     the full rules, even when it takes longer than a passage."""
     out = _line(0.0, 100.0, 140.0, 2.0)
     assert keepout_never_entered([_soft()], out) == []
+
+
+def test_stays_with_a_short_break_outside_are_one_passage() -> None:
+    """Owner decision 2026-11-04: out of a passable cylinder for less than
+    KEEPOUT_PASS_GAP_S and back in is one pass; the stays add up (8.6 s + 8.1 s here, over
+    the 12 s and the slack together). Out for longer: two passes, each in time."""
+    there = _line(0.0, 0.0, 140.0, 7.0)  # in at 70 m, out at 130 m
+    end = there[-1].t
+
+    def back(after: float) -> list[Sample]:
+        return _line(end + after, 140.0, 0.0, 7.0, n=10.0)  # in again at 128 m
+
+    broken = keepout_never_entered([_soft()], there + back(2.0))
+    assert broken and "korta avbrott" in broken[0], broken
+    assert keepout_never_entered([_soft()], there + back(KEEPOUT_PASS_GAP_S + 2.0)) == []

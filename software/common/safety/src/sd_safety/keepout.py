@@ -30,7 +30,8 @@ open candidate) straight through (:func:`passes`, judged over the whole route): 
 inside it or within ``KEEPOUT_ARC_MARGIN_M`` of its edge (no hover or turn inside, nor a
 turn just outside that the flight controller cuts into it), no descent while inside, and
 at most ``Passage.max_chord_m`` inside it in one pass (``KEEPOUT_PASS_MAX_S`` at the
-route's speed; legs one after another that both cross it are one pass). Only the first
+route's speed; stretches inside it with less than ``KEEPOUT_PASS_GAP_S`` outside
+between them are one pass, owner decision 2026-11-04). Only the first
 leg, from where the drone is, may start inside one, and only when the time the drone has
 spent inside it already is known (``spent_m``: 0 for a cylinder that came around the
 drone); that time counts towards the pass, so a route planned again mid-passage gets no
@@ -55,7 +56,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 from typing import Final
 
-from sd_safety.constants import GOTO_ALT_STEP_TOL_M, KEEPOUT_PASS_MAX_S
+from sd_safety.constants import GOTO_ALT_STEP_TOL_M, KEEPOUT_PASS_GAP_S, KEEPOUT_PASS_MAX_S
 from sd_safety.policy import KEEPOUT_PASS_SKILLS
 from sd_safety.targets import Plane, Polygon, Xy, point_segment_distance
 from sd_schemas.base import Id, LatLon, LatLonAlt
@@ -119,10 +120,13 @@ Circle = tuple[Xy, float]  # centre, radius
 @dataclass(frozen=True, slots=True)
 class Passage:
     """How a search route may cross unconfirmed cylinders: straight through, at most
-    ``max_chord_m`` inside each in one pass (``max_s`` at the route's speed)."""
+    ``max_chord_m`` inside each in one pass (``max_s`` at the route's speed). Stretches
+    inside one cylinder with less than ``gap_s`` outside between them (at that speed) are
+    one pass."""
 
     max_chord_m: float
     max_s: float = KEEPOUT_PASS_MAX_S
+    gap_s: float = KEEPOUT_PASS_GAP_S
 
     @classmethod
     def at(cls, speed_ms: float) -> Passage:
@@ -134,6 +138,12 @@ class Passage:
         if self.max_s <= 0.0:
             return math.inf
         return self.max_chord_m * max(0.0, spent_s) / self.max_s
+
+    def gap_m(self) -> float:
+        """How far outside a cylinder (at the route's speed) ends a pass: ``gap_s``."""
+        if self.max_s <= 0.0:
+            return math.inf  # no speed known: every stretch inside is one pass
+        return self.max_chord_m * self.gap_s / self.max_s
 
 
 def passage_for(
@@ -164,18 +174,26 @@ def circles(keepouts: Sequence[Keepout], plane: Plane) -> list[Circle]:
 
 def chord_m(a: Xy, b: Xy, c: Xy, r: float) -> float:
     """How much of the straight leg ``a`` -> ``b`` lies inside the circle (``c``, ``r``)."""
+    cross = _crossing(a, b, c, r)
+    return 0.0 if cross is None else cross[1] - cross[0]
+
+
+def _crossing(a: Xy, b: Xy, c: Xy, r: float) -> tuple[float, float] | None:
+    """Where along the straight leg ``a`` -> ``b`` (metres from ``a``) it is inside the
+    circle (``c``, ``r``): (in, out), or None when it never is."""
     dx, dy = b[0] - a[0], b[1] - a[1]
     seg = math.hypot(dx, dy)
     if seg == 0.0:
-        return 0.0
+        return None
     ux, uy = dx / seg, dy / seg
     ox, oy = a[0] - c[0], a[1] - c[1]
     bq = ox * ux + oy * uy
     disc = bq * bq - (ox * ox + oy * oy - r * r)
     if disc <= 0.0:
-        return 0.0
+        return None
     root = math.sqrt(disc)
-    return max(0.0, min(seg, -bq + root) - max(0.0, -bq - root))
+    t_in, t_out = max(0.0, -bq - root), min(seg, -bq + root)
+    return (t_in, t_out) if t_out > t_in else None
 
 
 def passes(
@@ -206,28 +224,40 @@ def _pass_fault(
     A leg that comes inside it must end at least ``KEEPOUT_ARC_MARGIN_M`` outside it (no
     hover or turn inside, and none so close to the edge that the corner the flight
     controller cuts lies inside), and so must the corner it starts at, unless it is the
-    first leg (from where the drone is). Legs one after another that both come inside are
-    one pass: their stretches inside add up, and one pass has at most
+    first leg (from where the drone is). Stretches inside with less than
+    ``passage.gap_m()`` of route outside between them (``KEEPOUT_PASS_GAP_S`` at the
+    route's speed) are one pass: they add up, and one pass has at most
     ``passage.max_chord_m``. A first leg that starts inside and leaves without going
     deeper is always let go (as from a confirmed cylinder). One that goes deeper continues
     the pass the drone is on: only with ``spent_m`` known (the part of the budget it used
-    up already), which counts towards the pass. A leg that ``descends`` (by index) never
-    goes deeper or comes inside."""
+    up already), which counts towards the pass. With ``spent_m`` unknown that pass has
+    used all of it: no stretch back inside within the gap after the leg out. For a route
+    that starts outside, ``spent_m`` is the pass the drone left less than the gap ago (on
+    board): the route is taken to have left it just now. A leg that ``descends`` (by
+    index) never goes deeper or comes inside."""
     edge = r + KEEPOUT_ARC_MARGIN_M
-    run = 0.0
+    gap = passage.gap_m()
+    run = 0.0 if spent_m is None else spent_m  # what the pass the drone is on has used
+    out = math.inf if spent_m is None else 0.0  # metres outside since its last stretch in
     for j, (a, b) in enumerate(pairwise(route)):
-        inside_m = chord_m(a, b, c, r)
-        if inside_m <= 0.0:
-            run = 0.0  # clear of it: the next stretch inside is a new pass
+        cross = _crossing(a, b, c, r)
+        if cross is None:
+            out += math.dist(a, b)  # clear of it
             continue
+        t_in, t_out = cross
+        inside_m = t_out - t_in
         if j > 0 and math.dist(a, c) < edge:
             return j  # a corner inside it or just outside it
         if math.dist(b, c) < edge:
             return j  # ends inside it or just outside it
         descending = j < len(descends) and descends[j]
+        after = math.dist(a, b) - t_out  # outside again from there to the leg's end
         if math.dist(a, c) < r:  # the first leg, from where the drone is
             if not leg_enters(a, b, c, r):
-                run = (spent_m or 0.0) + inside_m  # straight out; a leg back in adds up
+                # Straight out, always let go; a stretch back in within the gap adds up
+                # (with the time inside unknown, the whole budget is gone already).
+                run = (passage.max_chord_m if spent_m is None else spent_m) + inside_m
+                out = after
                 continue
             if spent_m is None or descending:
                 return j  # deeper with the time inside unknown, or going down
@@ -235,7 +265,10 @@ def _pass_fault(
         elif descending:
             return j  # in from outside, going down
         else:
+            if out + t_in >= gap:
+                run = 0.0  # outside long enough since the last stretch in: a new pass
             run += inside_m
+        out = after
         if run > passage.max_chord_m:
             return j
     return None
@@ -323,8 +356,9 @@ def route_violation(
 def spent_for(
     soft: Sequence[Keepout], passage: Passage, inside_s: Mapping[Id, float] | None
 ) -> list[float | None]:
-    """Per unconfirmed cylinder: the part of the passage's budget the drone has used up
-    inside it (``inside_s`` by ``keepout_id``), None when that is not known."""
+    """Per unconfirmed cylinder: the part of the passage's budget the pass the drone is
+    on (inside it, or out of it for less than the gap) has used up (``inside_s`` by
+    ``keepout_id``), None when there is no such pass."""
     known = inside_s or {}
     return [passage.spent_m(known[k.keepout_id]) if k.keepout_id in known else None for k in soft]
 
