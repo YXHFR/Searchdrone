@@ -35,11 +35,15 @@ What happens:
    on its own clock; then the script is stopped and the next call starts from the last
    save, until the run is done. Up to about 15 minutes of training (since the last
    save, and the volume is committed every 5 minutes) may be done again. ``fresh=1``
-   goes to the first call only. No retries are asked of Modal, though it may move a
-   call to another machine after a preemption; this side stops waiting, and cancels
-   the call, when its time is up, and counts every second it waited against
-   ``max_hours``, for this run folder in all (``LEDGER``), so the ceiling holds. A
-   stopped command (Ctrl+C, a lost line) carries on the same way when run again.
+   is done here, before anything else: the old run's files are removed from the volume
+   (``FRESH_FILES``), so every call after that carries on from the new run's own
+   ``last.pt``, or starts clean when there is none (``start_fresh``). No retries are
+   asked of Modal, though it may move a call to another machine after a preemption;
+   this side stops waiting, and cancels the call, when its time is up. Each call's
+   worst case is counted against ``max_hours`` before it starts, for this run folder in
+   all (``LEDGER``), and corrected only when the container reports its own time, so the
+   ceiling holds. A stopped command (Ctrl+C, a lost line) carries on the same way when
+   run again.
 4. ``best.pt`` and ``settings.json`` come back to ``<data>/train/<run>`` (never over a
    local training's folder: ``check_local_run``) and the ONNX file and its manifest to
    ``<data>/models/detector`` (never over a model exported here: ``check_local_model``),
@@ -55,9 +59,11 @@ what it costs are tested without it, the network or an account.
 from __future__ import annotations
 
 import ast
+import contextlib
 import hashlib
 import json
 import math
+import os
 import sys
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -129,6 +135,9 @@ MIN_CALL_S = 15 * 60
 # volume; a folder without it (or with last.pt) is a local training's and is never
 # written to.
 MARKER = "modal-run.json"
+# What fresh=1 removes from the run's folder on the volume: what train_detector.py
+# resumes from (last.pt, checked against settings.json) and the old run's best.pt.
+FRESH_FILES = ("last.pt", "settings.json", "best.pt")
 # An init= file: a best.pt, of at most this size (yolox_m's is about 200 MB).
 INIT_SUFFIXES = (".pt", ".pth")
 MAX_INIT_BYTES = 1_000_000_000
@@ -502,7 +511,7 @@ def places(data: Path, model: str, out: str = "", name: str = "") -> Places:
 def train_argv(args: Mapping[str, str], sets: Sequence[str], where: Places, init: str) -> list[str]:
     """``train_detector.py``'s arguments in the container: the keys as given, with the
     data folder, the run folder, the sets and ``init=`` moved to the volume. ``fresh``
-    is left out: it goes to the first call only (``run_until_done``)."""
+    is left out: it is done before the calls, on the volume (``remove_old_run``)."""
     moved = {"data", "out", "sets", "init", "fresh", *OWN_KEYS}
     argv = [f"{k}={v}" for k, v in args.items() if k not in moved]
     argv += [
@@ -536,15 +545,22 @@ class Backend(Protocol):
 
     def upload(self, uploads: Sequence[Upload]) -> None: ...
 
+    def remove(self, paths: Sequence[PurePosixPath]) -> None:
+        """Remove these files (relative to the volume's root); one that is not there is
+        no error."""
+        ...
+
     def run(
         self, train: Sequence[str], export: Sequence[str], budget_s: float, timeout_s: int
     ) -> dict[str, Any]:
         """One call on the GPU (``gpu_call.call``): the scripts are stopped ``budget_s``
         after the container starts, by its own clock; Modal stops the call after
         ``timeout_s``, and this side stops waiting and cancels it ``START_SLACK_S``
-        later. ``{"status": "done" | "stopped" | "failed", "code": int | None,
+        later. ``{"status": "done" | "stopped" | "failed" | "no_gpu", "code": int | None,
         "seconds": float}``. ``stopped``: the time was up; the next call carries on from
-        the last save on the volume."""
+        the last save on the volume. ``no_gpu``: the call never got a container before
+        this side stopped waiting. ``seconds`` (how long the container ran) is there only
+        when the container itself reported it."""
         ...
 
     def fetch(self, remote: PurePosixPath, local: Path) -> None: ...
@@ -616,7 +632,7 @@ def confirm(yes: bool, ask: Callable[[str], str] = input) -> bool:
 
 
 def _read_ledger(ledger: Path) -> tuple[float, bool]:
-    """(seconds used, ``fresh=1`` not yet handed to a call) from ``LEDGER``."""
+    """(seconds used, a ``fresh=1`` whose removal is not yet confirmed) from ``LEDGER``."""
     try:
         body = json.loads(ledger.read_text(encoding="utf-8"))
         return float(body["seconds"]), bool(body.get("fresh_pending", False))
@@ -625,11 +641,21 @@ def _read_ledger(ledger: Path) -> tuple[float, bool]:
 
 
 def _write_ledger(ledger: Path, seconds: float, fresh_pending: bool) -> None:
+    """Write ``LEDGER`` so that a power loss leaves the old or the new one, whole."""
     ledger.parent.mkdir(parents=True, exist_ok=True)
     tmp = ledger.with_name(f".{ledger.name}.tmp")
     body = {"seconds": round(seconds, 1), "fresh_pending": fresh_pending}
-    tmp.write_text(json.dumps(body) + "\n", encoding="utf-8")
+    with tmp.open("w", encoding="utf-8") as fh:
+        fh.write(json.dumps(body) + "\n")
+        fh.flush()
+        os.fsync(fh.fileno())
     tmp.replace(ledger)
+    with contextlib.suppress(OSError):  # not every file system can sync a folder
+        folder = os.open(ledger.parent, os.O_RDONLY)
+        try:
+            os.fsync(folder)
+        finally:
+            os.close(folder)
 
 
 def hours_used(ledger: Path) -> float:
@@ -638,19 +664,27 @@ def hours_used(ledger: Path) -> float:
 
 
 def fresh_pending(ledger: Path) -> bool:
-    """``fresh=1`` was asked for but no call has run with it yet."""
+    """``fresh=1`` was asked for, but the old run's files are not yet known to be gone."""
     return _read_ledger(ledger)[1]
 
 
 def start_fresh(ledger: Path) -> None:
-    """``fresh=1``: the run's hours from 0, and the next call that runs starts over,
-    whatever command starts it, until one has (``run_until_done``)."""
+    """``fresh=1`` confirmed: the run's hours from 0, and its old files to be removed
+    (``remove_old_run``) by this command or, if it stops first, the next one."""
     _write_ledger(ledger, 0.0, True)
 
 
+def remove_old_run(backend: Backend, where: Places, ledger: Path) -> None:
+    """Remove the old run's ``FRESH_FILES`` from the volume, then mark it done in
+    ``LEDGER``. Safe to do again: a file already gone is no error."""
+    run = where.remote_run.relative_to(REMOTE_DATA)
+    backend.remove([run / name for name in FRESH_FILES])
+    _write_ledger(ledger, _read_ledger(ledger)[0], False)
+
+
 def again_text(fresh_given: bool, ledger: Path) -> str:
-    """What to run to carry on: without ``fresh=1`` once a call has started over with
-    it (or the run would start over again), as given before that."""
+    """What to run to carry on: without ``fresh=1`` once the old run is removed (or it
+    would be removed again, with what the new run has saved), as given before that."""
     if fresh_given and not fresh_pending(ledger):
         return "samma kommando utan fresh=1"
     return "samma kommando"
@@ -672,53 +706,50 @@ def run_until_done(
     export: Sequence[str],
     max_hours: float,
     ledger: Path,
-    fresh_given: bool = False,
+    again: str = "samma kommando",
     clock: Callable[[], float] = time.monotonic,
 ) -> float:
     """Call the GPU until the run is done, together at most ``max_hours`` for the run
     (all calls, also earlier commands', from ``ledger``).
 
-    While ``ledger`` says ``fresh=1`` is pending, it is added to the call's training
-    arguments, and cleared only once a call has run with it (the call came back, also
-    ``failed``); a call that never ran (no GPU, a lost line, Ctrl+C) leaves it pending,
-    so the next command starts over too instead of carrying on from an old ``last.pt``.
-
     Each call's worst case (Modal's timeout and the wait for the container) is written
-    to ``ledger`` before the call, then corrected to the seconds used: the client's wall
-    time or the container's, whichever is longer, also when the call fails or is
-    interrupted. A hard stop of this computer thus leaves the worst case counted.
-    Returns the hours used by this command."""
+    to ``ledger`` before the call. It is corrected only when the container reported the
+    seconds it ran: then to those or the client's wall time, whichever is longer. Without
+    them (the client stopped waiting, Ctrl+C, a lost line, a hard stop of this computer)
+    the container may still have run that long, so the worst case stays.
+    ``again`` is what the messages tell you to run to carry on. Returns the hours used
+    by this command."""
     used_here = 0.0
     while True:
-        spent, pending = _read_ledger(ledger)
+        spent = _read_ledger(ledger)[0]
         budget = call_budget(max_hours * 3600 - spent)
         if not budget:
             raise BenchError(
                 f"max_hours={max_hours:g} är slut ({spent / 3600:.1f} h använda av den här "
-                f"körningen). Kör {again_text(fresh_given, ledger)} med större max_hours= "
-                "för att fortsätta från senaste sparningen.",
+                f"körningen). Kör {again} med större max_hours= för att fortsätta från "
+                "senaste sparningen.",
                 1,
             )
         timeout_s = math.ceil(budget + STOP_GRACE_S + FINISH_SLACK_S)
-        _write_ledger(ledger, spent + timeout_s + START_SLACK_S, pending)
-        argv = [*train, "fresh=1"] if pending else list(train)
+        worst = float(timeout_s + START_SLACK_S)
+        _write_ledger(ledger, spent + worst, False)
         started = clock()
         res: Mapping[str, Any] = {}
         try:
-            res = backend.run(argv, export, budget, timeout_s)
+            res = backend.run(train, export, budget, timeout_s)
         finally:
-            seconds = max(clock() - started, float(res.get("seconds", 0.0)))
-            ran = res.get("status") in ("done", "stopped", "failed")
-            _write_ledger(ledger, spent + seconds, pending and not ran)
+            seconds = worst
+            if res.get("seconds") is not None:
+                seconds = max(clock() - started, float(res["seconds"]))
+                _write_ledger(ledger, spent + seconds, False)
             used_here += seconds
         status = res.get("status")
-        again = again_text(fresh_given, ledger)
         if status == "done":
             return used_here / 3600
         if status == "no_gpu":
             raise BenchError(
-                f"Modal gav inget grafikkort på {seconds / 60:.0f} minuter, så inget tränades. "
-                f"Försök igen senare ({again}), eller med en annan gpu=.",
+                f"Modal gav inget grafikkort på {(clock() - started) / 60:.0f} minuter, så "
+                f"inget tränades. Försök igen senare ({again}), eller med en annan gpu=.",
                 1,
             )
         if status != "stopped":
@@ -915,13 +946,14 @@ def main(
             )
         if fresh:
             say(
-                "fresh=1: körningen börjar om från noll i Modal, och dess timmar räknas om "
-                "från 0. Fortsätt sedan med samma kommando utan fresh=1."
+                "fresh=1: den gamla träningen i Modal (last.pt, best.pt, settings.json) tas "
+                "bort först, och körningen börjar om från noll; dess timmar räknas från 0. "
+                "Fortsätt sedan med samma kommando utan fresh=1."
             )
         elif fresh_pending(ledger):
             say(
-                "Ett tidigare fresh=1 har inte börjat i Modal än, så körningen börjar om "
-                "från noll nu också."
+                "Ett tidigare fresh=1 hann inte ta bort den gamla träningen i Modal; det "
+                "görs nu, och körningen börjar om från noll."
             )
         say(f"Resultatet hamnar i {where.local_run} och {where.local_models}.")
         if not confirm(flag(args, "yes")):
@@ -932,6 +964,8 @@ def main(
         started = time.monotonic()
         try:
             client = backend(gpu)
+            if fresh_pending(ledger):
+                remove_old_run(client, where, ledger)
             upload(client, uploads, register, data / RECORD.format(volume=VOLUME))
             used = run_until_done(
                 client,
@@ -939,7 +973,7 @@ def main(
                 export_argv(model, where),
                 max_hours,
                 ledger,
-                fresh_given=fresh,
+                again_text(fresh, ledger),
             )
             fetch_results(client, where)
         except KeyboardInterrupt:

@@ -216,8 +216,9 @@ Det här händer:
    sedan senaste sparningen görs om, högst ungefär en kvart. Den ber inte Modal att
    försöka igen. Flyttar Modal ändå anropet till en annan dator slutar den vänta när
    tiden är slut och stoppar anropet; varje sekund räknas mot `max_hours=`. Innan
-   varje anrop skrivs den längsta tid anropet kan ta upp i räkningen, och efteråt den
-   tid det tog. Stängs din dator av mitt i, räknas alltså den längsta tiden.
+   varje anrop skrivs den längsta tid anropet kan ta upp i räkningen. Den rättas bara
+   när Modal har sagt hur länge anropet körde. Vet den inte det (Ctrl+C, tappat nät,
+   datorn stängs av, eller den slutade vänta) räknas den längsta tiden.
    Får den inget grafikkort från Modal innan tiden är slut, säger den det: då
    tränades inget, och du kan försöka igen senare eller med en annan `gpu=`.
 4. Den gör ONNX-filen och hämtar hem `best.pt`, `person_yolox_s.onnx` och
@@ -231,11 +232,14 @@ Det här händer:
 
 Avbryter du med Ctrl+C, eller tappar nätet, stannar grafikkortet och du slutar betala.
 Den sparar inte just då. Kör samma kommando igen så fortsätter den från senaste
-sparningen (var tionde minut och efter varje epok). Hade du med `fresh=1` (börja om
-från noll) och träningen hann börja i Modal, ta bort det när du kör igen: annars
-börjar den om igen. Hann den inte börja, till exempel om du stoppade under
-uppladdningen, börjar nästa körning om från noll ändå, med eller utan `fresh=1`.
-Kommandot säger vilket när det stannar. Går något fel hos Modal eller med nätet
+sparningen (var tionde minut och efter varje epok).
+
+`fresh=1` (börja om från noll) tar först bort den gamla träningen i Modal (`last.pt`,
+`best.pt` och `settings.json`), innan något laddas upp. Sedan fortsätter varje anrop
+från den nya träningens egen sparning, eller börjar från noll om det inte finns någon.
+Kör därför utan `fresh=1` när du fortsätter, annars tas det som tränats bort igen.
+Stoppas kommandot innan den gamla träningen är borttagen, gör nästa körning det, med
+eller utan `fresh=1`. Kommandot säger vilket när det stannar. Går något fel hos Modal eller med nätet
 skriver den vad, på svenska, och vad du kan göra.
 
 **Vad det kostar**

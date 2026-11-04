@@ -11,7 +11,7 @@ import importlib.util
 import sys
 import types
 from collections.abc import Iterator
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import cloud
@@ -42,17 +42,23 @@ class NotFoundError(Exception):
 
 
 class FakeVolume:
-    """The marks in ``modal_app.CALLS`` that a started container leaves."""
+    """Files on the volume, such as the marks in ``modal_app.CALLS`` that a started
+    container leaves. ``log`` is shared with the function, to see the order."""
 
-    def __init__(self) -> None:
+    def __init__(self, log: list[Any]) -> None:
         self.files: set[str] = set()
+        self.log = log
 
-    def listdir(self, path: str) -> list[str]:
-        if path not in self.files:
-            raise FileNotFoundError(path)
-        return [path]
+    def listdir(self, path: str) -> list[types.SimpleNamespace]:
+        self.log.append(("listdir", path))
+        inside = [f for f in self.files if f.startswith(path.rstrip("/") + "/")]
+        if not inside:  # as Modal: a folder that is not there
+            raise NotFoundError(path)
+        return [types.SimpleNamespace(path=f.lstrip("/")) for f in inside]
 
     def remove_file(self, path: str) -> None:
+        if path not in self.files:
+            raise FileNotFoundError(path)
         self.files.discard(path)
 
     def commit(self) -> None:
@@ -111,7 +117,7 @@ def fake_modal(local: bool) -> tuple[types.ModuleType, list[Any]]:
         def run(self) -> Iterator[None]:
             yield
 
-    volume = FakeVolume()
+    volume = FakeVolume(log)
 
     class Volume:
         @staticmethod
@@ -194,7 +200,20 @@ def test_a_call_that_runs_over_is_cancelled(
     if started:  # the container left its mark when it ran
         monkeypatch.setattr(app.uuid, "uuid4", lambda: types.SimpleNamespace(hex="t" * 32))
         app.volume.files.add(f"/{app.CALLS}/{'t' * 32}")
+    app.volume.files.add(f"/{app.CALLS}/{'o' * 32}")  # another call's mark
     res = app.ModalBackend("H100").run(["a=1"], ["b=2"], 10.0, 60)
-    assert res["status"] == status
-    assert ("cancel", True) in log
-    assert not app.volume.files  # the mark is cleaned up
+    assert res == {"status": status, "code": None}  # no "seconds": not known here
+    kinds = [kind for kind, _ in log]
+    assert kinds.index("listdir") < kinds.index("cancel")  # looked before cancelling
+    assert ("listdir", f"/{app.CALLS}") in log  # the folder, not the file
+    assert app.volume.files == {f"/{app.CALLS}/{'o' * 32}"}  # only its own mark removed
+
+
+def test_removing_old_files_is_safe_to_repeat(monkeypatch: pytest.MonkeyPatch) -> None:
+    app, _mod, _log = load(monkeypatch, local=True, at=str(SOURCE))
+    app.volume.files.add("/train/x/last.pt")
+    backend = app.ModalBackend("H100")
+    paths = [PurePosixPath("train/x/last.pt"), PurePosixPath("train/x/best.pt")]
+    backend.remove(paths)
+    backend.remove(paths)  # already gone: no error
+    assert app.volume.files == set()

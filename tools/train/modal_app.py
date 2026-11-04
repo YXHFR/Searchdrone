@@ -12,8 +12,9 @@ No retries are asked of Modal: a call that fails ends the command, and the same 
 carries on from the last save. Modal may still move a call to another machine after a
 preemption; the client waits at most the call's timeout plus ``cloud.START_SLACK_S``,
 then cancels it, and counts all of that against ``max_hours``, so the ceiling holds.
-Each call leaves a mark on the volume (``CALLS``) once its container runs, so a call
-that timed out can tell "stopped" from "never got a GPU" (``no_gpu``).
+Each call's container leaves a mark on the volume (``CALLS``) as soon as it runs; when
+the client stops waiting it looks for the mark before it cancels the call, so it can
+tell "stopped" from "never got a GPU" (``no_gpu``). Only the client removes the mark.
 
 The container asks for exactly ``cloud.CPU_CORES`` and ``cloud.MEMORY_MIB`` (the same
 request and limit), so the price per hour that ``cloud.cost`` prints holds.
@@ -122,7 +123,6 @@ def train_on_gpu(
         result = call(train, export, budget_s, IN_CONTAINER / "tools" / "train")
     finally:
         stop.set()
-        Path(mark).unlink(missing_ok=True)
         volume.commit()
     return {**result, "seconds": time.monotonic() - started}
 
@@ -154,20 +154,28 @@ class ModalBackend:
             try:
                 return handle.get(timeout=timeout_s + START_SLACK_S)
             except TimeoutError:  # e.g. moved after a preemption: the ceiling holds
+                started = self._started(token)  # before the cancel, which ends the call
                 handle.cancel(terminate_containers=True)
-                started = self._started(token)
-                return {"status": "stopped" if started else "no_gpu", "code": None, "seconds": 0.0}
+                # no "seconds": the container's own time is not known here
+                return {"status": "stopped" if started else "no_gpu", "code": None}
+            finally:
+                # the mark is only a hint: failing to remove it must not hide the result
+                with contextlib.suppress(Exception):
+                    volume.remove_file("/" + (CALLS / token).as_posix())
 
     def _started(self, token: str) -> bool:
-        """Whether the call's container ever ran (left its mark in ``CALLS``)."""
-        mark = "/" + (CALLS / token).as_posix()
+        """Whether the call's container ever ran: its mark is in ``CALLS``. The folder is
+        listed rather than the file, and a missing folder means no call has run yet."""
         try:
-            found = bool(volume.listdir(mark))
+            entries = volume.listdir("/" + CALLS.as_posix())
         except (FileNotFoundError, modal.exception.NotFoundError):
             return False
-        with contextlib.suppress(FileNotFoundError, modal.exception.NotFoundError):
-            volume.remove_file(mark)
-        return found
+        return any(PurePosixPath(e.path).name == token for e in entries)
+
+    def remove(self, paths: Sequence[PurePosixPath]) -> None:
+        for path in paths:
+            with contextlib.suppress(FileNotFoundError, modal.exception.NotFoundError):
+                volume.remove_file("/" + path.as_posix())
 
     def fetch(self, remote: PurePosixPath, local: Path) -> None:
         with local.open("wb") as fh:
