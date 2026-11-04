@@ -216,3 +216,66 @@ async def test_far_find_is_the_usual_rule(r: Rig) -> None:
     assert plan is not None and plan.mode == "normal" and plan.hold_at_utc is not None
     assert (plan.hold_at_utc - plan.lost_at_utc).total_seconds() == pytest.approx(23, abs=0.01)
     assert (plan.home_at_utc - plan.lost_at_utc).total_seconds() == pytest.approx(53, abs=0.01)
+
+
+async def _detection(r: Rig, mission: str, cid: str, lat: float, lon: float, score: float) -> str:
+    """A detection of the candidate ``cid`` (a still, the detection, the observation)."""
+    point = f"POINT({lon} {lat})"
+    square = (
+        f"POLYGON(({lon - 1e-4} {lat - 1e-4},{lon + 1e-4} {lat - 1e-4},"
+        f"{lon + 1e-4} {lat + 1e-4},{lon - 1e-4} {lat + 1e-4},{lon - 1e-4} {lat - 1e-4}))"
+    )
+    async with r.flow.repo.engine.begin() as conn:
+        still = (
+            await conn.execute(
+                text(
+                    "INSERT INTO perception_stills (mission_id, vehicle_id, still_id, "
+                    "captured_utc, sensor, pose, footprint, px_per_m, detector) VALUES "
+                    "(CAST(:m AS uuid), :v, uuidv7(), now(), 'rgb', '{}', "
+                    "ST_GeomFromText(:sq, 4326), 50, '{}') RETURNING still_id::text"
+                ),
+                {"m": mission, "v": VID, "sq": square},
+            )
+        ).one()[0]
+        det = (
+            await conn.execute(
+                text(
+                    "INSERT INTO detections (mission_id, vehicle_id, detection_id, still_id, "
+                    "score, bbox, geom, sigma95_m, px_size) VALUES (CAST(:m AS uuid), :v, "
+                    "uuidv7(), CAST(:s AS uuid), :score, '{}', ST_GeomFromText(:p, 4326), 4.5, "
+                    "90) RETURNING detection_id::text"
+                ),
+                {"m": mission, "v": VID, "s": still, "score": score, "p": point},
+            )
+        ).one()[0]
+        await conn.execute(
+            text(
+                "INSERT INTO candidate_observations (candidate_id, detection_id, distance_m) "
+                "VALUES (CAST(:c AS uuid), CAST(:d AS uuid), 0)"
+            ),
+            {"c": cid, "d": det},
+        )
+    return str(det)
+
+
+async def test_a_rejected_candidate_releases_its_detections(r: Rig) -> None:
+    """Owner decision 5 (2026-11-03): a cylinder the drone made from its own detections
+    goes when the operator rejects the candidate. The list names the rejected candidates'
+    detections at least ``KEEPOUT_SCORE_MIN`` sure (``released``), none while it is open."""
+    mid = await r.ready_mission()
+    lat, lon = r.at(60.0, 0.0)
+    cid = await candidate(r, mid, lat, lon, state="ready", rev=1)
+    sure = await _detection(r, mid, cid, lat, lon, 0.6)
+    await _detection(r, mid, cid, lat, lon, 0.3)  # never a cylinder on board
+
+    def released() -> list[str]:
+        last = installs(r)[-1] if installs(r) else None
+        return [] if last is None else [str(d) for d in last.released]
+
+    await r.until(lambda: bool(installs(r)), 10, "a first list")
+    assert released() == []  # nothing rejected yet
+    await candidate(r, mid, lat, lon, state="rejected", rev=2, cid=cid)
+    await r.until(lambda: released() == [sure], 10, "the rejected candidate's detection")
+    # Reopened (a newer revision that is not rejected): kept out again, not released.
+    await candidate(r, mid, lat, lon, state="inspecting", rev=3, cid=cid)
+    await r.until(lambda: released() == [], 10, "reopened: no longer released")

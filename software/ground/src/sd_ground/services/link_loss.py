@@ -6,7 +6,9 @@ panel should expect while SD-link is down.
   ``PERSON_KEEPOUT_M + sigma95_m``), and so does every open candidate the detector or the
   image model is at least ``KEEPOUT_SCORE_MIN`` sure of (``source = "candidate"``; gone
   when a person rejects it). Only the confirmed ones count for the link-loss rule. The
-  whole list goes out as ``KeepoutInstall`` when it changes and at every ``Hello``.
+  whole list goes out as ``KeepoutInstall`` when it changes and at every ``Hello``, with
+  the rejected candidates' detections (``released``, newest first): the drone removes its
+  own cylinders made from them.
   ``install_seq`` is at least the wall clock in milliseconds, so a restarted ground
   station still sends a higher one than the onboard computer kept.
 * **Installed or not:** the ground waits for the executor's ``Ack`` on every list. Only
@@ -38,7 +40,7 @@ from sd_safety.link_loss import DETECT_MS, FindPlan, choose_mode, plan_times
 from sd_schemas.api import AlertCode, LinkLossPlan
 from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState
-from sd_schemas.link import KEEPOUTS_MAX, Ack, Keepout, KeepoutInstall
+from sd_schemas.link import KEEPOUT_RELEASED_MAX, KEEPOUTS_MAX, Ack, Keepout, KeepoutInstall
 
 if TYPE_CHECKING:
     from sd_ground.services.missions import MissionFlow
@@ -96,6 +98,7 @@ class LinkWatch:
     not_installed: bool = False  # KEEPOUTS_NOT_INSTALLED is out, not yet followed by "done"
     at_cap_logged: bool = False  # install_seq_at_cap is logged; reset by "done"
     keepouts: list[Keepout] = field(default_factory=list[Keepout])
+    released: list[uuid.UUID] = field(default_factory=list[uuid.UUID])  # rejected detections
     ids: dict[str, uuid.UUID] = field(default_factory=dict[str, uuid.UUID])
     seqs: dict[str, int] = field(default_factory=dict[str, int])  # candidate -> K<n>
     polled_ms: int | None = None
@@ -135,7 +138,7 @@ async def on_connected(flow: MissionFlow, vehicle_id: str) -> None:
     w = watch(flow, vehicle_id)
     mission = await flow.repo.open_mission(vehicle_id)
     if mission is None:
-        w.keepouts, w.seqs = [], {}
+        w.keepouts, w.seqs, w.released = [], {}, []
     else:
         await _load(flow, mission, w)
     await _install(flow, mission, w, resend=True, vehicle_id=vehicle_id)
@@ -168,6 +171,10 @@ async def _load(flow: MissionFlow, mission: Mission, w: LinkWatch) -> None:
             )
         )
     w.keepouts, w.seqs = keepouts, seqs
+    found = await flow.repo.released_detections(
+        str(mission.id), KEEPOUT_SCORE_MIN, KEEPOUT_RELEASED_MAX
+    )
+    w.released = [uuid.UUID(d) for d in found]
 
 
 async def _install(
@@ -182,14 +189,15 @@ async def _install(
     if flow.link is None or vid is None:
         return
     mid = None if mission is None else str(mission.id)
-    key = (mid, tuple((str(k.source_id), k.source, k.lat, k.lon, k.radius_m) for k in w.keepouts))
+    cyl = tuple((str(k.source_id), k.source, k.lat, k.lon, k.radius_m) for k in w.keepouts)
+    key = (mid, cyl, tuple(str(d) for d in w.released))
     if key == w.sent and not resend:
         return
     seq = w.install_seq
     if key != w.sent or seq < 0:
         epoch_ms = int(flow.now().timestamp() * 1000)
         seq = min(max(w.install_seq + 1, epoch_ms), INSTALL_SEQ_MAX)
-    install = KeepoutInstall(install_seq=seq, keepouts=list(w.keepouts))
+    install = KeepoutInstall(install_seq=seq, keepouts=list(w.keepouts), released=list(w.released))
     sent = await flow.link.send_message(vid, install, mission_id=mid, ttl_ms=KEEPOUT_TTL_MS)
     if sent is None:
         return  # the link is down: the next poll or Hello sends it

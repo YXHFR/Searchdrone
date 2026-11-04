@@ -110,6 +110,27 @@ FS_DR_TIMEOUT_S: Final = 30  # = FS_DR_TIMEOUT: dead reckoning this long, then t
 # A keep-out cylinder around a possible person: radius = this + the position's sigma95_m.
 PERSON_KEEPOUT_M: Final = 30.0
 KEEPOUT_SCORE_MIN: Final = 0.5  # a detection (or candidate) at least this sure gets one
+# Onboard one still is not enough (owner decision 2026-11-03): a detection makes a cylinder
+# when one in another still lay within the two positions' sigma95_m (at least
+# KEEPOUT_PAIR_MIN_M) apart at most KEEPOUT_PAIR_WINDOW_S before, or when it alone is at
+# least KEEPOUT_SCORE_SURE sure. In the modelled detector profile (det_oracle_v0: false
+# positives Beta(3.5, 6.5), persons Beta(6.5, 3.5)) 0.1 % of false positives reach 0.8 and
+# 16 % of persons do (0.75: 0.4 % and 27 %). The ground's candidate cylinders are as before.
+KEEPOUT_SCORE_SURE: Final = 0.8
+KEEPOUT_PAIR_MIN_M: Final = 15.0
+KEEPOUT_PAIR_WINDOW_S: Final = 60.0
+# A search route (survey_sector, follow_path, resume) may fly straight through the cylinder
+# of an UNCONFIRMED person (a detection or an open candidate) when the charter allows
+# overflight (sim, exercise, live with the permit): at its search speed and height, with no
+# corner, hover, turn or descent inside, and at most this long inside one cylinder (its
+# chord at the route's speed). 12 s lets a typical cylinder (30 m + sigma95 up to 12 m) be
+# crossed through its centre at the default search speed: 2 x 42 m / 7 m/s = 12 s (the
+# analysis: "74 m at 7 m/s, about 10 s"). Confirmed finds always keep the full cylinder.
+# The bound is the stretch inside at the route's planned speed. The flight controller
+# slows ahead of a corner, and a corner may lie as close as KEEPOUT_ARC_MARGIN_M (5 m)
+# past the edge (sd_safety.keepout.passes), so a pass that ends near a turn can take
+# 2-4 s longer than this; that time is not in the bound.
+KEEPOUT_PASS_MAX_S: Final = 12.0
 
 # --- the height floor of a closer look (sd_safety.floor) -----------------------------------
 # The owner's margins (decisions 14-17). The floor under the drone counts the highest tree

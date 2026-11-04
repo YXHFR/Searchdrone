@@ -45,6 +45,7 @@ __all__ = [
     "CROP_JPEG_MAX_BYTES",
     "CROP_MAX_PX",
     "KEEPOUTS_MAX",
+    "KEEPOUT_RELEASED_MAX",
     "KIND_MODELS",
     "MANUAL_CONTROL_TIMEOUT_MS",
     "PERCEPTION_DETECTIONS_MAX",
@@ -375,6 +376,10 @@ CROP_MAX_PX: Final = 512  # a crop's longest side
 CROP_JPEG_MAX_BYTES: Final = 45_000
 VIEW_SIDE_MAX_PX: Final = 1536  # the square a view is cut from, in still pixels
 KEEPOUTS_MAX: Final = 200
+# The detections of rejected candidates sent with a keep-out list (newest first): the drone's
+# own cylinders made from them are removed. A full list and a full keep-out list fit one
+# message.
+KEEPOUT_RELEASED_MAX: Final = 200
 
 _JPEG_MAGIC = b"\xff\xd8\xff"
 
@@ -521,10 +526,15 @@ class KeepoutInstall(SdModel):
     list stays in force until a list with a higher ``install_seq`` arrives: the envelope's
     ``ttl_ms`` only limits how late the message may be delivered, never how long the
     cylinders apply.
+
+    ``released``: detections of candidates a person rejected (spec titta-narmare §7.3.5).
+    The drone removes its own cylinders made from any of them (``source = "detection"``,
+    ``source_id`` the detection); the ground's list no longer holds the candidate's.
     """
 
     install_seq: int = Field(ge=0)
     keepouts: list[Keepout] = Field(default_factory=list[Keepout], max_length=KEEPOUTS_MAX)
+    released: list[Id] = Field(default_factory=list[Id], max_length=KEEPOUT_RELEASED_MAX)
 
 
 KIND_MODELS: dict[str, type[SdModel]] = {

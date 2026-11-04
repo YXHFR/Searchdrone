@@ -56,6 +56,7 @@ class ResumeHandler:
             base_index=rp.next_index,
             interrupted_at=rp.interrupted_at,
             target_state=ExecutorState.TRANSIT if rp.path else ExecutorState.SURVEY,
+            skill=self.name,
         )
         self._home = ctx.charter.home
         return self.run.plan(ctx)

@@ -4819,6 +4819,19 @@
           ],
           "default": null
         },
+        "planned_speed_ms": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "skill": {
           "pattern": "^[a-z][a-z0-9_]{0,63}$",
           "type": "string"
@@ -6014,7 +6027,7 @@
     },
     "KeepoutInstall": {
       "additionalProperties": false,
-      "description": "Ground -> onboard: the whole list of ground cylinders; it replaces the previous one.\n\n``install_seq`` grows with every list; a lower one than the last seen is ignored, so a\nlate resend never brings back a removed cylinder or drops a new one. The installed\nlist stays in force until a list with a higher ``install_seq`` arrives: the envelope's\n``ttl_ms`` only limits how late the message may be delivered, never how long the\ncylinders apply.",
+      "description": "Ground -> onboard: the whole list of ground cylinders; it replaces the previous one.\n\n``install_seq`` grows with every list; a lower one than the last seen is ignored, so a\nlate resend never brings back a removed cylinder or drops a new one. The installed\nlist stays in force until a list with a higher ``install_seq`` arrives: the envelope's\n``ttl_ms`` only limits how late the message may be delivered, never how long the\ncylinders apply.\n\n``released``: detections of candidates a person rejected (spec titta-narmare §7.3.5).\nThe drone removes its own cylinders made from any of them (``source = \"detection\"``,\n``source_id`` the detection); the ground's list no longer holds the candidate's.",
       "properties": {
         "install_seq": {
           "minimum": 0,
@@ -6023,6 +6036,15 @@
         "keepouts": {
           "items": {
             "$ref": "#/$defs/Keepout"
+          },
+          "maxItems": 200,
+          "type": "array"
+        },
+        "released": {
+          "items": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "type": "string"
           },
           "maxItems": 200,
           "type": "array"

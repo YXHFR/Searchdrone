@@ -11,7 +11,7 @@ not changed without a new minor version.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal, Protocol
 from uuid import UUID
@@ -80,6 +80,9 @@ class PlanContext:
     resume_point: ResumePoint | None
     clock: Clock
     keepouts: tuple[Keepout, ...] = field(default=())  # every cylinder in force
+    # How long the drone has been inside each unconfirmed cylinder it is in now (seconds,
+    # by keepout_id): a search route planned mid-passage counts it (``sd_safety.keepout``).
+    keepout_inside_s: Mapping[Id, float] = field(default_factory=dict)
     # The height floor's map pack (``sd_safety.floor``); None: none, nothing comes down.
     floor_pack: FloorPack | None = None
 

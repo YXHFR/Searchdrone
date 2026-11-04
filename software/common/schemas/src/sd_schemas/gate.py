@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 from pydantic import Field
 
@@ -64,6 +65,9 @@ class GateRequest(SdModel):
     phase: Literal["submit", "approve", "estimate", "onboard"]
     approval_confirmations: list[str] = Field(default_factory=list[str])  # phase approve: ticked
     planned_path: list[LatLonAlt] | None = None  # onboard: the handler's path; ground: None
+    # onboard: the speed the handler flies the path at (a search route's passage through
+    # unconfirmed cylinders is counted at it, ``sd_safety.keepout.passage_for``); ground: None
+    planned_speed_ms: float | None = Field(default=None, gt=0, le=100)
 
 
 class ClearanceState(SdModel):
@@ -125,6 +129,11 @@ class GateContext(SdModel):
     # The keep-out cylinders in force (onboard: the ground's and its own; ground: the list
     # it installs). No route may enter one (R-KEEPOUT).
     keepouts: tuple[Keepout, ...] = ()
+    # Onboard: how long the drone has been inside each unconfirmed cylinder it is in now
+    # (seconds, by keepout_id). A search route that starts inside one continues the pass
+    # the drone is on and counts that time; one not listed may only be left without
+    # going deeper (``sd_safety.keepout.passes``). Ground: empty.
+    keepout_inside_s: Mapping[Id, float] = Field(default_factory=dict[UUID, float])
     # The closer look (inspect_detection). Cylinders a look may fly over: its own
     # candidate's, in sim and exercise or live with the permit (R-KEEPOUT skips them).
     suspended_keepout_ids: tuple[Id, ...] = ()

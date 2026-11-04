@@ -164,6 +164,11 @@ STOP_FALLBACK = {
     "inte. Jag ber drönaren stanna; tryck FLYG HEM i panelen.",
 }
 
+# An order refused only for these (the picture it was built on is old) is sent again once,
+# by code, with a fresh picture (owner decision 2026-11-03); the model never resends it.
+STALE_CODES = frozenset({"STATE_CHANGED", "STATE_STALE"})
+_RESENDABLE_KEPT = 32  # the AI's last orders that may be sent again when refused onboard
+
 # Skill events that wake a turn (done, failed, …); "running" etc. only update the picture.
 SKILL_WAKE = frozenset(
     {
@@ -257,6 +262,11 @@ class CommanderLoop:
         self._worker: asyncio.Task[None] | None = None
         self._wake = asyncio.Event()
         self._sync_rejects: dict[str, float] = {}
+        # The AI's own orders as first sent (command id -> request): one refused onboard only
+        # for an old picture is sent again once (``_resend_stale``). Resends are never kept.
+        self._resendable: dict[str, SkillRequest] = {}
+        # Onboard refusals waiting for their resend (the refusal's event), before follow-ups.
+        self._resends: list[dict[str, Any]] = []
         self._action_times: list[float] = []
         self._rate_rejects = 0
         self._last_turn_at = self.clock.monotonic()
@@ -393,6 +403,14 @@ class CommanderLoop:
                 self._unended.pop(cid, None)
             if body.get("status") == "rejected_by_gate" and cid in self._sync_rejects:
                 return  # already handled by the retry turn
+            if (
+                body.get("status") == "rejected_onboard"
+                and _stale_only(body.get("reason_codes"))
+                and cid in self._resendable
+            ):
+                self._resends.append(evt)  # sent again by code; the model hears if refused
+                self._wake.set()
+                return
             if body.get("status") in SKILL_WAKE:
                 trigger = "skill_event"
         elif kind == "event.approval":
@@ -478,6 +496,7 @@ class CommanderLoop:
             self._carry = None
             self._charter_attempts = 0  # the operator's decision ends the request
         self._followups.clear()
+        self._resends.clear()  # the operator's line is newer than the refused order
 
     def _before_ready(self, body: dict[str, Any]) -> bool:
         created = body.get("created_at")
@@ -499,7 +518,7 @@ class CommanderLoop:
         """Wake a turn when airborne, idle and nothing waits (checked by the next turn).
         Once the finish backstop is due, a finish check (no model) runs instead, at most
         every ``FINISH_CHECK_S``."""
-        if self._turn_task is not None or self._queue or self._followups:
+        if self._turn_task is not None or self._queue or self._followups or self._resends:
             return False
         now = self.clock.monotonic()
         if self._finish_due() and now - self._finish_checked_at >= FINISH_CHECK_S:
@@ -527,13 +546,17 @@ class CommanderLoop:
 
     async def drain_queue(self) -> None:
         """Run turns until nothing waits."""
-        while self.mission_id is not None and (self._queue or self._followups):
+        while self.mission_id is not None and (self._queue or self._followups or self._resends):
             if self._queue and any(
                 p.trigger in ("operator_override", "operator_message") for p in self._queue
             ):
                 override = any(p.trigger == "operator_override" for p in self._queue)
                 self._drop_followups(keep_retry=not override)
-            if self._followups and not self._queue:
+            trigger: Trigger
+            if self._resends and not self._queue:
+                trigger = "skill_event"  # the refusal's resend, by code (no model turn)
+                task = asyncio.create_task(self._resend_refused(self._resends.pop(0)))
+            elif self._followups and not self._queue:
                 trigger, extra = self._followups.pop(0)
                 events = [extra] if extra.get("type") else []
                 self._turn_events = events
@@ -541,7 +564,7 @@ class CommanderLoop:
             else:
                 pending, self._queue = self._queue, []
                 order = {t: i for i, t in enumerate(TRIGGER_PRIORITY)}
-                trigger: Trigger = min((p.trigger for p in pending), key=lambda t: order.get(t, 99))
+                trigger = min((p.trigger for p in pending), key=lambda t: order.get(t, 99))
                 self._turn_events = [p.event for p in pending]
                 task = asyncio.create_task(self._turn(trigger, self._turn_events, {}))
             self._turn_task = task
@@ -1094,6 +1117,15 @@ class CommanderLoop:
             return mem
         self._action_times.append(self.clock.monotonic())
         self._activity_at = self.clock.monotonic()
+        if result.decision == "REJECT" and _stale_only(result.reason_codes):
+            again = await self._resend_stale(mid, req)
+            if again is not None:
+                self._unended.pop(cid, None)  # never started: no end comes
+                self._sync_rejects[cid] = self.clock.monotonic()  # its event wakes nothing
+                req, result = again
+                cid = str(req.command_id)
+        elif result.decision in ("ALLOW", "PENDING_APPROVAL"):
+            self._keep_resendable(req)
         record.request = req
         record.result = result
         if result.decision not in ("ALLOW", "PENDING_APPROVAL"):
@@ -1160,6 +1192,76 @@ class CommanderLoop:
                 record.texts = [text]
                 await self._say(OutMessage(text=text, refs={"turn_failed": "gate"}), reply_to)
         return mem
+
+    def _keep_resendable(self, req: SkillRequest) -> None:
+        self._resendable[str(req.command_id)] = req
+        for old in list(self._resendable)[:-_RESENDABLE_KEPT]:
+            del self._resendable[old]
+
+    async def _resend_stale(
+        self, mid: str, req: SkillRequest
+    ) -> tuple[SkillRequest, SkillSubmitResult] | None:
+        """Send ``req`` once more, refused only because the picture it was built on was
+        old (``STALE_CODES``): the same skill and parameters under a new command id, based
+        on the newest snapshot (waited for up to ``FRESH_SNAPSHOT_WAIT_S`` to be newer than
+        the refused one). Code, not the model: a resend is never sent again. None when it
+        could not be sent (the caller keeps the first refusal)."""
+        old = req.based_on
+        end = self.clock.monotonic() + FRESH_SNAPSHOT_WAIT_S
+        s = await self.ground.situation(mid)
+        while (
+            old is not None
+            and (s.snapshot_state_epoch, s.snapshot_state_seq) == (old.state_epoch, old.state_seq)
+            and self.clock.monotonic() < end
+        ):
+            await self.clock.sleep(0.1)
+            s = await self.ground.situation(mid)
+        if s.snapshot_state_epoch is None or s.snapshot_state_seq is None:
+            return None
+        again = req.model_copy(
+            update={
+                "command_id": new_id(),
+                "based_on": StateRef(
+                    state_epoch=s.snapshot_state_epoch, state_seq=s.snapshot_state_seq
+                ),
+            }
+        )
+        await self._respect_rate()
+        cid = str(again.command_id)
+        self._unended[cid] = None
+        try:
+            result = await self.ground.submit(mid, again)
+        except GroundError as exc:
+            self._unended.pop(cid, None)
+            _raise_if_refused(exc)
+            log.warning("ordern kunde inte skickas om: %s", exc)
+            return None
+        self._action_times.append(self.clock.monotonic())
+        if result.decision not in ("ALLOW", "PENDING_APPROVAL"):
+            self._unended.pop(cid, None)
+            self._sync_rejects[cid] = self.clock.monotonic()  # told by the caller, not its event
+        log.info(
+            "stale_resend skill=%s refused=%s again=%s decision=%s",
+            req.skill,
+            req.command_id,
+            again.command_id,
+            result.decision,
+        )
+        return again, result
+
+    async def _resend_refused(self, evt: dict[str, Any]) -> None:
+        """An AI order the drone refused only for an old picture: sent again once
+        (:meth:`_resend_stale`). When the resend is not taken, the refusal wakes the model
+        as any other skill event does."""
+        mid = self.mission_id
+        body: dict[str, Any] = evt.get("body") or {}
+        req = self._resendable.pop(str(body.get("command_id")), None)
+        if mid is None or req is None:
+            return
+        again = await self._resend_stale(mid, req)
+        if again is None or again[1].decision not in ("ALLOW", "PENDING_APPROVAL"):
+            self._queue.append(_Pending("skill_event", evt))
+            self._wake.set()
 
     async def _fresh_situation(
         self, mid: str, s: Situation, trigger: Trigger, events: list[dict[str, Any]]
@@ -1599,6 +1701,13 @@ def _exc_summary(exc: BaseException) -> str:
     """An exception for one log line: its type and a short ``repr`` of its text, so no
     newline or control character from the model can forge another log line."""
     return f"{type(exc).__name__}: {truncate(str(exc), 200)!r}"
+
+
+def _stale_only(codes: Any) -> bool:
+    """Whether a refusal's reason codes are all about an old picture (``STALE_CODES``)."""
+    if not isinstance(codes, list | tuple) or not codes:
+        return False
+    return all(str(c) in STALE_CODES for c in codes)  # pyright: ignore[reportUnknownVariableType]
 
 
 def _raise_if_refused(exc: GroundError) -> None:
