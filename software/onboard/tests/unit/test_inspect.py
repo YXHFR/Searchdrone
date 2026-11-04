@@ -13,14 +13,13 @@ from uuid import UUID
 import pytest
 from onboard_helpers import ONBOARD_SKILLS, PLANE, Rig, at, charter, rig, square
 
-from sd_mav import fake as fake_module
 from sd_mav.mission import MISSION
 from sd_mav.modes import HOME_MODES, CopterMode
 from sd_mav.vehicle import SendOrigin
 from sd_onboard.executor import executor as executor_module
 from sd_onboard.executor.guards import Refusal
 from sd_onboard.executor.keepout_reflex import (
-    INTERNAL_KEEPOUT_CLIMB,
+    INTERNAL_KEEPOUT_EXIT,
     KEEPOUT_CLIMB_MARGIN_M,
     LOCAL_KEEPOUTS_MAX,
     Replans,
@@ -41,8 +40,8 @@ from sd_onboard.skills.base import PlanError, SkillFailedError
 from sd_onboard.skills.goto import GotoHandler, goto_plan
 from sd_onboard.skills.inspect_detection import EXITS_MAX
 from sd_safety import evaluate
-from sd_safety.keepout import circles, xy_route_violation
-from sd_safety.link_loss import FIND_MOVE_DEADLINE_MS, HOLD_MS, HOME_CLIMBING_MS, HOME_MS
+from sd_safety.keepout import KEEPOUT_ARC_MARGIN_M, circles, xy_route_violation
+from sd_safety.link_loss import HOLD_MS, HOME_CLIMBING_MS, HOME_MS
 from sd_safety.targets import polygon_from_geojson
 from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState as S
@@ -729,7 +728,7 @@ async def test_orbit_flies_the_ring_and_hovers() -> None:
         )
         assert r.ex.state == S.TRANSIT, r.up.acks[-2:]
         items = r.fc.missions[MISSION]
-        assert len(items) == 4 + 25  # home, speed, 24 corners and back, loiter, RTL
+        assert len(items) == 3 + 25  # home, speed, 24 corners and back, the hover at the end
         await r.until(lambda: r.fc.mission_current >= 3, 60)
         start = len(r.fc.track)
         await r.until(lambda: "done" in r.up.stages(cmd.command_id), 400)
@@ -855,8 +854,9 @@ async def test_no_way_around_from_a_stop_inside_the_cylinder_says_inside(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A soft brake stops the search inside the cylinder it stopped for, and no way on is
-    planned from there: the hold says ``inside`` (the red alarm), from where the drone is
-    when the order fails."""
+    planned from there: from where the drone is when the order fails it leaves by the
+    shortest way out (``keepout_exit``), never climbing over the person, and hovers
+    outside (owner decision 2026-11-03)."""
 
     def no_way(self: survey_sector.SurveyRun, ctx: Any) -> Any:
         raise PlanError("KEEPOUT_VIOLATION", "ingen väg")
@@ -864,16 +864,20 @@ async def test_no_way_around_from_a_stop_inside_the_cylinder_says_inside(
     async with rig(fc_options={"accel_ms2": SOFT_BRAKE_MS2}) as r:
         cmd, k, _ = await _close_cylinder_ahead(r, SOFT_BRAKE_MS2)
         monkeypatch.setattr(survey_sector.SurveyRun, "plan", no_way)
-        await r.until(lambda: r.ex.state == S.HOLD, 60)
-        assert r.up.codes(cmd.command_id) == ("KEEPOUT_VIOLATION",)
         ((c, rad),) = circles([k], PLANE)
-        assert math.dist(xy(r), c) < rad  # it stopped inside
-        holds = _holds(r)
-        assert [h["inside"] for h in holds] == [True]
-        # Already above the cylinder's top and the margin: it "climbs" to where it is.
-        alt = r.ex.vehicle_state().alt_rel_home_m
-        assert alt >= rad + KEEPOUT_CLIMB_MARGIN_M - 1.5
-        assert holds[0]["climb_to_m"] == pytest.approx(alt, abs=1.5)
+        stopped: list[float] = []
+
+        def leaving() -> bool:
+            if r.ex.active is not None and r.ex.active.skill == INTERNAL_KEEPOUT_EXIT:
+                stopped.append(math.dist(xy(r), c))
+            return r.ex.state == S.HOLD
+
+        await r.until(leaving, 60)
+        assert r.up.codes(cmd.command_id) == ("KEEPOUT_VIOLATION",)
+        assert stopped and stopped[0] < rad  # it stopped inside, then left
+        assert math.dist(xy(r), c) >= rad
+        assert "executor.keepout_exit" in r.up.kinds()
+        assert [h["inside"] for h in _holds(r)] == [False]
 
 
 async def test_a_way_around_the_gate_refuses_for_another_reason_says_that_reason() -> None:
@@ -1036,8 +1040,8 @@ async def test_repeated_detections_of_one_person_merge_into_one_cylinder() -> No
 async def test_a_merged_cylinder_holds_a_goto_short_of_the_person() -> None:
     """A goto past the drone's own cylinder, clear of it. The same person seen again,
     less sure: the grown cylinder now holds the drone, which came outside the old one, so
-    it is not let through. The drone never goes deeper into the grown one: it climbs
-    straight up over it as an inspection does, then hovers there."""
+    it is not let through. The drone never goes deeper into the grown one: it leaves it by
+    the shortest way out at its height, then hovers outside (owner decision 2026-11-03)."""
     async with rig() as r:
         await r.install(charter(allowed_skills=SKILLS))
         await r.takeoff()
@@ -1054,15 +1058,13 @@ async def test_a_merged_cylinder_holds_a_goto_short_of_the_person() -> None:
         assert math.dist(xy(r), centre) < grown.radius_m
         assert math.dist(xy(r), PLANE.xy(old.lat, old.lon)) > old.radius_m
         start, alt = len(r.fc.track), r.ex.vehicle_state().alt_rel_home_m
-        want = grown.radius_m + KEEPOUT_CLIMB_MARGIN_M
-        assert alt < want - 1.5  # under the grown cylinder's top: it climbs
         await r.until(lambda: r.ex.state == S.HOLD, 60)
         assert r.ex.hold_reason == "limit" and r.fc.mode == CopterMode.LOITER
-        assert math.dist(xy(r), centre) < grown.radius_m
+        assert math.dist(xy(r), centre) >= grown.radius_m  # out
         holds = _holds(r)
-        assert [h["inside"] for h in holds] == [True]  # over the person: red
-        assert holds[0]["climb_to_m"] == pytest.approx(round(want, 1))
-        assert abs(r.ex.vehicle_state().alt_rel_home_m - want) <= 1.5
+        assert [h["inside"] for h in holds] == [False]
+        assert "executor.keepout_exit" in r.up.kinds()
+        assert abs(r.ex.vehicle_state().alt_rel_home_m - alt) <= 1.5  # no climb
         await r.run(5)
         dists = [math.dist(p, centre) for p in track_xy(r, start)]
         assert min(dists) >= dists[0] - 3.0  # the brake, no deeper
@@ -1192,14 +1194,14 @@ async def test_a_full_list_of_own_cylinders_stops_a_search(
         monkeypatch.setattr(r.ex, "_over_a_keepout", lambda: over)
         climbs: list[str] = []
 
-        def climb_out(active: Any) -> bool:
+        def exit_keepouts(active: Any) -> bool:
             climbs.append(active.skill)
-            return False  # no room to climb: hovers
+            return False  # no way out taken: hovers
 
-        monkeypatch.setattr(r.ex, "_climb_out", climb_out)
+        monkeypatch.setattr(r.ex, "_exit_keepouts", exit_keepouts)
         r.ex.on_detections([detection(140, -90, 0.9)])
         assert "executor.keepouts_full" in r.up.kinds()
-        assert climbs == (["survey_sector"] if over else [])  # inside: climbs out first
+        assert climbs == (["survey_sector"] if over else [])  # inside: leaves first
         assert r.ex.state == S.HOLD and r.ex.hold_reason == "limit"
         holds = [d for t, _, d in r.up.events if t == "executor.keepout_hold"]
         assert [h["inside"] for h in holds] == [over], holds
@@ -1325,73 +1327,110 @@ async def _search_over_a_person(
     return cmd, person, here, start
 
 
-async def test_no_way_out_of_a_cylinder_around_a_search_climbs_then_hovers(
+def _outside_all(r: Rig) -> bool:
+    plane = r.ex.plane()
+    assert plane is not None
+    return not over_a_person(xy(r), circles(r.ex.keepouts_in_force(), plane))
+
+
+async def _exiting(r: Rig) -> None:
+    await r.run(0.5)
+    assert r.ex.state == S.TRANSIT and r.ex.active is not None
+    assert r.ex.active.skill == INTERNAL_KEEPOUT_EXIT
+
+
+async def test_no_way_around_a_search_over_a_person_leaves_by_the_shortest_way(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Over a person with no way out, a search climbs straight up as an inspection does:
-    to the cylinder's top and the margin, in an internal goto that replaces the order;
-    there it hovers. The operator is told once, as the climb begins (the red alarm)."""
+    """Owner decision 2026-11-03: never climb and hover over a possible person. Boxed in,
+    a search leaves the cylinder by the shortest straight way out, at its height, in an
+    internal goto that replaces the order; outside it hovers. The operator is told once,
+    as the way out begins (``keepout_hold`` outside, and ``keepout_exit``)."""
     async with rig() as r:
         cmd, person, here, start = await _search_over_a_person(r, monkeypatch)
-        want = person.radius_m + KEEPOUT_CLIMB_MARGIN_M
-        assert r.ex.vehicle_state().alt_rel_home_m < want - 1.5
-        await r.run(0.5)
-        assert r.ex.state == S.TRANSIT  # climbing
+        alt = r.ex.vehicle_state().alt_rel_home_m
+        await _exiting(r)
         assert r.up.stages(cmd.command_id)[-1] == "superseded"
         assert ("KEEPOUT_VIOLATION",) in [c for ref, _, c in r.up.acks if ref == cmd.command_id]
         assert r.ex.resume_point is not None  # the search can go on later
+        assert "executor.keepout_exit" in r.up.kinds()
         await r.until(lambda: r.ex.state == S.HOLD, 120)
         holds = _holds(r)
-        assert len(holds) == 1, holds
-        assert holds[0]["inside"] is True and holds[0]["climb_to_m"] == pytest.approx(want)
+        assert len(holds) == 1 and holds[0]["inside"] is False, holds
         assert holds[0]["command_id"] == str(cmd.command_id)
         assert r.ex.hold_reason == "limit" and r.fc.mode == CopterMode.LOITER
-        assert abs(r.ex.vehicle_state().alt_rel_home_m - want) <= 1.5
-        # Straight up: no farther off than braking from the search's speed.
-        assert math.dist(track_xy(r, start)[-1], here) <= 10.0
+        assert _outside_all(r)
+        track = track_xy(r, start)
+        # No climb: the way out keeps the search's height.
+        assert r.ex.vehicle_state().alt_rel_home_m <= alt + 1.5
+        # The shortest way: about the radius, plus the margin and braking from 8 m/s.
+        assert math.dist(track[-1], here) <= person.radius_m + KEEPOUT_ARC_MARGIN_M + 12.0
         await r.run(10)
-        assert len(_holds(r)) == 1  # hovering there: told once
-        assert abs(r.ex.vehicle_state().alt_rel_home_m - want) <= 1.5
+        assert len(_holds(r)) == 1 and r.ex.state == S.HOLD  # hovering outside: told once
 
 
-async def test_a_climb_over_the_top_starts_where_the_drone_stops(
+async def test_a_moving_drone_brakes_before_it_turns_onto_the_way_out(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A cylinder comes around a search leg whose height is already above the cylinder's
-    top and margin: the climb is to where the drone stops, never back to where it was when
-    the cylinder came. A flight controller that carries its speed brakes past that spot,
-    and the way back there can lie deeper in a cylinder that came meanwhile (SITL SK03:
-    E8)."""
-    async with rig(fc_options={"accel_ms2": BRAKE_MS2}) as r:
-        cmd, person, here, start = await _search_over_a_person(
-            r, monkeypatch, radius=20.0, speed_ms=6.0
-        )
-        alt = r.ex.vehicle_state().alt_rel_home_m
-        assert alt > person.radius_m + KEEPOUT_CLIMB_MARGIN_M  # the climb is no climb
-        ve, vn = r.fc.vel
-        speed = math.hypot(ve, vn)
-        ahead = (ve / speed, vn / speed)
-        await r.until(lambda: r.ex.state == S.HOLD, 120)
-        assert [h["inside"] for h in _holds(r)] == [True]
-        assert r.up.stages(cmd.command_id)[-1] == "superseded"
-        along = [(x - here[0]) * ahead[0] + (y - here[1]) * ahead[1] for x, y in track_xy(r, start)]
-        back = max(a - b for a, b in zip(itertools.accumulate(along, max), along, strict=True))
-        assert back <= 0.5, f"flew {back:.1f} m back along its leg"
-        assert along[-1] >= speed**2 / (2 * BRAKE_MS2) - 2.0  # hovers where it stopped
-        await r.run(10)
-        assert math.dist(xy(r), track_xy(r, start)[-1]) <= 0.5
-
-
-async def test_a_climb_with_the_ai_silent_still_ends_in_the_keepout_hover(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """With the AI gone quiet (finish the step, then hover), the climb still ends in the
-    keep-out hover (``limit``) as a failed order does, not ``ai_silent``: a link loss's
-    find move never takes the drone out of that hover sideways."""
+    """Boxed in at speed, the drone first stops where it is (an internal goto to its own
+    position) and only then flies the way out planned from where it stopped: a turn at
+    speed would carry it on, maybe into the cylinder ahead. The operator is told once.
+    (The fake flight controller reports no ground speed, so \"moving\" is forced.)"""
+    monkeypatch.setattr(executor_module, "still", lambda _v: False)
     async with rig() as r:
-        _, person, _, _ = await _search_over_a_person(r, monkeypatch)
+        cmd, _, _, _ = await _search_over_a_person(r, monkeypatch)
+        await _exiting(r)
+        assert r.ex._exit_braking is not None  # pyright: ignore[reportPrivateUsage]
+        assert r.up.stages(cmd.command_id)[-1] == "superseded"
+        assert "executor.keepout_exit" not in r.up.kinds()  # not before the stop
+        holds = _holds(r)
+        assert len(holds) == 1 and holds[0]["inside"] is False, holds
+        await r.until(lambda: "executor.keepout_exit" in r.up.kinds(), 60)
+        assert r.ex._exit_braking is None  # pyright: ignore[reportPrivateUsage]
+        assert r.ex.active is not None and r.ex.active.skill == INTERNAL_KEEPOUT_EXIT
+        await r.until(lambda: r.ex.state == S.HOLD, 120)
+        assert _outside_all(r) and r.ex.hold_reason == "limit"
+        assert len(_holds(r)) == 1
+
+
+async def test_the_way_out_crosses_an_unconfirmed_cylinder_but_no_confirmed_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The nearest way out is past a confirmed find: the drone takes the longer way that
+    goes into no confirmed cylinder."""
+    async with rig() as r:
+        _, person, here, start = await _search_over_a_person(r, monkeypatch, radius=40.0)
+        found = keepout(here[0] + 45.0, here[1], 30.0)  # east, confirmed
+        install(r, person, found)
+        await _exiting(r)
+        await r.until(lambda: r.ex.state == S.HOLD, 120)
+        assert _outside_all(r)
+        fc_, rad = PLANE.xy(found.lat, found.lon), found.radius_m
+        assert all(math.dist(p, fc_) >= rad - 0.5 for p in track_xy(r, start))
+
+
+async def test_no_way_out_of_a_person_flies_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Boxed in with no way out (confirmed cylinders all round, or the charter's edge): it
+    flies home (``keepout_rtl``), never hovers over the person."""
+    monkeypatch.setattr(executor_module, "exit_point", lambda *_a, **_k: None)
+    async with rig() as r:
+        cmd, _, _, _ = await _search_over_a_person(r, monkeypatch)
         await r.run(0.5)
-        assert r.ex.state == S.TRANSIT  # climbing
+        assert r.ex.state == S.RTL, r.ex.state
+        assert "executor.keepout_rtl" in r.up.kinds()
+        assert r.up.stages(cmd.command_id)[-1] in ("superseded", "aborted")
+        await r.run(5)
+        assert r.fc.mode in HOME_MODES
+
+
+async def test_a_way_out_with_the_ai_silent_still_ends_in_the_keepout_hover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the AI gone quiet (finish the step, then hover), the way out still ends in the
+    keep-out hover (``limit``) as a failed order does, not ``ai_silent``."""
+    async with rig() as r:
+        await _search_over_a_person(r, monkeypatch)
+        await _exiting(r)
 
         def held_with_the_ai_silent() -> bool:  # the rig's AI keeps talking: silence it
             r.ex.ai_silent_after_step = True
@@ -1399,78 +1438,54 @@ async def test_a_climb_with_the_ai_silent_still_ends_in_the_keepout_hover(
 
         await r.until(held_with_the_ai_silent, 120)
         assert r.ex.hold_reason == "limit"
-        want = person.radius_m + KEEPOUT_CLIMB_MARGIN_M
-        assert abs(r.ex.vehicle_state().alt_rel_home_m - want) <= 1.5
+        assert _outside_all(r)
 
 
-@pytest.mark.parametrize(("own", "slow"), [(True, False), (False, False), (True, True)])
-async def test_a_link_loss_during_a_climb_lets_it_end_in_the_keepout_hold(
-    monkeypatch: pytest.MonkeyPatch, own: bool, slow: bool
+@pytest.mark.parametrize("own", [True, False])
+async def test_a_link_loss_during_the_way_out_lets_it_end_in_the_keepout_hold(
+    monkeypatch: pytest.MonkeyPatch, own: bool
 ) -> None:
-    """The link lost while the drone climbs out of a person's cylinder, with a confirmed
-    find near: the climb goes on to the top and ends in the keep-out hold (``limit``),
-    where the find hover starts. It never moves sideways out of the cylinder below its
-    top (the find's own cylinder, the hover point straight out) and never hovers halfway
-    up (another person's cylinder in the way to the find). A climb slower than the find
-    move's deadline is not cut short by it either (``slow``)."""
-    if slow:
-        monkeypatch.setattr(fake_module, "_CLIMB_MS", 1.0)  # 20 m up: past the deadline
+    """The link lost while the drone leaves a person's cylinder, with a confirmed find
+    (its own, or another near): the way out goes on and ends in the keep-out hold
+    (``limit``), where the find hover starts, outside every cylinder."""
+    monkeypatch.setattr(executor_module, "_EXIT_SPEED_MS", 2.0)
     async with rig() as r:
-        _, person, here, start = await _search_over_a_person(
+        _, person, here, _ = await _search_over_a_person(
             r, monkeypatch, source="confirmed" if own else "candidate"
         )
         if not own:
             find = keepout(here[0] + 90.0, here[1], 10.0)
             install(r, person, find)
-        await r.run(0.5)
-        assert r.ex.state == S.TRANSIT  # climbing
-        want = person.radius_m + KEEPOUT_CLIMB_MARGIN_M
-        assert r.ex.vehicle_state().alt_rel_home_m < want - 10
+        await _exiting(r)
         r.link = False
-        cut = r.clock.monotonic()
         skills: set[str | None] = set()
-        held: list[int] = []  # when the climb ended in the hold
 
         def hovering() -> bool:
             skills.add(r.ex.active.skill if r.ex.active else None)
-            if r.ex.state == S.HOLD and not held:
-                held.append(r.ex.now_ms())
             return r.ex.link_rule.phase == LinkLossPhase.FIND_HOVER and r.ex.state == S.HOLD
 
         await r.until(hovering, 120)
-        assert "executor.find_hold_started" in r.up.kinds()  # the find rule did start
-        # The hover's clock starts up there, when the climb has ended (hovered_s).
-        assert r.ex.link_rule.hover_since_ms is not None
-        assert r.ex.link_rule.hover_since_ms >= held[0]
-        if slow:  # the deadline passed during the climb, with no word of a stop
-            assert r.clock.monotonic() - cut >= FIND_MOVE_DEADLINE_MS / 1000
-            assert "executor.find_move_deadline" not in r.up.kinds()
+        assert "executor.find_hold_started" in r.up.kinds()
         assert INTERNAL_FIND_GOTO not in skills
         assert r.ex.hold_reason == "limit" and r.fc.mode == CopterMode.LOITER
-        assert abs(r.ex.vehicle_state().alt_rel_home_m - want) <= 1.5
+        assert _outside_all(r)
         await r.run(10)
         assert r.ex.state == S.HOLD and r.ex.hold_reason == "limit"
         assert "executor.find_move_keepout_exit" not in r.up.kinds()
-        # Straight up and still: no farther off than braking from the search's speed.
-        assert max(math.dist(p, here) for p in track_xy(r, start)) <= 10.0
 
 
-@pytest.mark.parametrize("radius", [80.0, 105.0])
-async def test_a_link_loss_with_no_find_lets_the_climb_end_then_holds_and_flies_home(
+@pytest.mark.parametrize("radius", [30.0, 80.0])
+async def test_a_link_loss_with_no_find_lets_the_way_out_end_then_holds_and_flies_home(
     monkeypatch: pytest.MonkeyPatch, radius: float
 ) -> None:
-    """The link lost as the drone begins to climb out of a person's cylinder, no confirmed
-    find near: the hold that is due at 23 s does not cut the climb short. It climbs on to
-    the top; the hold there is the keep-out hold (``limit``), told as the link-loss hold,
-    and home is at 53 s as ever (up in about 45 s), or at once at the top when the climb
-    takes longer than that (about 70 s)."""
+    """The link lost as the drone begins to leave a person's cylinder, no confirmed find
+    near: the hold that is due at 23 s does not cut the way out short. It goes on out; the
+    hold there is the keep-out hold (``limit``), and home is at 53 s as ever (out in about
+    35 s), or at once outside when the way out takes longer than that (about 85 s)."""
+    monkeypatch.setattr(executor_module, "_EXIT_SPEED_MS", 1.0)
     async with rig() as r:
-        _, person, here, start = await _search_over_a_person(r, monkeypatch, radius=radius)
-        monkeypatch.setattr(fake_module, "_CLIMB_MS", 1.0)  # after the takeoff
-        await r.run(0.5)
-        assert r.ex.state == S.TRANSIT  # climbing
-        want = person.radius_m + KEEPOUT_CLIMB_MARGIN_M
-        assert r.ex.vehicle_state().alt_rel_home_m < want - 40  # longer than 23 s up
+        await _search_over_a_person(r, monkeypatch, radius=radius)
+        await _exiting(r)
         r.link = False
         cut = r.clock.monotonic()
         seen: list[tuple[float, str, str | None, str | None]] = []
@@ -1482,61 +1497,43 @@ async def test_a_link_loss_with_no_find_lets_the_climb_end_then_holds_and_flies_
 
         await r.until(homing, 200)
         took = r.clock.monotonic() - cut
-        top = r.ex.vehicle_state().alt_rel_home_m
-        assert abs(top - want) <= 1.5, top  # home from the top, not from halfway up
-        climbing = [t for t, _, _, a in seen if a == INTERNAL_KEEPOUT_CLIMB]
-        assert max(climbing) > HOLD_MS / 1000  # the climb went on past 23 s
+        assert _outside_all(r)  # home from outside, not from halfway out
+        leaving = [t for t, _, _, a in seen if a == INTERNAL_KEEPOUT_EXIT]
+        assert max(leaving) > HOLD_MS / 1000  # the way out went on past 23 s
         holds = {(st, why) for _, st, why, a in seen if st == str(S.HOLD)}
         assert holds <= {(str(S.HOLD), "limit")}, holds  # no hover halfway, no relabel
         kinds = r.up.kinds()
         assert "executor.link_lost" in kinds and "executor.link_loss_rtl" in kinds
-        assert kinds.index("executor.link_loss_hold") < kinds.index("executor.link_loss_rtl")
-        if radius == 80.0:  # up before 53 s: the keep-out hold, then home on time
+        if radius == 30.0:  # out before 53 s: the keep-out hold, then home on time
             assert holds and took == pytest.approx(HOME_MS / 1000, abs=0.5)
-        else:  # up after 53 s: home at once from the top
+        else:  # out after 53 s: home at once from outside
             assert took > HOME_MS / 1000
-        assert max(math.dist(p, here) for p in track_xy(r, start)) <= 10.0
 
 
-@pytest.mark.parametrize("goto_deadline", [True, False])
-async def test_a_stalled_climb_still_flies_home_on_a_link_loss(
-    monkeypatch: pytest.MonkeyPatch, goto_deadline: bool
+async def test_a_stalled_way_out_still_flies_home_on_a_link_loss(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The climb out of a person's cylinder stalls (0.05 m/s) and the link is lost, no find
-    near: home is due regardless at ``HOME_CLIMBING_MS`` (113 s), whatever the climb's own
-    deadline. Without that (``goto_deadline`` False: as if the goto's deadline were far
-    off) the rule's cap alone sends it home then; with it, the goto's deadline ends the
-    climb in the keep-out hold earlier, and home follows at once."""
-    if not goto_deadline:
-        monkeypatch.setattr(GotoHandler, "_deadline_for", staticmethod(lambda now, _p: now + 1e6))
+    """The way out stalls and the link is lost, no find near: home is due regardless at
+    ``HOME_CLIMBING_MS`` (113 s), whatever the goto's own deadline."""
+    monkeypatch.setattr(GotoHandler, "_deadline_for", staticmethod(lambda now, _p: now + 1e6))
+    monkeypatch.setattr(executor_module, "_EXIT_SPEED_MS", 0.2)
     async with rig() as r:
-        _, person, _, _ = await _search_over_a_person(r, monkeypatch, radius=80.0)
-        monkeypatch.setattr(fake_module, "_CLIMB_MS", 0.05)  # after the takeoff
-        await r.run(0.5)
-        assert r.ex.state == S.TRANSIT and r.ex.active is not None
-        assert r.ex.active.skill == INTERNAL_KEEPOUT_CLIMB
+        await _search_over_a_person(r, monkeypatch, radius=80.0)
+        await _exiting(r)
         r.link = False
         await r.run(0.1)
         lost = r.ex.link_last_inbound_ms
         assert lost is not None
         await r.until(lambda: r.ex.state == S.RTL, HOME_CLIMBING_MS / 1000 + 5)
         took = r.ex.now_ms() - lost
-        assert took <= HOME_CLIMBING_MS + 200, took
-        want = person.radius_m + KEEPOUT_CLIMB_MARGIN_M
-        assert r.ex.vehicle_state().alt_rel_home_m < want - 30  # it never got far up
-        kinds = r.up.kinds()
-        assert kinds.index("executor.link_loss_hold") < kinds.index("executor.link_loss_rtl")
-        if not goto_deadline:  # the cap: home at 113 s, out of the climb itself
-            assert took == pytest.approx(HOME_CLIMBING_MS, abs=200)
-        else:  # the goto's deadline came first: home at once from the keep-out hold
-            assert took < HOME_CLIMBING_MS - 5000
+        assert took == pytest.approx(HOME_CLIMBING_MS, abs=200)
 
 
-async def test_an_inspection_held_over_a_person_does_not_take_the_order_climb(
+async def test_an_inspection_held_over_a_person_does_not_take_the_way_out(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``_keepout_hold`` inside a cylinder during an inspection: the inspection climbs its
-    own way (``_keepout_climb``) or hovers, never the other orders' ``_climb_out``."""
+    own way (``_keepout_climb``) or hovers, never the other orders' ``_exit_keepouts``."""
     async with rig() as r:
         await r.install(charter(allowed_skills=SKILLS))
         await r.takeoff()
@@ -1545,15 +1542,15 @@ async def test_an_inspection_held_over_a_person_does_not_take_the_order_climb(
         await r.send(r.order("inspect_detection", inspect(150, 0, 35)), 0.5)
         assert r.ex.state == S.INSPECT and r.ex.active is not None
         assert isinstance(r.ex.active.handler, Replans)
-        climbs: list[str] = []
+        exits: list[str] = []
 
-        def climb_out(active: Any) -> bool:
-            climbs.append(active.skill)
+        def exit_keepouts(active: Any) -> bool:
+            exits.append(active.skill)
             return True
 
-        monkeypatch.setattr(r.ex, "_climb_out", climb_out)
+        monkeypatch.setattr(r.ex, "_exit_keepouts", exit_keepouts)
         r.ex._keepout_hold(inside=True)  # pyright: ignore[reportPrivateUsage]
-        assert climbs == []
+        assert exits == []
         assert r.ex.state == S.HOLD and r.ex.hold_reason == "limit"
 
 
@@ -1572,65 +1569,61 @@ async def test_the_ai_going_quiet_in_the_keepout_hold_keeps_it_the_keepout_hold(
         assert r.ex.ai_silent_after_step and r.ex.hold_reason == "limit"
 
 
-async def test_a_link_loss_hold_during_a_climb_is_told_as_a_link_loss(
+async def test_a_link_loss_hold_during_the_way_out_is_told_as_a_link_loss(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Only the AI going quiet turns the hover that stops a climb into the keep-out hold;
+    """Only the AI going quiet turns the hover that stops a way out into the keep-out hold;
     a link loss's hold keeps its own name."""
     async with rig() as r:
         await _search_over_a_person(r, monkeypatch)
-        await r.run(0.5)
-        assert r.ex.state == S.TRANSIT  # climbing
+        await _exiting(r)
         r.ex._apply_limit(  # pyright: ignore[reportPrivateUsage]
             LimitAction("L-LINK", "hold", "link_loss", "link_loss_hold", {})
         )
         assert r.ex.state == S.HOLD and r.ex.hold_reason == "link_loss"
 
 
-async def test_a_climb_cut_short_by_its_deadline_is_the_keepout_hold(
+async def test_a_way_out_cut_short_by_its_deadline_is_the_keepout_hold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The climb not there in time (``ONB_SKILL_TIMEOUT``): it hovers where it is, in the
-    keep-out hold (``limit``), with no second climb and no second word to the operator."""
+    """The way out not there in time (``ONB_SKILL_TIMEOUT``): it hovers where it is, in the
+    keep-out hold (``limit``), with no second way out and no second word to the operator."""
     monkeypatch.setattr(GotoHandler, "_deadline_for", staticmethod(lambda now, plan: now + 1.0))
     async with rig() as r:
         await _search_over_a_person(r, monkeypatch)
-        await r.run(0.5)
-        assert r.ex.state == S.TRANSIT  # climbing
+        await _exiting(r)
         await r.until(lambda: r.ex.state == S.HOLD, 30)
         assert r.ex.hold_reason == "limit" and r.ex.active is None
         await r.run(5)
-        assert len(_holds(r)) == 1 and r.ex.active is None  # told once, no second climb
+        assert len(_holds(r)) == 1 and r.ex.active is None  # told once, no second way out
 
 
-async def test_the_ai_silent_holding_during_a_climb_is_the_keepout_hold(
+async def test_the_ai_silent_holding_during_the_way_out_is_the_keepout_hold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A charter that holds when the AI goes quiet stops the climb over the person: that
-    hover is the keep-out hold (``limit``), which a link loss's find move never leaves."""
+    """A charter that holds when the AI goes quiet stops the way out: that hover is the
+    keep-out hold (``limit``), which a link loss's find move never leaves."""
     async with rig() as r:
         await _search_over_a_person(r, monkeypatch)
-        await r.run(0.5)
-        assert r.ex.state == S.TRANSIT  # climbing
+        await _exiting(r)
         r.ex._apply_limit(  # pyright: ignore[reportPrivateUsage]
             LimitAction("L-AI", "hold", "ai_silent", "ai_silent", {"on_ai_silent": "hold"})
         )
         assert r.ex.state == S.HOLD and r.ex.hold_reason == "limit"
 
 
-async def test_a_link_loss_find_move_never_leaves_sideways_during_a_climb(
+async def test_a_link_loss_find_move_never_leaves_sideways_during_the_way_out(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """While the drone climbs out of a person's cylinder, a link loss's find move takes no
-    way out sideways (``_find_way_out``): the climb counts as the keep-out hold. Without
-    the climb the same place has a way out."""
+    """While the drone leaves a person's cylinder, a link loss's find move plans no way
+    out of its own (``_find_way_out``): the way out under way counts as the keep-out hold.
+    Without it the same place has a way out."""
     async with rig() as r:
         await _search_over_a_person(r, monkeypatch)
-        await r.run(0.5)
-        assert r.ex.state == S.TRANSIT  # climbing
+        await _exiting(r)
         monkeypatch.setattr(r.ex.link_rule, "plan", SimpleNamespace(), raising=False)
         assert r.ex._find_way_out() is None  # pyright: ignore[reportPrivateUsage]
-        monkeypatch.setattr(r.ex, "_climbing_out", lambda: False)
+        monkeypatch.setattr(r.ex, "_exiting_keepouts", lambda: False)
         monkeypatch.setattr(r.ex, "_find_move_late", lambda: False)
         plane, charter_ = r.ex.plane(), r.ex.charter
         assert plane is not None and charter_ is not None
@@ -1638,13 +1631,12 @@ async def test_a_link_loss_find_move_never_leaves_sideways_during_a_climb(
         assert way_out(xy(r), cyl, polygon_from_geojson(charter_.area, plane)) is not None
 
 
-async def test_the_battery_limit_during_a_search_climb_flies_home(
+async def test_the_battery_limit_during_the_way_out_flies_home(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async with rig() as r:
         await _search_over_a_person(r, monkeypatch)
-        await r.until(lambda: len(_holds(r)) == 1, 30)
-        assert r.ex.state == S.TRANSIT  # climbing
+        await _exiting(r)
         r.fc.battery_pct = r.ex.charter.battery_rtl_pct - 1  # pyright: ignore[reportOptionalMemberAccess]
         await r.until(lambda: r.ex.state == S.RTL, 30)
         await r.run(5)
@@ -1652,42 +1644,37 @@ async def test_the_battery_limit_during_a_search_climb_flies_home(
         assert "executor.limit_battery_rtl" in r.up.kinds()
 
 
-async def test_a_search_climb_is_no_faster_than_the_charter(
+async def test_the_way_out_is_no_faster_than_the_charter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(executor_module, "_ALT_GOTO_SPEED_MS", 50.0)
+    monkeypatch.setattr(executor_module, "_EXIT_SPEED_MS", 50.0)
     async with rig() as r:
         await _search_over_a_person(r, monkeypatch)
-        await r.run(1.0)
-        assert r.ex.state == S.TRANSIT  # climbing
+        await _exiting(r)
         assert r.ex.charter is not None
         assert r.fc.speed_ms == pytest.approx(r.ex.charter.max_speed_ms)
 
 
-async def test_no_climb_when_the_altitude_limit_cannot_be_entered_hovers(
+async def test_no_way_out_when_the_limit_state_cannot_be_entered_hovers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The state machine refuses the climb's transition (``LIMIT_ALT``): the order hovers
-    where it is, over the person, and the operator is told it cannot climb."""
+    """The state machine refuses the way out's transition (``LIMIT_ALT``): the order
+    hovers where it is, and the operator is told it is over the person (``inside``)."""
     async with rig() as r:
         target_of = r.ex.target_of
 
-        def no_climb(trigger: Any, **kw: Any) -> Any:
+        def no_exit(trigger: Any, **kw: Any) -> Any:
             if trigger == Trigger.LIMIT_ALT:
                 return Refusal(None)
             return target_of(trigger, **kw)
 
-        monkeypatch.setattr(r.ex, "target_of", no_climb)
+        monkeypatch.setattr(r.ex, "target_of", no_exit)
         cmd, _, _, _ = await _search_over_a_person(r, monkeypatch)
-        alt = r.ex.vehicle_state().alt_rel_home_m
         await r.run(0.5)
         assert r.ex.state == S.HOLD and r.ex.hold_reason == "limit"
         holds = _holds(r)
         assert len(holds) == 1 and holds[0]["inside"] is True, holds
-        assert "climb_to_m" not in holds[0]
         assert r.up.stages(cmd.command_id)[-1] == "superseded"
-        await r.run(5)
-        assert r.ex.vehicle_state().alt_rel_home_m <= alt + 1.5
 
 
 def test_over_a_person_is_strictly_inside() -> None:
@@ -1701,87 +1688,44 @@ def test_over_a_person_is_strictly_inside() -> None:
     assert climb_alt((0.0, 10.0), cyl, 20.0, 100.0) is None
 
 
-async def test_no_way_out_of_a_search_and_no_room_to_climb_hovers_where_it_is(
+async def test_stop_during_the_way_out_brakes_and_holds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No higher allowed: the search hovers where it is, and the operator is told it
-    cannot climb (``inside`` and no ``climb_to_m``)."""
-    monkeypatch.setattr(executor_module, "_ALT_GOTO_BELOW_M", 200.0)
-    async with rig() as r:
-        cmd, _, _, _ = await _search_over_a_person(r, monkeypatch)
-        alt = r.ex.vehicle_state().alt_rel_home_m
-        await r.run(0.5)
-        assert r.ex.state == S.HOLD
-        holds = _holds(r)
-        assert len(holds) == 1 and holds[0]["inside"] is True, holds
-        assert "climb_to_m" not in holds[0]
-        assert r.up.stages(cmd.command_id)[-1] == "superseded"
-        await r.run(5)
-        assert r.ex.vehicle_state().alt_rel_home_m <= alt + 1.5
-
-
-async def test_a_search_climbs_only_to_the_charter_ceiling(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The cylinder's top lies above what the charter allows: the search's climb stops at
-    the charter's height less the altitude limit's margin, and never goes above it."""
-    async with rig() as r:
-        await _search_over_a_person(r, monkeypatch, radius=100.0)
-        alt = r.ex.vehicle_state().alt_rel_home_m
-        cap = alt + 8.0
-        ceiling = r.ex.charter.alt_max_agl_m  # pyright: ignore[reportOptionalMemberAccess]
-        monkeypatch.setattr(executor_module, "_ALT_GOTO_BELOW_M", ceiling - cap)
-        highest, t0 = alt, r.clock.monotonic()
-        while r.ex.state != S.HOLD:
-            await r.run(0.5)
-            highest = max(highest, r.ex.vehicle_state().alt_rel_home_m)
-            assert r.clock.monotonic() - t0 < 120, "never hovered"
-        holds = _holds(r)
-        assert len(holds) == 1 and holds[0]["climb_to_m"] == pytest.approx(round(cap, 1))
-        await r.run(10)
-        highest = max(highest, r.ex.vehicle_state().alt_rel_home_m)
-        assert highest <= cap + 1.5, (highest, cap)
-
-
-async def test_stop_during_a_search_climb_brakes_and_holds(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """STOP goes past the AI and the reflex as always, also during another order's climb."""
+    """STOP goes past the AI and the reflex as always, also during the way out."""
+    monkeypatch.setattr(executor_module, "_EXIT_SPEED_MS", 2.0)
     async with rig() as r:
         await _search_over_a_person(r, monkeypatch)
-        await r.until(lambda: len(_holds(r)) == 1, 30)
+        await _exiting(r)
         await r.run(2)
-        assert r.ex.state == S.TRANSIT  # climbing
+        assert r.ex.state == S.TRANSIT  # leaving
         r.fc.set_mode_external(CopterMode.BRAKE)  # the ground's STOP, as MAVLink first
         await r.run(0.3)
         r.ex.on_override(r.notice("stop"))
         assert r.ex.state == S.HELD and r.ex.held_by == "operator_stop"
-        assert r.ex.active is None  # the climb is dropped
+        assert r.ex.active is None  # the way out is dropped
         before = len(r.vehicle.sent)
         await r.run(5)
-        # The executor no longer steers (the fake keeps its last target on a mode change
-        # it was not asked for, so its altitude here says nothing about BRAKE).
         assert r.fc.mode == CopterMode.BRAKE
         assert r.steering_sent(before) == []
 
 
-async def test_fly_home_during_a_search_climb_flies_home(
+async def test_fly_home_during_the_way_out_flies_home(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """FLY HOME goes past the AI and the reflex as always, also during another order's
-    climb."""
+    """FLY HOME goes past the AI and the reflex as always, also during the way out."""
+    monkeypatch.setattr(executor_module, "_EXIT_SPEED_MS", 2.0)
     async with rig() as r:
         await _search_over_a_person(r, monkeypatch)
-        await r.until(lambda: len(_holds(r)) == 1, 30)
+        await _exiting(r)
         await r.run(2)
-        assert r.ex.state == S.TRANSIT  # climbing
+        assert r.ex.state == S.TRANSIT  # leaving
         r.ex.on_override(r.notice("return_home"))
         await r.ground.set_mode(CopterMode.SMART_RTL, origin=SendOrigin.GROUND)
         await r.run(1)
         assert r.ex.held_by == "operator_home"
         before = len(r.vehicle.sent)
         await r.run(10)
-        assert r.fc.mode in HOME_MODES  # the climb does not take it back
+        assert r.fc.mode in HOME_MODES  # the way out does not take it back
         assert r.steering_sent(before) == []
 
 

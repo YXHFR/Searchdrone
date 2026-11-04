@@ -1,0 +1,11 @@
+# TN16: the AI proposes a look, the pilot clicks Ja; during it only the pilot moves the
+# drone: the AI can neither propose the next, cancel the look nor fly elsewhere, and an
+# observer's mark is a note.
+scenario: TN16
+title: "AI föreslår, piloten klickar Ja; bara piloten flyttar drönaren under titten"
+mode: exercise
+laser: none
+start_alt_m: 40
+target: { at_enu: [0, 100], jitter_m: 10, visible_m: 0.2, score: 0.45 }
+map: { scan_year: 2019 }
+seeds: [1, 2, 3]

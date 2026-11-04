@@ -1,0 +1,13 @@
+# TN13: a 20 m tree over the person that the map has 8 m too short. Without the laser the
+# margins keep the drone clear of it; with a GRF-250 the laser sees it and raises the
+# floor (the test flies both).
+scenario: TN13
+title: "Kartfel: ett träd 8 m högre än kartan, utan laser och med GRF-250"
+mode: exercise
+laser: grf250
+start_alt_m: 50
+target: { at_enu: [40, 0], jitter_m: 1, visible_m: 0.4, score: 0.45 }
+estimate: { error_m: 1.5 }
+stands: [{ name: tall, at_enu: [40, 0], radius_m: 1, height_m: 20, spacing_m: 2, map_short_m: 8 }]
+map: { scan_year: 2019 }
+seeds: [1, 2, 3]

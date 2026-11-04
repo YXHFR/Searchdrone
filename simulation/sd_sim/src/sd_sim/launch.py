@@ -165,6 +165,7 @@ class Stack:
         panel_dev: bool = False,
         obstacles: Sequence[objects.WorldObject] = (),
         rangefinder_faults: Mapping[str, Any] | None = None,
+        light_areas: Sequence[Any] = (),
     ) -> None:
         self.cfg = cfg
         # obstacles: tree stands and power lines (sd_sim.obstacles) the laser and the map
@@ -172,6 +173,9 @@ class Stack:
         self.obstacles = tuple(obstacles)
         # rangefinder_faults: the simulated laser's faults (rf_* keys, rangefinder.Faults).
         self.rangefinder_faults = dict(rangefinder_faults or {})
+        # light_areas: light ground (shapely polygons, east/north of home) where a TF02-Pro
+        # reaches further. Only the laser sees them; the map pack and Gazebo do not.
+        self.light_areas = tuple(light_areas)
         self._obstacle_scene: obstacles_mod.Scene | None = None
         # panel_dev: also the panel's Vite dev server (hot reload) in front of sd-ground.
         self.panel_dev = panel_dev
@@ -496,7 +500,7 @@ class Stack:
             try:
                 self._obstacle_scene = obstacles_mod.for_world(
                     self.cfg.world, self.cfg.home, self.obstacles, self.repo
-                )
+                ).with_areas(light=self.light_areas)
             except (ValueError, site.SiteError) as exc:
                 raise InfraError(f"Världens hinder gick inte att bygga: {exc}") from exc
         return self._obstacle_scene

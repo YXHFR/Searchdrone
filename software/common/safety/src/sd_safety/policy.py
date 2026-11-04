@@ -11,10 +11,12 @@ from typing import Final
 __all__ = [
     "ALLOWED_OUTSIDE_CHARTER_SKILLS",
     "ALWAYS_REQUIRE_APPROVAL",
+    "BASED_ON_EXEMPT",
     "CLEARANCE_EXEMPT",
     "FORBIDDEN_SKILL_NAMES",
     "GROUND_UNCHECKED_TARGETS",
     "KEEPOUT_EXEMPT",
+    "KEEPOUT_PASS_SKILLS",
     "KEEPOUT_TARGET_SKILLS",
     "MODE_A_EXEMPT",
     "OPERATOR_ALLOWED_UNDER_LATCH",
@@ -93,3 +95,12 @@ KEEPOUT_TARGET_SKILLS: Final = frozenset({"goto", "orbit", "inspect_detection"})
 
 # Never refused for a cylinder: going home and the climb straight up.
 KEEPOUT_EXEMPT: Final = frozenset({"return_home", "takeoff"})
+
+# The search routes that may fly straight through an unconfirmed person's cylinder when the
+# charter allows overflight (``sd_safety.keepout.Passage``, ``KEEPOUT_PASS_MAX_S``). Every
+# other move keeps out of every cylinder.
+KEEPOUT_PASS_SKILLS: Final = frozenset({"survey_sector", "follow_path", "resume"})
+
+# R-BASED-ON: an old picture never stops these. Going home and hovering do no harm when the
+# situation has changed since (design 01 §7.3: the emergency paths stay open).
+BASED_ON_EXEMPT: Final = frozenset({"return_home", "hold"})

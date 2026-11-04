@@ -1,0 +1,10 @@
+# TN11: no decision within 2 minutes of the look's end: the drone flies back to where
+# it broke off and the candidate is back in the queue (ready).
+scenario: TN11
+title: "Inget beslut på 2 min: tillbaka till brytpunkten, K kvar i kön"
+mode: exercise
+laser: none
+start_alt_m: 40
+target: { at_enu: [0, 100], jitter_m: 10, visible_m: 0.2, score: 0.45 }
+map: { scan_year: 2019 }
+seeds: [1, 2, 3]

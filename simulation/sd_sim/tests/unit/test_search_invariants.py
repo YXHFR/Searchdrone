@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import replace
 
 import pytest
 
@@ -265,3 +266,66 @@ def test_stop_model_matches_the_flight_controllers_braking() -> None:
     # Copter-4.7.1 allows these values (AC_Loiter.cpp ranges).
     assert 0.25 <= si.STOP_DECEL_MS2 <= 2.5 and 5.0 <= si.STOP_JERK_MS3 <= 50.0
     assert 0.0 <= si.STOP_BRAKE_DELAY_S <= 2.0
+
+
+# --- a passage through an unconfirmed person (owner decision 2026-11-03) ------------------
+
+
+def _soft(since: float = 0.0) -> SeenKeepout:
+    return replace(_cyl(since), passable=True)
+
+
+def _line(t0: float, e0: float, e1: float, speed: float, n: float = 0.0, alt: float = 40.0,
+          dt: float = 0.5) -> list[Sample]:  # fmt: skip
+    """A straight leg east along ``n`` at ``speed``, sampled every ``dt``."""
+    plane = Plane(*HOME)
+    out: list[Sample] = []
+    steps = round(abs(e1 - e0) / (speed * dt))
+    for i in range(steps + 1):
+        e = e0 + (e1 - e0) * i / steps
+        out.append(Sample(t0 + i * dt, *plane.latlon(e, n), alt, speed, "AUTO", True))
+    return out
+
+
+def test_straight_through_a_passable_cylinder_is_a_passage() -> None:
+    through = _line(0.0, 0.0, 200.0, 7.0)  # 60 m inside at 7 m/s: under 9 s
+    assert keepout_never_entered([_soft()], through) == []
+    broken = keepout_never_entered([_cyl()], through)  # the same cylinder, confirmed
+    assert broken and "E8" in broken[0]
+
+
+def test_a_passage_may_not_linger_descend_or_turn() -> None:
+    slow = _line(0.0, 0.0, 200.0, 3.0)  # 60 m at 3 m/s: 20 s inside
+    broken = keepout_never_entered([_soft()], slow)
+    assert broken and "obekräftade" in broken[0] and " s " in broken[0], broken
+    plane = Plane(*HOME)
+    down = [
+        Sample(x.t, x.lat, x.lon, 40.0 - (5.0 if 80 < plane.xy(x.lat, x.lon)[0] < 120 else 0.0),
+               x.groundspeed_ms, x.mode, True)
+        for x in _line(0.0, 0.0, 200.0, 7.0)
+    ]  # fmt: skip
+    broken = keepout_never_entered([_soft()], down)
+    assert broken and "sjönk" in broken[0], broken
+    # In, a turn north at the centre and out: a corner inside.
+    turn = _line(0.0, 0.0, 100.0, 7.0) + [
+        Sample(15.0 + i, *plane.latlon(100.0, 7.0 * (i + 1)), 40.0, 7.0, "AUTO", True)
+        for i in range(6)
+    ]
+    broken = keepout_never_entered([_soft()], turn)
+    assert broken and "svängde" in broken[0], broken
+
+
+def test_a_hover_inside_a_passable_cylinder_breaks_e8() -> None:
+    plane = Plane(*HOME)
+    hover = _line(0.0, 0.0, 100.0, 7.0) + [
+        Sample(15.0 + i, *plane.latlon(100.0, 0.0), 40.0, 0.0, "LOITER", True) for i in range(20)
+    ]
+    broken = keepout_never_entered([_soft()], hover)
+    assert broken and "obekräftade" in broken[0], broken
+
+
+def test_a_way_out_of_a_passable_cylinder_keeps_the_full_rules() -> None:
+    """Came around the drone: leaving it slowly along a straight line is the way out, under
+    the full rules, even when it takes longer than a passage."""
+    out = _line(0.0, 100.0, 140.0, 2.0)
+    assert keepout_never_entered([_soft()], out) == []

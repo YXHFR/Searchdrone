@@ -1,0 +1,11 @@
+# TN02: a person under 24 m spruce, no laser. The floor is the tree height plus the
+# margins plus 15 m (about 43.5 m above ground); the look stops there, "golvet nått".
+scenario: TN02
+title: "Granskog 24 m, ingen laser: stannar på träd + 15 m"
+mode: exercise
+laser: none
+start_alt_m: 60
+target: { at_enu: [40, 0], jitter_m: 5, visible_m: 0.4, score: 0.45 }
+stands: [{ name: granar, at_enu: [40, 0], radius_m: 30, height_m: 24, spacing_m: 6 }]
+map: { scan_year: 2021 }
+seeds: [1, 2, 3]

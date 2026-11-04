@@ -113,13 +113,23 @@ class FindWatch:
 
 
 def abort_reason(
-    state: ExecutorState, held_by: str | None, hold_reason: str | None, taken_by: str | None
+    state: ExecutorState,
+    held_by: str | None,
+    hold_reason: str | None,
+    taken_by: str | None,
+    *,
+    flying_home: bool = False,
 ) -> InspectAbortReason:
-    """Why a look ended without the wait, from where the executor went (``inspect.aborted``)."""
+    """Why a look ended without the wait, from where the executor went (``inspect.aborted``).
+
+    ``flying_home``: the flight controller is in RTL or SMART_RTL. FLY HOME reaches it
+    straight from the ground (MAVLink) and the executor by SD-link, in either order: seen
+    from outside first (``external``) it is still the drone flying home."""
     if taken_by == "gnss":
         return "gnss"
     if state == S.HELD:
-        return _HELD.get(held_by or "", "override")
+        reason = _HELD.get(held_by or "", "override")
+        return "home" if reason == "override" and flying_home else reason
     if state == S.RTL:
         return "battery" if taken_by == "battery" else "home"
     if state == S.HOLD:

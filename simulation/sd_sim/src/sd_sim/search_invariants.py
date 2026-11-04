@@ -17,6 +17,10 @@
   under the same id (the ground moves a candidate's as its position firms up) is a new
   shape with the same rules, but the braking allowance counts only from when the id first
   came (``SeenKeepout.came``): a new shape is no new grace.
+  A ``passable`` cylinder (an unconfirmed person, a charter that allows overflight) may
+  also be crossed: each stay inside straight through, level or climbing, at most
+  ``KEEPOUT_PASS_MAX_S`` (no hover, circle, turn or descent over a possible person). In
+  live without the permit, and for every confirmed find, the full rules hold.
   ``keepout_min_distance_m`` is the smallest horizontal distance from the track to an
   active cylinder's edge after the drone was outside it (negative: inside).
 
@@ -33,12 +37,16 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final
 
-from sd_safety.targets import distance_m
+from sd_safety.constants import GOTO_ALT_STEP_TOL_M, KEEPOUT_PASS_MAX_S
+from sd_safety.targets import Plane, distance_m, point_segment_distance
 from sd_sim.invariants import Sample
 
 __all__ = [
     "FC_BRAKE",
     "KEEPOUT_TOLERANCE_M",
+    "PASS_DESCENT_M",
+    "PASS_SLACK_S",
+    "PASS_STRAIGHT_M",
     "CandidateWatch",
     "SeenKeepout",
     "keepout_distances",
@@ -83,6 +91,13 @@ BRAKE_SLACK_MS: Final = 1.0
 # straight home and lands, so E8 skips those samples. LAND counts as the way home only
 # after SMART_RTL or RTL: it is also the end of STOP, which is not exempt.
 _FLY_HOME_MODES: Final = frozenset({"SMART_RTL", "RTL"})
+# A passage straight through an unconfirmed cylinder (``SeenKeepout.passable``): at most
+# ``KEEPOUT_PASS_MAX_S`` inside, plus this for the speed's ripple, the reflex tick and the
+# samples; never lower than where it came in by more than the altitude step's tolerance and
+# the wobble; never farther off the straight line through than this.
+PASS_SLACK_S: Final = 3.0
+PASS_DESCENT_M: Final = GOTO_ALT_STEP_TOL_M + KEEPOUT_TOLERANCE_M
+PASS_STRAIGHT_M: Final = 5.0
 
 
 def _ts(value: Any) -> dt.datetime:
@@ -171,6 +186,9 @@ class SeenKeepout:
     # When the id first came, for a later shape of it (``since`` is when this shape came);
     # None: this is its first shape.
     came: float | None = None
+    # An unconfirmed person (a detection, a candidate) under a charter that allows
+    # overflight: a search route may cross it straight through (owner decision 2026-11-03).
+    passable: bool = False
 
     @property
     def arrival(self) -> float:
@@ -261,66 +279,139 @@ def _brake_allowance(
     return brake_m, t0 + STOP_REACT_S + v0 / STOP_DECEL_MS2 + STOP_SETTLE_S
 
 
+def _entered(
+    k: SeenKeepout, rows: Sequence[tuple[float, float, Sample]], tolerance_m: float
+) -> str | None:
+    """How the track broke the full cylinder (kept out as a confirmed find), or None."""
+    brake_m, braking_until = _brake_allowance(k, rows)
+    # Inside when it came (made around a person under the drone): on its way out, never
+    # deeper than then, plus what braking takes it on when it was heading deeper (only
+    # with a sample from when the id came, as for a cylinder ahead).
+    came_in = -rows[0][1] if rows[0][1] < 0.0 else None
+    came_brake_m = (
+        stop_distance_m(_closing_ms(rows))
+        if came_in is not None and rows[0][0] - k.arrival <= ARRIVAL_S
+        else 0.0
+    )
+    out = False
+    last_t, last_d, last_s = rows[0]
+    for t, d, sample in rows:
+        # Measured from the track, never faster than the drone flew between samples.
+        dt = t - last_t
+        moved = distance_m(last_s.lat, last_s.lon, sample.lat, sample.lon)
+        speed = moved / dt if dt > 0.0 else 0.0
+        deeper = d < last_d
+        last_t, last_d, last_s = t, d, sample
+        if d >= 0:
+            # Outside once it has stopped: from then on it may not come in.
+            out = out or t > braking_until
+            continue
+        why = ""
+        if out or (brake_m <= 0.0 and came_in is None):
+            deepest = tolerance_m
+        elif brake_m > 0.0:
+            deepest = brake_m + tolerance_m  # braked in: never deeper, until it is out
+            # The depth alone misses a fast drone that never brakes (its allowance can
+            # be the whole cylinder): going deeper, it must be slowing down.
+            fastest = _braking_speed_ms(rows, t)
+            if deeper and t <= braking_until and speed > fastest:
+                return (
+                    f"E8: banan gick {-d:.1f} m in i cylindern {k.keepout_id} i "
+                    f"{speed:.1f} m/s ({t - k.since:.0f} s efter att den "
+                    f"kom: inbromsningen tillåter högst {fastest:.1f} m/s)"
+                )
+            why = f": inbromsningen tar den {brake_m:.1f} m in"
+        else:
+            depth = came_in or 0.0
+            deepest = depth + came_brake_m + tolerance_m  # inside since it came: out
+            why = (
+                f": den var {depth:.1f} m inne när den kom, inbromsningen tar den "
+                f"{came_brake_m:.1f} m till, och får inte gå djupare"
+            )
+        if -d > deepest:
+            return (
+                f"E8: banan gick {-d:.1f} m in i cylindern {k.keepout_id} "
+                f"({t - k.since:.0f} s efter att den kom{why})"
+            )
+    return None
+
+
+def _stays(
+    rows: Sequence[tuple[float, float, Sample]], tolerance_m: float
+) -> list[tuple[int, int]]:
+    """The stretches of ``rows`` inside the cylinder, as (first, last) row indices; one
+    that never comes more than ``tolerance_m`` in is the edge's noise, not a stay."""
+    out: list[tuple[int, int]] = []
+    first: int | None = None
+    for i, (_, d, _) in enumerate(rows):
+        if d < 0.0 and first is None:
+            first = i
+        elif d >= 0.0 and first is not None:
+            out.append((first, i - 1))
+            first = None
+    if first is not None:
+        out.append((first, len(rows) - 1))
+    return [(a, b) for a, b in out if min(rows[i][1] for i in range(a, b + 1)) < -tolerance_m]
+
+
+def _passage_broken(
+    k: SeenKeepout, rows: Sequence[tuple[float, float, Sample]], a: int, b: int
+) -> str | None:
+    """Why the stay ``rows[a..b]`` is no passage straight through (owner decision
+    2026-11-03): longer than ``KEEPOUT_PASS_MAX_S`` (and ``PASS_SLACK_S``), lower at any
+    point than where it came in (by more than ``PASS_DESCENT_M``), or off the straight
+    line from where it came in to where it went out (by more than ``PASS_STRAIGHT_M``: a
+    turn, a circle or a hover that drifts). None: a passage."""
+    stay = rows[a : b + 1]
+    took = stay[-1][0] - stay[0][0]
+    if took > KEEPOUT_PASS_MAX_S + PASS_SLACK_S:
+        return (
+            f"E8: banan var {took:.0f} s i den obekräftade cylindern {k.keepout_id} "
+            f"(högst {KEEPOUT_PASS_MAX_S:.0f} s rakt igenom)"
+        )
+    top = stay[0][2].alt_m
+    low = min(s.alt_m for _, _, s in stay)
+    if top - low > PASS_DESCENT_M:
+        return (
+            f"E8: banan sjönk {top - low:.1f} m i den obekräftade cylindern "
+            f"{k.keepout_id} (ingen sänkning över en möjlig person)"
+        )
+    plane = Plane(k.lat, k.lon)
+    p, q = plane.xy(stay[0][2].lat, stay[0][2].lon), plane.xy(stay[-1][2].lat, stay[-1][2].lon)
+    off = max(point_segment_distance(plane.xy(s.lat, s.lon), p, q) for _, _, s in stay)
+    if off > PASS_STRAIGHT_M:
+        return (
+            f"E8: banan svängde {off:.1f} m av den raka linjen i den obekräftade "
+            f"cylindern {k.keepout_id} (bara rakt igenom)"
+        )
+    return None
+
+
 def keepout_never_entered(
     keepouts: Iterable[SeenKeepout],
     track: Sequence[Sample],
     tolerance_m: float = KEEPOUT_TOLERANCE_M,
 ) -> list[str]:
+    """E8 for each cylinder. A ``passable`` one (an unconfirmed person under a charter
+    that allows overflight) may also be crossed straight through: every stay inside is a
+    passage (:func:`_passage_broken`), except that the stay it came around the drone
+    with, or braked it into, may keep the full cylinder's rules instead."""
     broken: list[str] = []
     for k in keepouts:
         rows = _edge_distances(k, track)
         if not rows:
             continue
-        brake_m, braking_until = _brake_allowance(k, rows)
-        # Inside when it came (made around a person under the drone): on its way out, never
-        # deeper than then, plus what braking takes it on when it was heading deeper (only
-        # with a sample from when the id came, as for a cylinder ahead).
-        came_in = -rows[0][1] if rows[0][1] < 0.0 else None
-        came_brake_m = (
-            stop_distance_m(_closing_ms(rows))
-            if came_in is not None and rows[0][0] - k.arrival <= ARRIVAL_S
-            else 0.0
-        )
-        out = False
-        last_t, last_d, last_s = rows[0]
-        for t, d, sample in rows:
-            # Measured from the track, never faster than the drone flew between samples.
-            dt = t - last_t
-            moved = distance_m(last_s.lat, last_s.lon, sample.lat, sample.lon)
-            speed = moved / dt if dt > 0.0 else 0.0
-            deeper = d < last_d
-            last_t, last_d, last_s = t, d, sample
-            if d >= 0:
-                # Outside once it has stopped: from then on it may not come in.
-                out = out or t > braking_until
-                continue
-            why = ""
-            if out or (brake_m <= 0.0 and came_in is None):
-                deepest = tolerance_m
-            elif brake_m > 0.0:
-                deepest = brake_m + tolerance_m  # braked in: never deeper, until it is out
-                # The depth alone misses a fast drone that never brakes (its allowance can
-                # be the whole cylinder): going deeper, it must be slowing down.
-                fastest = _braking_speed_ms(rows, t)
-                if deeper and t <= braking_until and speed > fastest:
-                    broken.append(
-                        f"E8: banan gick {-d:.1f} m in i cylindern {k.keepout_id} i "
-                        f"{speed:.1f} m/s ({t - k.since:.0f} s efter att den "
-                        f"kom: inbromsningen tillåter högst {fastest:.1f} m/s)"
-                    )
-                    break
-                why = f": inbromsningen tar den {brake_m:.1f} m in"
-            else:
-                depth = came_in or 0.0
-                deepest = depth + came_brake_m + tolerance_m  # inside since it came: out
-                why = (
-                    f": den var {depth:.1f} m inne när den kom, inbromsningen tar den "
-                    f"{came_brake_m:.1f} m till, och får inte gå djupare"
-                )
-            if -d > deepest:
-                broken.append(
-                    f"E8: banan gick {-d:.1f} m in i cylindern {k.keepout_id} "
-                    f"({t - k.since:.0f} s efter att den kom{why})"
-                )
+        full = _entered(k, rows, tolerance_m)
+        if full is None:
+            continue
+        if not k.passable:
+            broken.append(full)
+            continue
+        for n, (a, b) in enumerate(_stays(rows, tolerance_m)):
+            why = _passage_broken(k, rows, a, b)
+            if why is not None and n == 0 and _entered(k, rows[: b + 2], tolerance_m) is None:
+                why = None  # the first stay kept the full rules (a way out, braking in)
+            if why is not None:
+                broken.append(why)
                 break
     return broken

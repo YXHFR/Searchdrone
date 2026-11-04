@@ -115,7 +115,15 @@ describe("alertView", () => {
     const v = alertView("MISSION_FALLBACK", { mission_seq: 14, mission_total: 15 }, T0);
     expect(v && isSticky(v)).toBe(true);
     expect(say(v)).toContain("Ombordsdatorn styr inte drönaren längre.");
-    expect(say(v)).toContain("Tryck STOPP eller ta över med RC");
+    // The flight controller hovers at the mission's end; home on FLYG HEM or a failsafe.
+    expect(say(v)).toContain("svävar där den är");
+    expect(say(v)).toContain(
+      "Den flyger hem när du trycker FLYG HEM eller när ett skydd slår till",
+    );
+    expect(say(v)).toContain("lågt batteri eller förlorad länk");
+    expect(say(v)).toContain("Vägen hem kan gå rakt genom förbudszoner runt personer");
+    expect(say(v)).toContain("Ta över med RC");
+    expect(say(v)).not.toContain("avbrutits");
   });
 
   it("is null for codes the panel has no text for", () => {

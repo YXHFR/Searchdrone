@@ -66,6 +66,7 @@ from sd_onboard.perception.loop import PerceptionLoop
 from sd_onboard.perception.pipeline import Perception
 from sd_onboard.perception.sources import DirStillSource
 from sd_safety.constants import RATE_ACTION_MIN_GAP_MS
+from sd_safety.keepout import UNCONFIRMED_SOURCES
 from sd_safety.targets import Plane, distance_m
 from sd_schemas.probmap import ProbabilityGrid
 from sd_search.app import SearchService
@@ -244,19 +245,25 @@ async def _watch(run: SearchRun, stop: asyncio.Event) -> None:
     while not stop.is_set():
         now = time.monotonic()
         held = {str(k.keepout_id): k for k in ex.keepouts_in_force()}
+        # An unconfirmed person under a charter that allows overflight: E8 lets a search
+        # route cross it straight through (``SeenKeepout.passable``).
+        over = ex.charter is not None and ex.charter.overflight_allowed
         for kid, k in held.items():
             seen = run.keepouts.get(kid)
-            shape = (k.lat, k.lon, k.radius_m)
-            if seen is not None and (seen.lat, seen.lon, seen.radius_m) != shape:
+            passable = over and k.source in UNCONFIRMED_SOURCES
+            shape = (k.lat, k.lon, k.radius_m, passable)
+            if seen is not None and (seen.lat, seen.lon, seen.radius_m, seen.passable) != shape:
                 # The ground moves a candidate's cylinder as its position firms up, under
                 # the same id: the old shape ends here and the new one starts, with the
                 # same rules but no new grace (E8 counts its braking from the id's arrival).
                 run.keepouts[f"{kid}@{seen.since}"] = replace(seen, until=now)
                 run.keepouts[kid] = SeenKeepout(
-                    kid, k.lat, k.lon, k.radius_m, now, came=seen.arrival
+                    kid, k.lat, k.lon, k.radius_m, now, came=seen.arrival, passable=passable
                 )
             elif seen is None:
-                run.keepouts[kid] = SeenKeepout(kid, k.lat, k.lon, k.radius_m, now)
+                run.keepouts[kid] = SeenKeepout(
+                    kid, k.lat, k.lon, k.radius_m, now, passable=passable
+                )
         for kid, seen in list(run.keepouts.items()):
             if kid not in held and seen.until == math.inf:
                 run.keepouts[kid] = replace(seen, until=now)
@@ -274,7 +281,7 @@ async def _watch(run: SearchRun, stop: asyncio.Event) -> None:
 def _onboard_quiet(run: SearchRun) -> str | None:
     """Why the onboard computer no longer steers the flight, or None: one of its tasks
     ended (the executor, SD-link, perception), or the flight controller flies the search
-    mission's built-in end (hover, then straight home in AUTO), which only happens when
+    mission's built-in end (the hover at the last point in AUTO), which only happens when
     the executor did not take over at the last search point (the ground's alarm
     ``MISSION_FALLBACK``). The executor's log and state are in the run's ``logs/``."""
     onboard = run.onboard
@@ -282,8 +289,8 @@ def _onboard_quiet(run: SearchRun) -> str | None:
     if why is None and run.sc.r.core.mission_end.alarm_active:
         t = run.sc.tel
         why = (
-            "the flight controller flies the mission's built-in end (hover, then home in "
-            f"AUTO; item {t.mission_seq_current} of {t.mission_total}): the onboard "
+            "the flight controller flies the mission's built-in end (the hover at the last "
+            f"point in AUTO; item {t.mission_seq_current} of {t.mission_total}): the onboard "
             f"computer stopped steering; executor {onboard.ex.state}, held by "
             f"{onboard.ex.held_by}, order {getattr(onboard.ex.active, 'skill', None)}"
         )

@@ -206,6 +206,8 @@ async def test_state_changed_retries_once() -> None:
     assert (
         fg.commands[1].based_on is not None and fg.commands[1].based_on.state_seq == seq_before + 5
     )
+    # Sent again by code with the fresh picture; the model is not asked (owner 2026-11-03).
+    assert [t.trigger for t in backend.turns] == ["operator_message"]
 
 
 async def test_queued_messages_never_act() -> None:
@@ -1015,3 +1017,99 @@ async def test_a_target_find_wakes_the_ai_and_context_does_not() -> None:
     loop.handle_event({"type": "event.detection", "mission_id": loop.mission_id, "body": target})
     await loop.settle()
     assert [t.trigger for t in backend.turns] == ["detection"]
+
+
+# --- an old picture: the order is sent again by code (owner decision 2026-11-03) ----------
+
+
+def _stale_reject(code: str = "STATE_CHANGED") -> dict[str, Any]:
+    return {
+        "decision": "REJECT",
+        "reason_codes": [code],
+        "message_sv": "Läget ändrades.",
+        "status": "rejected_by_gate",
+    }
+
+
+async def test_a_stale_refusal_is_sent_again_by_code_not_by_the_model() -> None:
+    backend = Steps(act("goto", pin="P1"), act("goto", pin="P9"))
+    loop, fg, _ = make_loop(backend)
+    fg.responses = [{"match": {"skill": "goto"}, "result": _stale_reject(), "times": 1}]
+    loop.handle_event(fg.operator_message("Flyg till P1"))
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["operator_message"]  # no model retry
+    first, again = fg.commands
+    assert again.skill == first.skill and again.params == first.params
+    assert again.command_id != first.command_id
+
+
+async def test_a_resend_refused_again_goes_to_the_model_once() -> None:
+    backend = Steps(act("goto", pin="P1"), say("Det gick inte."))
+    loop, fg, _ = make_loop(backend)
+    fg.responses = [{"match": {"skill": "goto"}, "result": _stale_reject("STATE_STALE")}]
+    loop.handle_event(fg.operator_message("Flyg till P1"))
+    await loop.settle()
+    assert len(fg.commands) == 2  # the first and one resend, never a third by code
+    assert [t.trigger for t in backend.turns] == ["operator_message", "gate_reject_retry"]
+
+
+async def test_an_onboard_refusal_for_an_old_picture_is_sent_again_by_code() -> None:
+    backend = Steps(act("survey_sector", sector="A"), say("Inte detta."))
+    loop, fg, _ = make_loop(backend)
+    loop.handle_event(fg.operator_message("Sök sektor A"))
+    await loop.settle()
+    first = fg.commands[0]
+    fg.sit["snapshot_state_seq"] += 3
+    loop.handle_event(
+        {
+            "type": "event.skill",
+            "body": {
+                "command_id": str(first.command_id),
+                "skill": first.skill,
+                "status": "rejected_onboard",
+                "reason_codes": ["STATE_CHANGED"],
+            },
+        }
+    )
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["operator_message"]
+    again = fg.commands[1]
+    assert again.skill == first.skill and again.params == first.params
+    assert again.based_on is not None and again.based_on.state_seq == fg.sit["snapshot_state_seq"]
+    # The resend refused onboard as well: the model hears it, nothing is sent a third time.
+    loop.handle_event(
+        {
+            "type": "event.skill",
+            "body": {
+                "command_id": str(again.command_id),
+                "skill": again.skill,
+                "status": "rejected_onboard",
+                "reason_codes": ["STATE_CHANGED"],
+            },
+        }
+    )
+    await loop.settle()
+    assert len(fg.commands) == 2
+    assert [t.trigger for t in backend.turns] == ["operator_message", "skill_event"]
+
+
+async def test_an_onboard_refusal_for_another_reason_wakes_the_model() -> None:
+    backend = Steps(act("goto", pin="P1"), say("Spärrzon."))
+    loop, fg, _ = make_loop(backend)
+    loop.handle_event(fg.operator_message("Flyg till P1"))
+    await loop.settle()
+    cid = str(fg.commands[0].command_id)
+    loop.handle_event(
+        {
+            "type": "event.skill",
+            "body": {
+                "command_id": cid,
+                "skill": "goto",
+                "status": "rejected_onboard",
+                "reason_codes": ["KEEPOUT_VIOLATION"],
+            },
+        }
+    )
+    await loop.settle()
+    assert len(fg.commands) == 1
+    assert [t.trigger for t in backend.turns] == ["operator_message", "skill_event"]

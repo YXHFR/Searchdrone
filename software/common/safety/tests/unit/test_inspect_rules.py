@@ -77,6 +77,27 @@ def test_no_rule_and_no_deputy_starts_a_look() -> None:
     assert "INSPECT_NEEDS_PILOT" not in codes(req("hold", {}, issuer_kind="system"), c)
 
 
+def test_tn17_no_look_without_the_link_or_from_the_wrong_sender() -> None:
+    """TN17 (spec §16.4): the pilot's look without SD-link is ``LINK_DOWN`` on the ground
+    (onboard, an order came over the link); a rule's or the deputy's is
+    ``INSPECT_NEEDS_PILOT``, with the link and without it, on the ground and onboard. The
+    pilot's own look with the link goes."""
+    up, down = ctx(charter=EXERCISE), ctx(charter=EXERCISE, sdlink_up=False)
+    assert codes(pilot_look(), up) == []
+    assert codes(pilot_look(), down) == ["LINK_DOWN"]
+    wrongs = [
+        req("inspect_detection", look(), **update)
+        for update in (
+            {"issuer_kind": "system", "issuer_ref": "rule:ground"},
+            {"issuer_kind": "brain", "issuer_ref": "brain:deputy"},
+        )
+    ]
+    for wrong in wrongs:
+        assert "INSPECT_NEEDS_PILOT" in codes(wrong, up)
+        assert {"INSPECT_NEEDS_PILOT", "LINK_DOWN"} <= set(codes(wrong, down))
+        assert "INSPECT_NEEDS_PILOT" in codes(wrong, onboard_ctx(charter=EXERCISE))
+
+
 # --- R-INSPECT-ONE ------------------------------------------------------------------------------
 
 

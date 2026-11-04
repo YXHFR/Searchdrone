@@ -8,11 +8,13 @@ seq                   command                 frame               values
 0                     NAV_WAYPOINT (16)       GLOBAL              home (ArduPilot overwrites)
 1                     DO_CHANGE_SPEED (178)   MISSION             1, speed, -1
 2 .. last_nav_seq     NAV_WAYPOINT (16)       GLOBAL_RELATIVE_ALT degrees x 1e7, height
-last_nav_seq + 1      NAV_LOITER_TIME (19)    GLOBAL_RELATIVE_ALT last point, 30 s
-last_nav_seq + 2      NAV_RETURN_TO_LAUNCH    MISSION             -
+last_nav_seq + 1      NAV_LOITER_UNLIM (17)   GLOBAL_RELATIVE_ALT last point, no end
 ====================  ======================  ==================  ==========================
 
-The last two items end the mission safely even if the onboard computer stops.
+The last item ends the mission in a hover at the last search point that lasts until
+someone decides otherwise, also when the onboard computer has stopped: the operator's
+STOP or FLY HOME, the battery failsafe, or the flight controller's ground-station
+failsafe when the radio is lost. The mission itself never flies home.
 
 The hashes are normalised, because ArduPilot packs some fields when it stores them:
 ``mission_hash`` skips item 0 (home), ``fence_hash`` covers every item. Both sides
@@ -32,17 +34,13 @@ from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
 from sd_mav.allowlist import FC_COMPID, FENCE_MAX_VERTICES
 from sd_mav.vehicle import ForbiddenMavlinkError, SendOrigin, Vehicle
-from sd_safety.constants import (
-    MAV_ACK_TIMEOUT_S,
-    MISSION_END_LOITER_S,
-    MISSION_MAX_ITEMS,
-    MISSION_UPLOAD_TIMEOUT_S,
-)
+from sd_safety.constants import MAV_ACK_TIMEOUT_S, MISSION_MAX_ITEMS, MISSION_UPLOAD_TIMEOUT_S
 from sd_schemas.base import LatLonAlt
 
 __all__ = [
     "FENCE",
     "MISSION",
+    "SURVEY_EXTRA_ITEMS",
     "MissionError",
     "MissionItem",
     "download",
@@ -123,18 +121,21 @@ def _deg7(value: float, limit: float) -> int:
     return round(value * 1e7)
 
 
+# The items a search mission has besides its points: home, the speed and the hover at the end.
+SURVEY_EXTRA_ITEMS: Final = 3
+
+
 def survey_mission(
     home: LatLonAlt,
     points: Sequence[tuple[float, float]],
     alt_m: float,
     speed_ms: float,
-    loiter_s: int = MISSION_END_LOITER_S,
 ) -> list[MissionItem]:
     """The AUTO mission that flies ``points`` (lat, lon) at ``alt_m`` above home."""
     if not points:
         raise ValueError("a mission needs at least one point")
-    if len(points) + 4 > MISSION_MAX_ITEMS:
-        raise ValueError(f"{len(points)} points, at most {MISSION_MAX_ITEMS - 4}")
+    if len(points) + SURVEY_EXTRA_ITEMS > MISSION_MAX_ITEMS:
+        raise ValueError(f"{len(points)} points, at most {MISSION_MAX_ITEMS - SURVEY_EXTRA_ITEMS}")
     if not math.isfinite(alt_m) or alt_m < 0:
         raise ValueError(f"height {alt_m}")
     if not math.isfinite(speed_ms) or speed_ms <= 0:
@@ -173,23 +174,19 @@ def survey_mission(
     items.append(
         MissionItem(
             len(items),
-            mavlink.MAV_CMD_NAV_LOITER_TIME,
+            mavlink.MAV_CMD_NAV_LOITER_UNLIM,
             rel,
-            param1=loiter_s,
             x=last.x,
             y=last.y,
             z=alt_m,
         )
     )
-    items.append(
-        MissionItem(len(items), mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, mavlink.MAV_FRAME_MISSION)
-    )
     return items
 
 
 def last_nav_seq(items: Sequence[MissionItem]) -> int:
-    """The index of the last search waypoint (before the loiter and return items)."""
-    return len(items) - 3
+    """The index of the last search waypoint (before the hover at the end)."""
+    return len(items) - 2
 
 
 def fence_items(polygon: Sequence[tuple[float, float]]) -> list[MissionItem]:
@@ -220,10 +217,8 @@ def _norm(item: MissionItem) -> tuple[Any, ...]:
             return (16, item.x, item.y, round(float(item.z), 1))
         case mavlink.MAV_CMD_DO_CHANGE_SPEED:
             return (178, int(item.param1), round(float(item.param2), 1))
-        case mavlink.MAV_CMD_NAV_LOITER_TIME:
-            return (19, int(item.param1), item.x, item.y, round(float(item.z), 1))
-        case mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH:
-            return (20,)
+        case mavlink.MAV_CMD_NAV_LOITER_UNLIM:
+            return (17, item.x, item.y, round(float(item.z), 1))
         case _:
             raise ValueError(f"command {item.command} is not in the allowlist")
 

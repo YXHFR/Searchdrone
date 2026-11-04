@@ -1,0 +1,10 @@
+# TN10: STOP, FLY HOME and the pilot's takeover while the drone comes down over the
+# candidate: the foundation's steps within its times (as SK08).
+scenario: TN10
+title: "STOPP, FLYG HEM och pilotens övertag under nedgången"
+mode: exercise
+laser: none
+start_alt_m: 40
+target: { at_enu: [0, 100], jitter_m: 10, visible_m: 0.2, score: 0.45 }
+map: { scan_year: 2019 }
+seeds: [1, 2, 3]

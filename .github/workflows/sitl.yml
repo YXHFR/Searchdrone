@@ -42,6 +42,12 @@ env:
   # shards fit the 25 minutes a worker).
   SEARCH_SHARDS: "3"
   SEARCH_NIGHTLY_SHARDS: "52"
+  # The closer look's scenarios (TN01-TN16 and TN19, three fixed seeds each) in shards
+  # of their own.
+  INSPECT_SHARDS: "6"
+  # Two sims per runner: TN11 and TN12 lost the flight controller or SD-link with three
+  # or more at once, and those failures are not rerun as infrastructure faults.
+  INSPECT_WORKERS: "2"
   GITLEAKS_VERSION: "8.30.1"
   GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 
@@ -240,6 +246,40 @@ jobs:
       - *results
       - *logs
 
+  sitl-inspect:
+    # The closer look's scenarios ("Titta närmare", TN01-TN16 and TN19, three fixed
+    # seeds each) in shards of their own, so the sitl shards' budget is unchanged.
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - *checkout
+      - *check-ref
+      - *setup
+      - *db
+      - *image
+      - *versions
+      - name: Closer look scenarios (builtin physics, scripted commander)
+        timeout-minutes: 35
+        env:
+          SD_SITL_IMAGE: ${{ steps.image.outputs.image }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          just ci-sitl physics=builtin brain=scripted mode=inspect "shard=$SHARD" \
+            "shards=$INSPECT_SHARDS" "workers=$INSPECT_WORKERS"
+      - *summary
+      - *scan
+      - *results
+      - *logs
+
   video:
     # Live video and recordings (B1-09): the synthetic camera with the time code strip
     # (the builtin-physics picture) through the simulated radio and video_relay into
@@ -354,7 +394,12 @@ jobs:
         run: just e2e offline=1 runs=1
       - name: The runner itself still reaches GitHub
         if: always()
-        run: curl -fsS -m 10 -o /dev/null https://api.github.com
+        # Any HTTP answer proves the network (a shared runner's IP can get 403 or 429
+        # from the unauthenticated rate limit); only no answer at all (000) fails.
+        run: |
+          code=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' https://api.github.com || true)
+          echo "api.github.com: HTTP $code"
+          [ "${code:-000}" != "000" ]
       - *summary
       - *scan
       - *results
@@ -406,7 +451,7 @@ jobs:
 
   sitl-ok:
     if: always()
-    needs: [changes, sitl, sitl-search, video, e2e, e2e-offline, e2e-search]
+    needs: [changes, sitl, sitl-search, sitl-inspect, video, e2e, e2e-offline, e2e-search]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

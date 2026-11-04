@@ -1,0 +1,13 @@
+# TN04: open meadow with a TF02-Pro. Over dark ground it never reaches the ground from
+# 21 m and the floor stays the map floor without the laser; over the light meadow (the
+# light area here; the test also flies it without) it confirms and lets the drone lower.
+scenario: TN04
+title: "Äng, TF02-Pro: bekräftar inte över mörk mark, bekräftar över ljus äng"
+mode: exercise
+laser: tf02
+start_alt_m: 50
+charter: { alt_min_agl_m: 10 }
+target: { at_enu: [40, 0], jitter_m: 5, visible_m: 0.2, score: 0.45 }
+light: [[[0, -40], [80, -40], [80, 40], [0, 40]]]
+map: { scan_year: 2019 }
+seeds: [1, 2, 3]

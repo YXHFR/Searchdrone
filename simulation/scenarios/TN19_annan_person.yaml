@@ -1,0 +1,12 @@
+# TN19: another person 25 m from the target. The other gets a cylinder of its own; the
+# target, looked at, gets no new one.
+scenario: TN19
+title: "Annan person 25 m från målet: egen cylinder, målet ingen ny"
+mode: exercise
+laser: none
+start_alt_m: 80
+target: { at_enu: [40, 0], jitter_m: 2, visible_m: 0.4, score: 0.45 }
+estimate: { error_m: 2 }
+others: [{ id: annan, at_enu: [40, 25], visible_m: 1.0, score: 0.9 }]
+map: { scan_year: 2019 }
+seeds: [1, 2, 3]

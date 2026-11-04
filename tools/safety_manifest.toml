@@ -54,7 +54,7 @@ sha256 = "5f9b7ae7f8b8bab290c75310f70163c0765e10f587844151fdf7bb2da6a3127a"
 
 [[pinned]]
 path = "software/common/safety/src/sd_safety/constants.py"
-sha256 = "e8b6153dbdcc604d70caa108070b181299d4097eeebe3a57a8b619beaa2afa24"
+sha256 = "c228d4b23d8cd9cd1899a01eb1518ef66403fc8cea1a4d792ac140e4913f8e5e"
 
 # What enforces the rules: the gate (Vehicle.send, its connection, its run-time
 # allowlist), SITL's layer order, the sim
@@ -69,7 +69,7 @@ sha256 = "05e5aa96667595fdea8c98c6da89e6d663e47b97ba77a35f26f1ebd417e12ce3"
 
 [[pinned]]
 path = "software/common/mav/src/sd_mav/allowlist.py"
-sha256 = "244e2b1ab2ca210d09a75a0221df1b67046875e0f06fda2a3512b6617a6ec0e1"
+sha256 = "0131af8bd2068dc2797ef526356f3f3b8f08dddb1b0d46795f4ce58c4f50a6aa"
 
 [[pinned]]
 path = "simulation/sd_sim/src/sd_sim/sitl.py"

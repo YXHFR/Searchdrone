@@ -1,15 +1,19 @@
 """``survey_sector``: search a polygon in a lawnmower pattern as an AUTO mission.
 
-The mission is home, speed, the search points, a 30 s loiter at the last point and
-return-to-launch, so it ends safely even if the onboard computer dies. When the last
-search point is reached the executor switches to LOITER (HOLD). ``resume`` flies a new
+The mission is home, speed, the search points and a hover without end at the last point
+(``sd_mav.mission.survey_mission``): it never flies home by itself, so if the onboard
+computer stops steering the drone hovers there until someone decides (the ground raises
+MISSION_FALLBACK). When the last search point is reached the executor switches to
+LOITER (HOLD). ``resume`` flies a new
 mission from the point where the search was interrupted.
 
 Every mission goes around the keep-out cylinders in force when it is planned
 (``sd_safety.keepout.reroute``); when a new cylinder comes during the flight the
 executor plans the rest again the same way (the reflex). A cylinder that comes closer
 than the drone can turn away from at its speed: the drone first stops in LOITER, and the
-rest is planned again from where it stopped, through the whole gate.
+rest is planned again from where it stopped, through the whole gate. Under a charter that
+allows overflight a search route flies straight through the cylinders of unconfirmed
+persons (``sd_safety.keepout.Passage``), never when its first leg goes down.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ from typing import Any, ClassVar, Final
 from shapely import Polygon as ShapelyPolygon
 
 from sd_geo import PatternError, lawnmower
-from sd_mav.mission import last_nav_seq, survey_mission
+from sd_mav.mission import SURVEY_EXTRA_ITEMS, last_nav_seq, survey_mission
 from sd_mav.modes import CopterMode
 from sd_onboard.skills import register_handler
 from sd_onboard.skills._common import STOP_WAIT_S, still
@@ -37,8 +41,21 @@ from sd_onboard.skills.base import (
     TickContext,
     mode_failed,
 )
-from sd_safety.constants import DEFAULT_SURVEY_SPACING_M, MISSION_MAX_ITEMS, SURVEY_MAX_AREA_M2
-from sd_safety.keepout import circles, reroute, xy_route_violation
+from sd_safety.constants import (
+    DEFAULT_SURVEY_SPACING_M,
+    GOTO_ALT_STEP_TOL_M,
+    MISSION_MAX_ITEMS,
+    SURVEY_MAX_AREA_M2,
+)
+from sd_safety.keepout import (
+    Passage,
+    circles,
+    passage_for,
+    reroute,
+    spent_for,
+    split,
+    xy_route_violation,
+)
 from sd_safety.targets import Plane, polygon_from_geojson
 from sd_schemas.base import Id, LatLon, LatLonAlt
 from sd_schemas.executor import ExecutorState, ResumePoint, SurveyResumePoint
@@ -85,8 +102,12 @@ class SurveyRun:
         base_index: int = 0,
         interrupted_at: LatLon | None = None,
         target_state: ExecutorState = ExecutorState.SURVEY,
+        skill: str | None = None,
     ) -> None:
         self.command_id = command_id
+        # The order it flies (``survey_sector``, ``follow_path``, ``resume``): a search route
+        # may pass through unconfirmed cylinders (``passage``). None: never (an orbit).
+        self.skill = skill
         self.waypoints = waypoints
         self.alt_m = alt_m
         self.speed_ms = speed_ms
@@ -120,19 +141,33 @@ class SurveyRun:
         rest = self.origin[self.next_index :]
         return None in rest or len(rest) != len(self.pattern_rest())
 
+    def passage(self, ctx: PlanContext) -> Passage | None:
+        """How the route may cross unconfirmed cylinders from where the drone is now
+        (``sd_safety.keepout.passage_for`` at the run's speed); None, every cylinder kept
+        out of, when the first leg goes down (no descent inside a cylinder)."""
+        if ctx.vehicle.alt_rel_home_m > self.alt_m + GOTO_ALT_STEP_TOL_M:
+            return None
+        return passage_for(self.skill or "", ctx.charter, self.speed_ms)
+
     def around_keepouts(self, ctx: PlanContext) -> None:
         """Replace the points still to fly with a way around the cylinders in force, if
-        the straight way enters one (``PlanError`` when there is none in the charter)."""
+        the straight way enters one (``PlanError`` when there is none in the charter).
+        With a passage (:meth:`passage`) the route flies straight through unconfirmed
+        cylinders where it may."""
         if not ctx.keepouts:
             return
         plane = ctx.plane
-        cyl = circles(ctx.keepouts, plane)
+        passage = self.passage(ctx)
+        hard, soft = split(ctx.keepouts) if passage is not None else (list(ctx.keepouts), [])
+        cyl, scyl = circles(hard, plane), circles(soft, plane)
+        # The pass the drone is on counts the time it spent inside already.
+        spent = spent_for(soft, passage, ctx.keepout_inside_s) if passage is not None else []
         here = plane.xy(ctx.vehicle.lat, ctx.vehicle.lon)
         route = [here, *(plane.point(p) for p in self.flown_points)]
-        if xy_route_violation(route, cyl) is None:
+        if xy_route_violation(route, cyl, scyl, passage, spent_m=spent) is None:
             return
         area = polygon_from_geojson(ctx.charter.area, plane)
-        out = reroute(route, cyl, area=area)
+        out = reroute(route, cyl, area=area, soft=scyl, passage=passage, spent_m=spent)
         if out is None or len(out) < 2:
             raise PlanError("KEEPOUT_VIOLATION", "ingen väg runt förbudscylindrarna")
         points = [LatLon(lat=lat, lon=lon) for lat, lon in (plane.latlon(*p) for p in out[1:])]
@@ -144,7 +179,7 @@ class SurveyRun:
 
     def plan(self, ctx: PlanContext) -> SkillPlan:
         self.around_keepouts(ctx)
-        if len(self.flown_points) + 4 > MISSION_MAX_ITEMS:
+        if len(self.flown_points) + SURVEY_EXTRA_ITEMS > MISSION_MAX_ITEMS:
             raise PlanError("ONB_SURVEY_TOO_LARGE", f"{len(self.flown_points)} punkter")
         here = ctx.here()
         alt = ctx.alt_amsl(self.alt_m)
@@ -187,7 +222,7 @@ class SurveyRun:
                     len(self.waypoints) - 1, next_index(seq, self.base_index, self.seq_offset)
                 )
                 if seq > last:
-                    break  # already past the last search point (on the loiter item)
+                    break  # already past the last search point (on the hover at the end)
             reached = await io.wait_message(
                 lambda m: m.get_type() == "MISSION_ITEM_REACHED" and int(m.seq) >= last, TICK_S
             )
@@ -301,7 +336,7 @@ class SurveyHandler:
         speed = params.speed_ms or min(DEFAULT_SPEED_MS, ctx.charter.max_speed_ms)
         here = LatLon(lat=ctx.vehicle.lat, lon=ctx.vehicle.lon)
         waypoints = plan_waypoints(polygon, ctx.plane, spacing, params.heading_deg, here)
-        self.run = SurveyRun(ctx.command_id, waypoints, alt, speed)
+        self.run = SurveyRun(ctx.command_id, waypoints, alt, speed, skill=self.name)
         self._home = ctx.charter.home
         return self.run.plan(ctx)
 
@@ -328,7 +363,12 @@ class SurveyHandler:
         while not still(io.vehicle) and io.clock.monotonic() < deadline:
             await io.sleep(TICK_S)
         run = SurveyRun(
-            old.command_id, list(rest), old.alt_m, old.speed_ms, target_state=old.target_state
+            old.command_id,
+            list(rest),
+            old.alt_m,
+            old.speed_ms,
+            target_state=old.target_state,
+            skill=old.skill,
         )
         try:
             plan = run.plan(replace(ctx, vehicle=io.vehicle, keepouts=io.keepouts))

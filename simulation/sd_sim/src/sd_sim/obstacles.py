@@ -605,7 +605,9 @@ class TreeStand:
     """A world object: a stand of ``sd_lake_forest``'s spruces (``lake`` shape) in a
     circle of ``radius_m`` around (east, north), about ``spacing_m`` apart, each
     ``height_m`` tall give or take ``jitter_m`` (fixed by ``seed``). For a scenario that
-    needs forest where the flat test world has meadow ("granskog 24 m")."""
+    needs forest where the flat test world has meadow ("granskog 24 m"). ``map_short_m``:
+    the map pack has every tree of the stand that much too short (a tree grown since the
+    scan, or one the map missed when it is as tall as the tree)."""
 
     name: str
     east_m: float
@@ -615,6 +617,7 @@ class TreeStand:
     spacing_m: float = 6.0
     jitter_m: float = 0.0
     seed: int = 0
+    map_short_m: float = 0.0
     label: int = 0
     up_m: float = 0.0
     yaw_deg: float = 0.0
@@ -625,6 +628,8 @@ class TreeStand:
             raise objects.ObjectError(f"{self.name}: radius_m 0-200 och height_m 1-40")
         if not 2 <= self.spacing_m <= 50 or not 0 <= self.jitter_m < self.height_m:
             raise objects.ObjectError(f"{self.name}: spacing_m 2-50, jitter_m under height_m")
+        if not 0 <= self.map_short_m <= 40:
+            raise objects.ObjectError(f"{self.name}: map_short_m 0-40")
 
     @property
     def footprint_m(self) -> float:
@@ -641,9 +646,13 @@ class TreeStand:
                 dy = (j + rng.uniform(-0.3, 0.3)) * self.spacing_m
                 h = self.height_m + rng.uniform(-self.jitter_m, self.jitter_m)
                 if math.hypot(dx, dy) <= self.radius_m:
+                    short = None if self.map_short_m == 0 else max(h - self.map_short_m, 0.0)
                     out.append(
                         SimTree(
-                            round(self.east_m + dx, 2), round(self.north_m + dy, 2), round(h, 2)
+                            round(self.east_m + dx, 2),
+                            round(self.north_m + dy, 2),
+                            round(h, 2),
+                            map_height=None if short is None else round(short, 2),
                         )
                     )
         return out

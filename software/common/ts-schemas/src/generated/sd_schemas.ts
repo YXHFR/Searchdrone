@@ -1694,6 +1694,7 @@ export interface GateRequest {
   };
   phase: "submit" | "approve" | "estimate" | "onboard";
   planned_path?: LatLonAlt[] | null;
+  planned_speed_ms?: number | null;
   skill: string;
   vehicle_id: string;
 }
@@ -2076,6 +2077,10 @@ export interface Keepout {
  * ``ttl_ms`` only limits how late the message may be delivered, never how long the
  * cylinders apply.
  *
+ * ``released``: detections of candidates a person rejected (spec titta-narmare §7.3.5).
+ * The drone removes its own cylinders made from any of them (``source = "detection"``,
+ * ``source_id`` the detection); the ground's list no longer holds the candidate's.
+ *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "KeepoutInstall".
  */
@@ -2085,6 +2090,10 @@ export interface KeepoutInstall {
    * @maxItems 200
    */
   keepouts?: Keepout[];
+  /**
+   * @maxItems 200
+   */
+  released?: string[];
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema

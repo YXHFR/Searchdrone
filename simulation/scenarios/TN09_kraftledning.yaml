@@ -1,0 +1,12 @@
+# TN09: a known power line 20 m from the person: no descent below the start height
+# within 30 m of it (POWERLINE_ZONE).
+scenario: TN09
+title: "Kraftledning 20 m från målet: ingen nedgång"
+mode: exercise
+laser: none
+start_alt_m: 50
+target: { at_enu: [40, 0], jitter_m: 2, visible_m: 0.4, score: 0.45 }
+estimate: { error_m: 2 }
+lines: [{ name: ledning, a: [20, -80], b: [20, 80], height_m: 15 }]
+map: { scan_year: 2019 }
+seeds: [1, 2, 3]

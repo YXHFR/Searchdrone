@@ -11,8 +11,11 @@ its MAVLink channel (no more heartbeats from 1/191).
   within 5 s; FLY HOME likewise, landing within 3 m of home;
 * STOP armed on the ground disarms; BRAKE holds for 60 s without RC;
 * only the ground's MAVLink cut: STOP still arrives through the onboard fallback;
-* the companion watchdog: BRAKE within 4 s and FLY HOME within 21 s when the onboard
-  computer dies in GUIDED, nothing while the operator's STOP stands;
+* the companion watchdog: BRAKE within 4 s when the onboard computer dies in GUIDED,
+  then it holds there and never flies home; nothing while the operator's STOP stands;
+  the executor's loop hanging (sd-onboard and SD-link alive) or sd-onboard dying
+  mid-search (AUTO): BRAKE within 4 s and MISSION_FALLBACK, then it holds there, never
+  flies home and never enters the keep-out cylinder the search goes around;
 * the ground station dies: the flight controller's GCS failsafe flies home.
 """
 
@@ -20,14 +23,16 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import itertools
 import json
+import math
 import sys
 import time
 import urllib.request
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pymavlink.dialects.v20 import ardupilotmega as mavlink
@@ -48,8 +53,10 @@ from test_onboard_sitl import (  # pyright: ignore[reportMissingImports]
     sim,
 )
 
+from sd_geo import lawnmower
 from sd_ground.auth import Principal
 from sd_ground.liveness import LoopLiveness
+from sd_ground.mav.mission_end_watch import FALLBACK_GRACE_MS
 from sd_ground.mav.thread import GroundMav, HeartbeatGate, ThreadSafeMav
 from sd_ground.services.latches import Latches
 from sd_ground.services.vehicle_actions import NoticeResult, VehicleActions
@@ -64,7 +71,8 @@ from sd_onboard.link_client import OnboardLink
 from sd_safety.targets import Plane, distance_m
 from sd_schemas.base import SdModel, new_id
 from sd_schemas.executor import ExecutorState as S
-from sd_schemas.link import ClearanceConfirmation
+from sd_schemas.keepout import Keepout
+from sd_schemas.link import ClearanceConfirmation, KeepoutInstall
 from sd_sim.util import LOOPBACK_OPENER
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow]
@@ -104,6 +112,7 @@ class Emergency:
     pump: asyncio.Task[None]
     executor_tasks: list[asyncio.Future[Any]] = field(default_factory=list)
     onboard_dead: bool = False
+    events: list[str] = field(default_factory=list)  # what the ground told the panel
 
     @property
     def fc(self) -> Any:
@@ -231,7 +240,9 @@ async def emergency(
         link.executor = ex
         f = Flight(ex, onboard, ground, fake, proxy, Plane(home.lat, home.lon), sim, sent=sent)
         stop = asyncio.Event()
-        e = Emergency(f, core, actions, sink, asyncio.ensure_future(actions.pump(g)))
+        e = Emergency(
+            f, core, actions, sink, asyncio.ensure_future(actions.pump(g)), events=g.events
+        )
         e.executor_tasks += [
             asyncio.ensure_future(ex.run(stop)),
             asyncio.ensure_future(link.run(stop)),
@@ -410,9 +421,32 @@ def test_stop_via_sdlink_when_ground_mavlink_down(sim: Sim) -> None:
 # --- the companion watchdog and a dead ground station -------------------------------------
 
 
+_HOLD_S = 40.0  # longer than the old watchdog's 20 s and the old mission end's 30 s
+
+
+async def _holds(e: Emergency, check: Any = None) -> None:
+    """Standing still within 10 s, then BRAKE or LOITER within 3 m for ``_HOLD_S``."""
+    await e.wait(lambda: e.fc.groundspeed_ms < 0.5, 10, "standing")
+    t = e.fc
+    stood = (t.lat, t.lon)
+    end = time.monotonic() + _HOLD_S
+    while time.monotonic() < end:
+        assert e.mode() in ("BRAKE", "LOITER"), f"{e.mode()} while held"
+        if check is not None:
+            check()
+        await asyncio.sleep(0.2)
+    t = e.fc
+    assert distance_m(stood[0], stood[1], t.lat, t.lon) <= 3.0
+    assert e.core.watchdog.alarm_active and e.core.watchdog.phase == "stopped"
+    latch = e.actions.latches.get(VID)
+    assert latch is not None and latch.action == "watchdog_stop"
+    assert "vehicle.onboard_silent_rtl" not in e.events
+
+
 @pytest.mark.budget_s(300)
-def test_onboard_kill_in_guided(sim: Sim) -> None:
-    """``sd-onboard`` killed in GUIDED: BRAKE/LOITER <= 4 s, SMART_RTL/RTL <= 21 s, home."""
+def test_onboard_kill_in_guided_hovers(sim: Sim) -> None:
+    """``sd-onboard`` killed in GUIDED: BRAKE/LOITER <= 4 s and ONBOARD_SILENT, then it
+    holds there for 40 s and never flies home (owner decision, option A)."""
 
     async def run() -> None:
         async with emergency(sim) as e:
@@ -421,14 +455,276 @@ def test_onboard_kill_in_guided(sim: Sim) -> None:
             await e.kill_onboard()
             killed = time.monotonic()
             await e.wait(lambda: e.mode() in ("BRAKE", "LOITER"), 4.0, "watchdog stop")
-            await e.wait(
-                lambda: e.mode() in ("SMART_RTL", "RTL"),
-                21.0 - (time.monotonic() - killed),
-                "watchdog home",
+            assert time.monotonic() - killed <= 4.0
+            await _holds(e)
+            assert "alarm.ONBOARD_SILENT" in e.events
+            assert "alarm.MISSION_FALLBACK" not in e.events  # no search mission flew
+
+    asyncio.run(run())
+
+
+# The search for the silent-executor test: a box north-east of home with a person's
+# cylinder in its middle that the mission goes around.
+_SILENT_BOX_M = (40.0, 60.0, 100.0)  # half side, east, north
+_SILENT_PERSON = (60.0, 100.0, 15.0)  # east, north, radius (m)
+
+
+async def _hang() -> None:
+    await asyncio.Event().wait()
+
+
+@pytest.mark.budget_s(330)
+@pytest.mark.parametrize("how", ["tick_hung", "onboard_dead"])
+def test_executor_silent_mid_search_holds_clear_of_the_keepout(sim: Sim, how: str) -> None:
+    """Option A, mid-search in AUTO:
+
+    * ``tick_hung``: the executor's tick hangs; sd-onboard, its MAVLink channel and SD-link
+      (with its snapshots) stay up. The heartbeat goes out only while the tick runs, so it
+      stops within 1 s.
+    * ``onboard_dead``: sd-onboard is gone.
+
+    Either way the ground stops the AUTO flight within 4.5 s through STOP's steps with
+    ONBOARD_SILENT and MISSION_FALLBACK; then it holds there for 40 s, never flies home,
+    and never enters the cylinder."""
+
+    async def run() -> None:
+        async with emergency(sim) as e:
+            f = e.f
+            await _install(f)
+            await _takeoff(f, 25)
+            await f.until(lambda: f.ex.state == S.HOLD, 60, "takeoff done")
+            east, north, r = _SILENT_PERSON
+            lat, lon = f.at(east, north)
+            person = Keepout(
+                keepout_id=new_id(),
+                lat=lat,
+                lon=lon,
+                radius_m=r,
+                source="candidate",
+                source_id=new_id(),
             )
-            assert time.monotonic() - killed <= 21.0
-            await e.wait(lambda: not e.fc.armed, 150, "landed")
-            assert e.from_home_m() <= 3.0
+            f.ex.on_keepouts(
+                KeepoutInstall(install_seq=f.ex.keepout_seq + 1, keepouts=[person]), new_id()
+            )
+            assert person in f.ex.keepouts
+            box = f.square(*_SILENT_BOX_M)
+            await f.order("survey_sector", {"polygon": box, "spacing_m": 20, "speed_ms": 5})
+            await f.until(lambda: f.ex.state == S.SURVEY and e.mode() == "AUTO", 20, "search")
+            closest = [float("inf")]
+
+            def clear() -> None:
+                t = e.fc
+                d = distance_m(lat, lon, t.lat, t.lon)
+                closest[0] = min(closest[0], d)
+                assert d >= r, f"inside the cylinder: {d:.1f} m from its centre"
+
+            async def watch() -> None:
+                while True:
+                    clear()
+                    await asyncio.sleep(0.1)
+
+            watcher = asyncio.ensure_future(watch())
+            try:
+                await f.until(lambda: (e.fc.mission_seq_current or 0) >= 4, 120, "mid-search")
+                assert e.mode() == "AUTO"
+                if how == "tick_hung":
+                    f.ex.tick = _hang  # type: ignore[method-assign]  # the next tick hangs
+                else:
+                    await e.kill_onboard()
+                silent = time.monotonic()
+                await e.wait(lambda: e.mode() in ("BRAKE", "LOITER"), 4.5, "watchdog stop")
+                assert time.monotonic() - silent <= 4.5
+                latch = e.actions.latches.get(VID)
+                assert latch is not None and latch.action == "watchdog_stop"
+
+                def cylinder() -> None:
+                    if watcher.done():
+                        watcher.result()  # the cylinder check failed: raise it here
+
+                await _holds(e, cylinder)
+                assert "alarm.ONBOARD_SILENT" in e.events
+                assert "alarm.MISSION_FALLBACK" in e.events
+                if how == "tick_hung":
+                    assert not e.onboard_dead and all(not t.done() for t in e.executor_tasks)
+            finally:
+                watcher.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await watcher
+            clear()
+            assert closest[0] >= r, closest[0]
+
+    asyncio.run(run())
+
+
+# The mission-end test: the same box and spacing, the lines fixed east-west (the box is
+# square, so without a heading rounding picks the direction). From south of the box the
+# lawnmower ends at the west or the east end of its northmost row, depending on where the
+# drone stands (SITL is shared between tests, so that varies). A person's cylinder stands
+# just outside each of the two, along the line from the box's middle, ``_END_GAP_M`` from
+# that end to its edge; the one past the mission's hover is the one this test is about.
+_END_HEADING_DEG = 90.0
+_END_SPACING_M = 20.0
+_END_R_M = 10.0
+_END_GAP_M = 11.0
+_END_SPEED_MS = 5.0
+# The wait for the fallback alarm: the planned route at the ordered speed, this much
+# slower for the climb-out and the corners' braking, plus this long at each search point.
+_END_SLACK = 1.5
+_END_PER_POINT_S = 4.0
+
+
+class _NoEndSwitch:
+    """The executor's io with the switch to LOITER at the last search point lost: the
+    onboard computer stays alive (its tick and heartbeat run on), but nobody steers when
+    the flight controller reaches the mission's own end."""
+
+    def __init__(self, io: Any) -> None:
+        self._io = io
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._io, name)
+
+    async def set_mode(self, mode: CopterMode) -> bool:
+        if mode == CopterMode.LOITER:
+            await asyncio.Event().wait()  # never answered
+        return bool(await self._io.set_mode(mode))
+
+
+@pytest.mark.budget_s(330)
+def test_mission_end_without_onboard_hovers_clear_of_the_keepout(
+    sim: Sim, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Option A, the mission's own end: the onboard computer stays alive but never takes
+    over at the last search point, so the flight controller flies the mission's end in
+    AUTO. That end is a hover without end: MISSION_FALLBACK, then it stands there for
+    40 s in AUTO on the last item, never flies home, never enters the person's cylinder
+    11 m away, and the companion watchdog (the heartbeat runs on) never acts."""
+    from sd_onboard.skills.survey_sector import SurveyRun
+
+    fly = SurveyRun.fly
+
+    async def fly_without_end(self: SurveyRun, plan: Any, io: Any, home: Any) -> None:
+        await fly(self, plan, cast(Any, _NoEndSwitch(io)), home)
+
+    monkeypatch.setattr(SurveyRun, "fly", fly_without_end)
+
+    async def run() -> None:
+        async with emergency(sim) as e:
+            f = e.f
+            await _install(f)
+            await _takeoff(f, 25)
+            await f.until(lambda: f.ex.state == S.HOLD, 60, "takeoff done")
+            half, mid_e, mid_n = _SILENT_BOX_M
+            here = f.plane.xy(e.fc.lat, e.fc.lon)
+            assert here[1] < mid_n - half, f"not south of the box: {here}"
+            r = _END_R_M
+            corners = [
+                (mid_e + dx * half, mid_n + dy * half)
+                for dx, dy in ((-1, -1), (1, -1), (1, 1), (-1, 1))
+            ]
+            # The two hovers the onboard computer can plan from south of the box: from
+            # the west or the east of its middle.
+            ends = [
+                lawnmower(
+                    corners, _END_SPACING_M, _END_HEADING_DEG, (mid_e + dx * 2 * half, here[1])
+                )[-1]
+                for dx in (-1, 1)
+            ]
+            centres = []
+            for x, y in ends:
+                out = (x - mid_e, y - mid_n)
+                k = (r + _END_GAP_M) / math.hypot(*out)
+                centres.append((x + k * out[0], y + k * out[1]))
+            persons = []
+            for x, y in centres:
+                c_lat, c_lon = f.at(x, y)
+                persons.append(
+                    Keepout(
+                        keepout_id=new_id(),
+                        lat=c_lat,
+                        lon=c_lon,
+                        radius_m=r,
+                        source="candidate",
+                        source_id=new_id(),
+                    )
+                )
+            f.ex.on_keepouts(
+                KeepoutInstall(install_seq=f.ex.keepout_seq + 1, keepouts=persons), new_id()
+            )
+            assert all(p in f.ex.keepouts for p in persons)
+            box = f.square(*_SILENT_BOX_M)
+            start = (e.fc.lat, e.fc.lon)
+            await f.order(
+                "survey_sector",
+                {
+                    "polygon": box,
+                    "spacing_m": _END_SPACING_M,
+                    "heading_deg": _END_HEADING_DEG,
+                    "speed_ms": _END_SPEED_MS,
+                },
+            )
+            await f.until(lambda: f.ex.state == S.SURVEY and e.mode() == "AUTO", 20, "search")
+            active = f.ex.active
+            assert active is not None
+            survey = getattr(active.handler, "run", None)
+            assert isinstance(survey, SurveyRun)
+            last = survey.waypoints[-1]
+            end_lat, end_lon = last.lat, last.lon
+            # The case this test is about: the hover point is one of those two ends, a cylinder
+            # past it ``_END_GAP_M`` away (if the plan differs, this fails instead of
+            # testing nothing).
+            gap = min(distance_m(end_lat, end_lon, p.lat, p.lon) for p in persons) - r
+            assert abs(gap - _END_GAP_M) <= 1.0, gap
+            route = [start, *((w.lat, w.lon) for w in survey.waypoints)]
+            length = sum(distance_m(*a, *b) for a, b in itertools.pairwise(route))
+            alarm_by = (
+                length / _END_SPEED_MS * _END_SLACK
+                + _END_PER_POINT_S * len(survey.waypoints)
+                + FALLBACK_GRACE_MS / 1000
+            )
+            closest = [float("inf")]
+
+            def clear() -> None:
+                t = e.fc
+                d = min(distance_m(p.lat, p.lon, t.lat, t.lon) for p in persons)
+                closest[0] = min(closest[0], d)
+                assert d >= r, f"inside a cylinder: {d:.1f} m from its centre"
+
+            async def watch() -> None:
+                while True:
+                    clear()
+                    await asyncio.sleep(0.1)
+
+            watcher = asyncio.ensure_future(watch())
+            try:
+                await e.wait(
+                    lambda: "alarm.MISSION_FALLBACK" in e.events, alarm_by, "fallback alarm"
+                )
+                total = e.fc.mission_total
+                assert e.mode() == "AUTO" and total is not None
+                assert e.fc.mission_seq_current == total  # on the hover at the end
+                await e.wait(lambda: e.fc.groundspeed_ms < 0.5, 10, "standing")
+                stood = (e.fc.lat, e.fc.lon)
+                end = time.monotonic() + _HOLD_S
+                while time.monotonic() < end:
+                    if watcher.done():
+                        watcher.result()  # the cylinder check failed: raise it here
+                    assert e.mode() == "AUTO", f"{e.mode()} at the mission's end"
+                    assert e.fc.mission_seq_current == total
+                    await asyncio.sleep(0.2)
+                t = e.fc
+                assert distance_m(stood[0], stood[1], t.lat, t.lon) <= 3.0
+                assert distance_m(end_lat, end_lon, t.lat, t.lon) <= 5.0
+                assert e.core.watchdog.phase == "idle"
+                assert e.actions.latches.get(VID) is None
+                assert "alarm.ONBOARD_SILENT" not in e.events
+                assert all(not t.done() for t in e.executor_tasks)  # alive throughout
+            finally:
+                watcher.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await watcher
+            clear()
+            assert closest[0] >= r, closest[0]
 
     asyncio.run(run())
 
