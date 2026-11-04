@@ -94,6 +94,21 @@ def test_perception_needs_a_still_folder(root: Path, env: dict[str, str]) -> Non
     assert off is None
 
 
+def test_the_wide_camera_takes_full_resolution_stills(root: Path, env: dict[str, str]) -> None:
+    """The owner's decision of 2026-11-03: Camera Module 3 at its full 4608 x 2592 (66
+    degrees), in the defaults and the example file alike; a smaller size still loads."""
+    from sd_onboard.config import PerceptionConfig
+
+    full = (4608, 2592, 66.0)
+    p = load(root, env).config.perception
+    assert (p.width_px, p.height_px, p.hfov_deg) == full
+    d = PerceptionConfig()
+    assert (d.width_px, d.height_px, d.hfov_deg) == full
+    small = {"SD_ONBOARD__PERCEPTION__WIDTH_PX": "1280", "SD_ONBOARD__PERCEPTION__HEIGHT_PX": "720"}
+    p = load(root, {**env, **small}).config.perception
+    assert (p.width_px, p.height_px) == (1280, 720)
+
+
 def test_the_tele_camera_is_off_unless_asked_for(root: Path, env: dict[str, str]) -> None:
     tele = load(root, env).config.perception.tele
     assert not tele.enabled

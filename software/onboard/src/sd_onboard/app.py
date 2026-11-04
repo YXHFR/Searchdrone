@@ -88,6 +88,8 @@ async def serve(loaded: Loaded, stop: asyncio.Event | None = None) -> int:
         perception.on_targets = executor.on_detections  # E8: cylinders from our own finds
         executor.camera = perception.capture  # capture_stills and inspect_detection
         executor.capture_round = perception.capture_round  # a closer look: every camera
+        executor.capture_limit_s = perception.capture_limit_s  # the detector's speed
+        executor.round_limit_s = perception.round_limit_s
     executor.laser = _laser(loaded, vehicle)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

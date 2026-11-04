@@ -17,7 +17,8 @@ Used by ``InspectHandler`` when the charter allows flying over the candidate
   the executor's whole gate first (``ExecutorIO.leg_refusal``).
 * **The end** (``InspectEnd``): a clear picture, the floor reached, the pilot said no
   (``InspectStay``: at once, where the drone hovers) or did not answer in
-  ``LOWER_OFFER_S``, ``STEPS_MAX`` steps, ``INSPECT_MAX_S``, a cylinder
+  ``LOWER_OFFER_S``, ``STEPS_MAX`` steps, ``INSPECT_MAX_S`` (the pilot's answer and the
+  rounds of stills not counted, those up to ``DETECT_SPARE_MAX_S``), a cylinder
   in the way (``keepout``), or the laser lost below the map's floor without it (the drone
   climbs back to that floor first). The drone stays at the lowest height reached; the
   executor then hovers for the pilot's decision.
@@ -90,6 +91,7 @@ from sd_schemas.skills import InspectDetectionParams
 
 __all__ = [
     "APPROACH_ABOVE_FLOOR_M",
+    "DETECT_SPARE_MAX_S",
     "LOOK_RADIUS_MAX_M",
     "LOWER_GAIN_MIN_M",
     "Floors",
@@ -104,6 +106,10 @@ __all__ = [
 APPROACH_ABOVE_FLOOR_M: Final = 2.0  # below the floor on the way: climb to it + this first
 LOOK_RADIUS_MAX_M: Final = 30.0  # the look radius never grows past this (TN-8 review)
 LOWER_GAIN_MIN_M: Final = 2.0  # the lowest floor must lie this much lower to offer it
+# The rounds of stills' time does not count in INSPECT_MAX_S (a detector on a CPU takes
+# seconds a still: 9 steps x 2 rounds of a full-resolution main and tele still), at most
+# this much of it: the whole look stays under INSPECT_MAX_S + this (+ the pilot's answer).
+DETECT_SPARE_MAX_S: Final = INSPECT_MAX_S
 _ANCHOR_SIGMA_MIN_M: Final = 2.0  # the anchor's weight: 1 / max(sigma95, this)^2
 _MATCH_SIGMA_MIN_M: Final = 0.5  # a match's weight: score / max(sigma95, this)^2
 _RECENTRE_M: Final = GOTO_ARRIVE_RADIUS_M  # the estimate moved further: move over it
@@ -225,6 +231,7 @@ class StepLook:
     _pilot_yes: bool = False
     laser_seen: bool = False
     _paused_s: float = 0.0  # the pilot's answer time: not counted in INSPECT_MAX_S
+    _detect_s: float = 0.0  # time in the rounds of stills (``_capture``): neither, up to a cap
     _t0: float = 0.0
 
     # --- the plan (no I/O) ----------------------------------------------------------------
@@ -636,8 +643,11 @@ class StepLook:
             await io.sleep(min(_TICK_S, left))
 
     async def _capture(self, io: ExecutorIO) -> list[InspectShot]:
-        """One round of stills, watching every tick while the cameras work (up to
-        2 x 10 s); the round is dropped when the watch ends the steps."""
+        """One round of stills, watching every tick while the cameras and the detector
+        work (as long as the executor's round limit, which follows the detector's speed);
+        the round is dropped when the watch ends the steps. The time spent here does not
+        count in ``INSPECT_MAX_S``, up to ``DETECT_SPARE_MAX_S`` in all."""
+        start = io.clock.monotonic()
         task = asyncio.ensure_future(io.capture_round(self.command_id, self.step))
         try:
             while not task.done():
@@ -645,6 +655,7 @@ class StepLook:
                 await io.sleep(_TICK_S)
             return task.result()
         finally:
+            self._detect_s += io.clock.monotonic() - start
             if not task.done():
                 task.cancel()
 
@@ -670,7 +681,8 @@ class StepLook:
         self.end = "keepout"
 
     def _over_time(self, io: ExecutorIO) -> bool:
-        return io.clock.monotonic() - self._t0 - self._paused_s >= INSPECT_MAX_S
+        stills = min(self._detect_s, DETECT_SPARE_MAX_S)
+        return io.clock.monotonic() - self._t0 - self._paused_s - stills >= INSPECT_MAX_S
 
     def _check_time(self, io: ExecutorIO) -> None:
         if self._over_time(io):

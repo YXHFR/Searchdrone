@@ -744,3 +744,341 @@ def test_every_extra_camera_needs_its_own_name(tmp_path: Path) -> None:
     for extra in ([feed, feed], [Feed(feed.source, TELE_CAM, MAIN)]):
         with pytest.raises(ValueError, match="own name"):
             PerceptionLoop(feed.source, FcTelemetry, lambda _r: None, FakeClock(), CAM, extra=extra)
+
+
+# The Camera Module 3 at its full 4608 x 2592 (the configured camera since 2026-11-03).
+FULL_CAM = PinholeCamera(4608, 2592, 66.0)
+
+
+def test_a_smaller_still_of_the_cameras_shape_is_placed_with_its_field_of_view(
+    tmp_path: Path,
+) -> None:
+    """A 1280 x 720 still (the simulator rendering smaller, a smaller sensor mode) under the
+    full-resolution camera lands where it lands under a 1280 x 720 camera: the ground it
+    covers comes from the field of view, the detail from the still's own pixels."""
+    name = "block1_h30"
+    reports = []
+    for cam in (CAM, FULL_CAM):
+        folder = tmp_path / str(cam.width_px)
+        write_still(folder, name)
+        lp = PerceptionLoop(
+            DirStillSource(folder, synthetic=True),
+            FcTelemetry,
+            lambda _r: None,
+            FakeClock(),
+            cam,
+            env={},
+        )
+        captured = lp.source.poll()
+        assert captured is not None
+        out = lp.handle(captured, telemetry(name, 0), 0)
+        assert out is not None
+        reports.append(out.report)
+    small, full = reports
+    assert full.px_per_m == small.px_per_m
+    for a, b in zip(full.footprint, small.footprint, strict=True):
+        assert (a.lat, a.lon) == pytest.approx((b.lat, b.lon), abs=1e-9)
+    assert [(d.lat, d.lon) for d in full.detections] == [(d.lat, d.lon) for d in small.detections]
+    assert any(truth_error_m(d.lat, d.lon) <= 0.5 for d in full.detections)
+
+
+async def test_a_still_of_another_shape_than_the_camera_counts_as_failing(
+    tmp_path: Path,
+) -> None:
+    """A 4:3 camera given a 16:9 still would place it wrongly: the still is refused."""
+    write_still(tmp_path, "block0_h30")  # 1280 x 720
+    lp = PerceptionLoop(
+        DirStillSource(tmp_path, synthetic=True),
+        lambda: telemetry("block0_h30", 0),
+        lambda _r: None,
+        FakeClock(),
+        PinholeCamera(4056, 3040, 66.0),
+        env={},
+    )
+    await lp._round()  # pyright: ignore[reportPrivateUsage]
+    assert lp.stats.failed == 1 and lp.stats.reports == 0
+
+
+class _Tiled:
+    """A detector source that cut the still into 45 tiles (a 12 MP still at 640 px)."""
+
+    source = "model"
+    last_tiles = 45
+
+    def detect_still(self, still: Any) -> list[Any]:
+        del still
+        return []
+
+
+def test_the_report_says_how_many_tiles_the_still_took(tmp_path: Path) -> None:
+    from sd_detect.sources import BuiltSources
+
+    write_still(tmp_path, "block0_h30")
+    lp = PerceptionLoop(
+        DirStillSource(tmp_path, synthetic=True),
+        FcTelemetry,
+        lambda _r: None,
+        FakeClock(),
+        CAM,
+        env={},
+        sources=BuiltSources({"model": _Tiled()}),  # type: ignore[dict-item]  # pyright: ignore[reportArgumentType]
+    )
+    captured = lp.source.poll()
+    assert captured is not None
+    out = lp.handle(captured, telemetry("block0_h30", 0), 0)
+    assert out is not None and out.report.detector.tiles == 45
+    assert loop_module._tiles([]) == 1  # pyright: ignore[reportPrivateUsage]
+    assert loop_module._tiles([object()]) == 1  # pyright: ignore[reportPrivateUsage]
+
+
+def _count_sidecars(folder: Path) -> int:
+    return len(list(folder.glob("*.json")))
+
+
+async def test_a_detector_that_falls_behind_skips_stills_instead_of_queueing_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full-resolution still can take the drone's computer several seconds while the
+    camera writes one a second. Stills written during a detection are never queued: the
+    next round takes only the newest and removes the rest, so the folder never grows."""
+    clock = FakeClock()
+    written = 0
+
+    def slow(*args: Any, **kwargs: Any) -> Any:
+        nonlocal written
+        for _ in range(5):  # the camera goes on writing while the detector works
+            written += 1
+            write_still(tmp_path, "block0_h30", f"{written:06d}")
+        clock.advance(5.0)
+        return detect_all(*args, **kwargs)
+
+    monkeypatch.setattr(loop_module, "detect_all", slow)
+    source = DirStillSource(tmp_path, synthetic=True)
+    lp = PerceptionLoop(
+        source,
+        lambda: telemetry("block0_h30", clock.monotonic_ms()),
+        lambda _r: None,
+        clock,
+        CAM,
+        env={},
+    )
+    write_still(tmp_path, "block0_h30", "000000")
+    waiting = [0, 0, 0]
+    for i in range(3):
+        await lp._round()  # pyright: ignore[reportPrivateUsage]
+        waiting[i] = _count_sidecars(tmp_path)
+    assert waiting == [5, 5, 5]  # only the last detection's stills, never more
+    assert lp.stats.stills == 3 and lp.stats.reports == 3
+    assert source.skipped == 8  # of the 10 stills before the last round, 2 were run
+
+
+# --- a slow detector: orders first, one detection at a time ------------------------------
+
+
+class _Endless:
+    """A camera that always has a still (the same one)."""
+
+    def __init__(self, folder: Path) -> None:
+        still = DirStillSource(folder, synthetic=True).poll()
+        assert still is not None
+        self.still = still
+
+    def poll(self) -> Any:
+        return self.still
+
+
+class _SlowDetector:
+    """``detect_all`` taking ``seconds`` of real time, as a CPU takes on a 12 MP still;
+    counts how many run at once."""
+
+    def __init__(self, seconds: float) -> None:
+        import threading
+
+        self.seconds = seconds
+        self.running = 0
+        self.most = 0
+        self.calls = 0
+        self._lock = threading.Lock()
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        import time
+
+        with self._lock:
+            self.running += 1
+            self.calls += 1
+            self.most = max(self.most, self.running)
+        try:
+            time.sleep(self.seconds)
+            return detect_all(*args, **kwargs)
+        finally:
+            with self._lock:
+                self.running -= 1
+
+
+def _slow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, seconds: float, *, tele: bool = False
+) -> tuple[PerceptionLoop, _SlowDetector, list[Any]]:
+    """A loop with a camera that always has a still and a detector slower than an order's
+    ``CAPTURE_WAIT_S`` (so an order that waited only that long for the loop got none)."""
+    monkeypatch.setattr(loop_module, "CAPTURE_WAIT_S", seconds / 3)
+    detector = _SlowDetector(seconds)
+    monkeypatch.setattr(loop_module, "detect_all", detector)
+    write_still(tmp_path / "main", "block0_h30")
+    write_still(tmp_path / "tele", "block0_h30")
+    clock = MonotonicClock()
+    sent: list[Any] = []
+    lp = PerceptionLoop(
+        _Endless(tmp_path / "main"),
+        lambda: telemetry("block0_h30", clock.monotonic_ms()),
+        sent.append,
+        clock,
+        CAM,
+        period_s=0.01,
+        env={},
+        extra=[Feed(_Endless(tmp_path / "tele"), TELE_CAM)] if tele else [],
+    )
+    return lp, detector, sent
+
+
+async def _busy_loop(lp: PerceptionLoop, detector: _SlowDetector) -> tuple[Any, asyncio.Event]:
+    """The loop running, with one of its own detections under way."""
+    stop = asyncio.Event()
+    task = asyncio.ensure_future(lp.run(stop))
+    for _ in range(500):
+        if detector.running:
+            break
+        await asyncio.sleep(0.01)
+    assert detector.running == 1
+    return task, stop
+
+
+async def test_an_order_gets_its_still_while_the_loop_runs_a_slow_detection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The loop's own detection already under way is waited for (it cannot be stopped),
+    then the order's still comes before any other of the loop's; never two at once."""
+    lp, detector, sent = _slow(tmp_path, monkeypatch, 0.8)
+    task, stop = await _busy_loop(lp, detector)
+    before = len(sent)
+    start = asyncio.get_running_loop().time()
+    command_id = new_id()
+    still_id = await lp.capture(command_id)
+    took = asyncio.get_running_loop().time() - start
+    assert still_id is not None
+    assert took < lp.capture_limit_s()
+    during = [s.report.command_id for s in sent[before:]]
+    assert during[-1] == command_id
+    assert len(during) <= 2  # at most the loop's detection that was under way
+    stop.set()
+    await asyncio.wait_for(task, 5)
+    assert detector.most == 1
+
+
+async def test_a_closer_look_gets_every_camera_while_the_loop_runs_a_slow_detection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lp, detector, _ = _slow(tmp_path, monkeypatch, 0.6, tele=True)
+    task, stop = await _busy_loop(lp, detector)
+    start = asyncio.get_running_loop().time()
+    shots = await lp.capture_round(new_id(), 0)
+    took = asyncio.get_running_loop().time() - start
+    assert [camera for camera, _, _ in shots] == [MAIN, "tele"]
+    assert took < lp.round_limit_s()
+    stop.set()
+    await asyncio.wait_for(task, 5)
+    assert detector.most == 1
+
+
+async def test_a_detection_left_running_never_overlaps_the_next(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The executor's watchdog gives up on an order whose detection runs on; the worker
+    thread cannot be stopped, so the next still waits for it instead of running beside it
+    (twice the load on the CPU)."""
+    lp, detector, _ = _slow(tmp_path, monkeypatch, 0.6)
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(lp.capture(new_id()), 0.1)
+    assert detector.running == 1  # still running, no one waits for it
+    assert await lp.capture(new_id()) is not None
+    await lp._round()  # pyright: ignore[reportPrivateUsage]
+    assert detector.most == 1 and detector.calls == 3
+
+
+async def test_the_loops_round_gives_way_to_an_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An order that comes while a round runs: the round's stills not yet run are dropped
+    (never reported, so nothing counts as searched from them) and the order goes first."""
+    lp, detector, sent = _slow(tmp_path, monkeypatch, 0.5, tele=True)
+    round_task = asyncio.ensure_future(lp._round())  # pyright: ignore[reportPrivateUsage]
+    for _ in range(500):
+        if detector.running:
+            break
+        await asyncio.sleep(0.01)
+    command_id = new_id()
+    assert await lp.capture(command_id) is not None
+    await asyncio.wait_for(round_task, 5)
+    assert lp.stats.by_camera == {MAIN: 2}  # the round's main still, then the order's
+    assert [s.report.command_id for s in sent] == [None, command_id]  # no tele report
+    assert detector.most == 1
+
+
+class _TiledModel:
+    """A tiled model: 45 tiles for a 12 MP still at 640 px, 6 for 1280 x 720."""
+
+    source = "model"
+    last_tiles = 45
+
+    def tiles_for(self, width: int, height: int) -> int:
+        return 45 if width > 4000 else 6
+
+    def detect_still(self, still: Any) -> list[Any]:
+        del still
+        return []
+
+
+def test_the_orders_time_limits_follow_the_detectors_speed(tmp_path: Path) -> None:
+    """The time per tile, assumed slow until measured; a slower measurement counts at
+    once, a faster one little by little; a still's time is capped."""
+    from sd_detect.sources import BuiltSources
+
+    wide = PinholeCamera(4608, 2592, 66.0)
+    lp = PerceptionLoop(
+        _Endless(_written(tmp_path / "main")),
+        FcTelemetry,
+        lambda _r: None,
+        FakeClock(),
+        wide,
+        env={},
+        sources=BuiltSources({"model": _TiledModel()}),  # type: ignore[dict-item]  # pyright: ignore[reportArgumentType]
+        extra=[Feed(_Endless(_written(tmp_path / "tele")), TELE_CAM)],
+    )
+    per = loop_module.DETECT_S_PER_TILE
+    assert lp.still_s(MAIN) == pytest.approx(45 * per)  # from the still's size
+    assert lp.still_s("tele") == pytest.approx(6 * per)
+    lp._timed(MAIN, 45 * 0.16, 45)  # a PC: 7.2 s  # pyright: ignore[reportPrivateUsage]
+    assert lp.s_per_tile == pytest.approx(per + 0.2 * (0.16 - per))  # down little by little
+    lp._timed(MAIN, 45 * 1.0, 45)  # pyright: ignore[reportPrivateUsage]
+    assert lp.still_s(MAIN) == pytest.approx(45.0)  # a slower one at once
+    capture = lp.capture_limit_s()
+    assert capture >= lp.still_s(MAIN) * 2 + loop_module.CAPTURE_WAIT_S  # one under way
+    assert lp.round_limit_s() >= capture + lp.still_s("tele")
+    lp._timed(MAIN, 45 * 100.0, 45)  # a hung detector  # pyright: ignore[reportPrivateUsage]
+    assert lp.still_s(MAIN) == loop_module.DETECT_MAX_S
+
+
+def _written(tmp_path: Path) -> Path:
+    write_still(tmp_path, "block0_h30")
+    return tmp_path
+
+
+def test_the_executors_still_limits_come_from_perception_within_bounds() -> None:
+    from sd_onboard.executor import executor as ex
+
+    limit = ex._capture_limit  # pyright: ignore[reportPrivateUsage]
+    least = ex._CAPTURE_LIMIT_S  # pyright: ignore[reportPrivateUsage]
+    most = ex._CAPTURE_LIMIT_MAX_S  # pyright: ignore[reportPrivateUsage]
+    assert limit(None, least) == least  # no perception: the fixed limit
+    assert limit(lambda: 50.0, least) == 50.0
+    assert limit(lambda: 1.0, least) == least
+    assert limit(lambda: 1e6, least) == most
