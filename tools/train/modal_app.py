@@ -12,9 +12,12 @@ No retries are asked of Modal: a call that fails ends the command, and the same 
 carries on from the last save. Modal may still move a call to another machine after a
 preemption; the client waits at most the call's timeout plus ``cloud.START_SLACK_S``,
 then cancels it, and counts all of that against ``max_hours``, so the ceiling holds.
-Each call's container leaves a mark on the volume (``CALLS``) as soon as it runs; when
-the client stops waiting it looks for the mark before it cancels the call, so it can
-tell "stopped" from "never got a GPU" (``no_gpu``). Only the client removes the mark.
+Each call's container keeps a mark on the volume (``CALLS``): written as soon as it runs,
+then with the seconds it has run at every commit, and ``ended`` at its end. When the
+client stops waiting it looks for the mark before it cancels the call, so it can tell
+"stopped" from "never got a GPU" (``no_gpu``). A later command reads the mark, and asks
+Modal whether the call has ended, to put the hours of a call it lost (Ctrl+C, a lost
+line) right (``cloud.settle_calls``). Only the client removes the mark.
 
 The container asks for exactly ``cloud.CPU_CORES`` and ``cloud.MEMORY_MIB`` (the same
 request and limit), so the price per hour that ``cloud.cost`` prints holds.
@@ -29,11 +32,12 @@ this file with the real Modal.
 from __future__ import annotations
 
 import contextlib
+import io
+import json
 import threading
 import time
 import tomllib
-import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -54,7 +58,10 @@ from gpu_call import call
 
 HERE = Path(__file__).resolve().parent
 COMMIT_EVERY_S = 300
-CALLS = PurePosixPath(".calls")  # in the volume: a file per call whose container started
+CALLS = PurePosixPath(".calls")  # in the volume: <token>.json per call whose container ran
+# What a call may have run beyond its mark's seconds: since its last commit, and the
+# container's start before the function began.
+UNSEEN_S = COMMIT_EVERY_S + 5 * 60
 
 
 def _uv_version(here: Path) -> str | None:
@@ -104,15 +111,23 @@ def train_on_gpu(
     train: list[str], export: list[str], budget_s: float, token: str
 ) -> dict[str, Any]:
     started = time.monotonic()
-    mark = REMOTE_DATA / CALLS / token
-    Path(mark).parent.mkdir(parents=True, exist_ok=True)
-    Path(mark).touch()
+    mark = Path(REMOTE_DATA / CALLS / f"{token}.json")
+
+    def write_mark(ended: bool) -> None:
+        mark.parent.mkdir(parents=True, exist_ok=True)
+        tmp = mark.with_name(f".{mark.name}.tmp")
+        body = {"seconds": round(time.monotonic() - started, 1), "ended": ended}
+        tmp.write_text(json.dumps(body) + "\n", encoding="utf-8")
+        tmp.replace(mark)
+
+    write_mark(ended=False)
     volume.commit()
     stop = threading.Event()
 
     def commit_now_and_then() -> None:
         while not stop.wait(COMMIT_EVERY_S):
             try:
+                write_mark(ended=False)
                 volume.commit()
             except Exception as exc:  # the next one may work
                 print(f"volymen sparades inte nu ({type(exc).__name__}); försöker igen", flush=True)
@@ -123,6 +138,8 @@ def train_on_gpu(
         result = call(train, export, budget_s, IN_CONTAINER / "tools" / "train")
     finally:
         stop.set()
+        keeper.join()
+        write_mark(ended=True)
         volume.commit()
     return {**result, "seconds": time.monotonic() - started}
 
@@ -145,32 +162,61 @@ class ModalBackend:
                 batch.put_file(u.local, "/" + u.remote.as_posix())
 
     def run(
-        self, train: Sequence[str], export: Sequence[str], budget_s: float, timeout_s: int
+        self,
+        train: Sequence[str],
+        export: Sequence[str],
+        budget_s: float,
+        timeout_s: int,
+        token: str,
+        spawned: Callable[[str], None],
     ) -> dict[str, Any]:
-        token = uuid.uuid4().hex
         with modal.enable_output(), app.run():
             fn = train_on_gpu.with_options(gpu=self.gpu, timeout=timeout_s)
             handle = fn.spawn(list(train), list(export), budget_s, token)
+            spawned(handle.object_id)
             try:
                 return handle.get(timeout=timeout_s + START_SLACK_S)
             except TimeoutError:  # e.g. moved after a preemption: the ceiling holds
-                started = self._started(token)  # before the cancel, which ends the call
+                started = self._mark(token) is not None  # before the cancel ends the call
                 handle.cancel(terminate_containers=True)
-                # no "seconds": the container's own time is not known here
+                # no "seconds": the container did not return them (``call_state`` later)
                 return {"status": "stopped" if started else "no_gpu", "code": None}
-            finally:
-                # the mark is only a hint: failing to remove it must not hide the result
-                with contextlib.suppress(Exception):
-                    volume.remove_file("/" + (CALLS / token).as_posix())
 
-    def _started(self, token: str) -> bool:
-        """Whether the call's container ever ran: its mark is in ``CALLS``. The folder is
-        listed rather than the file, and a missing folder means no call has run yet."""
+    def _mark(self, token: str) -> dict[str, Any] | None:
+        """The call's mark in ``CALLS``, or ``None`` if its container never wrote one. The
+        folder is listed rather than the file; a missing folder means no call has run."""
+        name = f"{token}.json"
         try:
             entries = volume.listdir("/" + CALLS.as_posix())
         except (FileNotFoundError, modal.exception.NotFoundError):
-            return False
-        return any(PurePosixPath(e.path).name == token for e in entries)
+            return None
+        if not any(PurePosixPath(e.path).name == name for e in entries):
+            return None
+        buf = io.BytesIO()
+        volume.read_file_into_fileobj("/" + (CALLS / name).as_posix(), buf)
+        return dict(json.loads(buf.getvalue().decode("utf-8")))
+
+    def call_state(self, token: str, call_id: str) -> dict[str, Any]:
+        from modal.types import InputStatus
+
+        mark = self._mark(token)
+        if mark is not None and mark.get("ended"):
+            return {"running": False, "seconds": float(mark["seconds"])}
+        ended = False
+        if call_id:
+            try:
+                graph = modal.FunctionCall.from_id(call_id).get_call_graph()
+            except modal.exception.NotFoundError:  # Modal no longer knows: cannot say
+                graph = []
+            ended = bool(graph) and all(i.status != InputStatus.PENDING for i in graph)
+        if not ended:
+            return {"running": True, "seconds": None}
+        # it ended without its last word (cancelled, stopped): at most UNSEEN_S more
+        return {"running": False, "seconds": float(mark["seconds"] if mark else 0.0) + UNSEEN_S}
+
+    def forget(self, token: str) -> None:
+        with contextlib.suppress(FileNotFoundError, modal.exception.NotFoundError):
+            volume.remove_file("/" + (CALLS / f"{token}.json").as_posix())
 
     def remove(self, paths: Sequence[PurePosixPath]) -> None:
         for path in paths:

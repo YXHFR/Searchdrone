@@ -216,9 +216,15 @@ Det här händer:
    sedan senaste sparningen görs om, högst ungefär en kvart. Den ber inte Modal att
    försöka igen. Flyttar Modal ändå anropet till en annan dator slutar den vänta när
    tiden är slut och stoppar anropet; varje sekund räknas mot `max_hours=`. Innan
-   varje anrop skrivs den längsta tid anropet kan ta upp i räkningen. Den rättas bara
-   när Modal har sagt hur länge anropet körde. Vet den inte det (Ctrl+C, tappat nät,
-   datorn stängs av, eller den slutade vänta) räknas den längsta tiden.
+   varje anrop skrivs den längsta tid anropet kan ta upp i räkningen. Den rättas när
+   det är känt hur länge anropet körde: anropet skriver det själv på volymen medan
+   det kör. Efter Ctrl+C, tappat nät eller att datorn stängts av rättar nästa körning
+   det, när Modal säger att anropet har slutat. Då räknas den tid anropet senast
+   skrev, plus högst tio minuter som det kan ha kört efter det. Kan Modal inte säga
+   att anropet har slutat, stannar nästa körning och säger när det senast slutar
+   (Modal stoppar alltid ett anrop när dess tid är slut); då räknas den längsta
+   tiden. Nästa körning startar aldrig medan ett gammalt anrop kanske fortfarande
+   kör, eftersom det annars kunde spara över den nya träningen.
    Får den inget grafikkort från Modal innan tiden är slut, säger den det: då
    tränades inget, och du kan försöka igen senare eller med en annan `gpu=`.
 4. Den gör ONNX-filen och hämtar hem `best.pt`, `person_yolox_s.onnx` och
@@ -230,7 +236,8 @@ Det här händer:
    Sedan går du vidare med steg 6 ovan (`just bench-detector`, `just pick-detector`)
    precis som vanligt.
 
-Avbryter du med Ctrl+C, eller tappar nätet, stannar grafikkortet och du slutar betala.
+Avbryter du med Ctrl+C stannar grafikkortet och du slutar betala. Tappar du nätet
+stannar det inom några minuter.
 Den sparar inte just då. Kör samma kommando igen så fortsätter den från senaste
 sparningen (var tionde minut och efter varje epok).
 
@@ -239,8 +246,8 @@ sparningen (var tionde minut och efter varje epok).
 från den nya träningens egen sparning, eller börjar från noll om det inte finns någon.
 Kör därför utan `fresh=1` när du fortsätter, annars tas det som tränats bort igen.
 Stoppas kommandot innan den gamla träningen är borttagen, gör nästa körning det, med
-eller utan `fresh=1`. Kommandot säger vilket när det stannar. Går något fel hos Modal eller med nätet
-skriver den vad, på svenska, och vad du kan göra.
+eller utan `fresh=1`. Kommandot säger vilket när det stannar. Går något fel hos Modal
+eller med nätet skriver den vad, på svenska, och vad du kan göra.
 
 **Vad det kostar**
 
@@ -554,8 +561,9 @@ publishing the weights. `software/detector/MODEL_CARD.md` has the details.
   Modal; tested with real child processes.
 - `modal_app.py`: the Modal side: the container image (this folder's `uv.lock` with
   PyTorch for CUDA, plus the allowlisted files), the volume and the function that runs
-  `gpu_call` on the GPU, without retries. Its tests use a fake `modal`. Modal is the `cloud` dependency group, installed only by
-  `just train-detector-cloud`.
+  `gpu_call` on the GPU, without retries, keeping a mark with its seconds on the
+  volume (`.calls/`). Its tests use a fake `modal`. Modal is the `cloud` dependency
+  group, installed only by `just train-detector-cloud`.
 - `fetch_weights.py`: downloads the starting weights, checking size and SHA-256
   (`models.toml`).
 - `vendor/`: the authors' model code. `vendor/NOTICE.md` lists what was changed.

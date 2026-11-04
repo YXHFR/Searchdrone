@@ -61,12 +61,16 @@ class FakeModal:
     calls in turn: ``done`` writes the results as the export would; ``lost`` breaks
     before the container starts and ``lost_late`` after the training has saved;
     ``failed_early`` fails before the first save (out of memory); ``no_gpu`` never
-    gets a container."""
+    gets a container. A container that ran leaves a mark (``marks``) with 1800 s, ended
+    unless the line was lost; Modal says a call is still running if it is in ``alive``."""
 
     def __init__(self, runs: list[str] | None = None) -> None:
         self.volume: dict[str, bytes] = {}
         self.sent: list[list[str]] = []
         self.removed: list[list[str]] = []
+        self.marks: dict[str, dict[str, Any]] = {}
+        self.alive: set[str] = set()
+        self.tokens: list[str] = []
         self.calls: list[tuple[list[str], list[str], float, int]] = []
         self.resumed: list[bytes | None] = []  # per call: the last.pt carried on from
         self.runs = runs or ["done"]
@@ -85,11 +89,35 @@ class FakeModal:
         for p in paths:
             self.volume.pop(p.as_posix(), None)
 
-    def run(self, train: Any, export: Any, budget_s: float, timeout_s: int) -> dict[str, Any]:
+    def call_state(self, token: str, call_id: str) -> dict[str, Any]:
+        assert call_id == f"fc-{token}"
+        if token in self.alive:
+            return {"running": True, "seconds": None}
+        mark = self.marks.get(token)
+        if mark and mark["ended"]:
+            return {"running": False, "seconds": mark["seconds"]}
+        return {"running": False, "seconds": (mark["seconds"] if mark else 0.0) + 600.0}
+
+    def forget(self, token: str) -> None:
+        self.marks.pop(token, None)
+
+    def run(
+        self,
+        train: Any,
+        export: Any,
+        budget_s: float,
+        timeout_s: int,
+        token: str,
+        spawned: Any,
+    ) -> dict[str, Any]:
         self.calls.append((list(train), list(export), budget_s, timeout_s))
+        self.tokens.append(token)
+        spawned(f"fc-{token}")
         status = self.runs[len(self.calls) - 1]
         if status == "lost":
             raise ConnectionError("secret-looking text\nmore lines")
+        if status != "no_gpu":
+            self.marks[token] = {"seconds": 1800.0, "ended": status != "lost_late"}
         targs = dict(a.split("=", 1) for a in train)
         assert "fresh" not in targs  # fresh=1 is done on the volume, before the calls
         if "out" in targs and status != "no_gpu":  # no_gpu: no container ever ran
@@ -656,7 +684,6 @@ def test_after_fresh_a_broken_call_carries_on_the_new_run(
     bank: Path, capsys: pytest.CaptureFixture[str], first: str
 ) -> None:
     fake, _ledger, args, _run = _old_run(bank, [first])
-    args.append("max_hours=48")  # the broken call's worst case stays counted
     assert cloud.main([*args, "fresh=1"], backend=lambda gpu: fake) == 1
     assert "samma kommando utan fresh=1" in capsys.readouterr().err
     again = _again(fake, ["done"])
@@ -712,6 +739,72 @@ def test_a_fresh_whose_removal_broke_is_redone_by_the_next_command(
     assert again.resumed == [None] and not cloud.fresh_pending(ledger)
 
 
+@pytest.mark.parametrize("lost", ["lost", "lost_late"])
+def test_after_a_lost_call_the_next_command_puts_the_hours_right(bank: Path, lost: str) -> None:
+    args = [f"data={bank}", "model=yolox_s", "yes=1"]  # max_hours=24, the default
+    fake = FakeModal([lost])
+    assert cloud.main(args, backend=lambda gpu: fake) == 1
+    remote = cloud.places(bank, "yolox_s").remote_run.name
+    ledger = bank / cloud.LEDGER.format(run=remote)
+    assert cloud.hours_used(ledger) > 23  # the worst case, until the call's time is known
+    again = _again(fake, ["done"])
+    again.marks = fake.marks
+    assert cloud.main(args, backend=lambda gpu: again) == 0  # it really carries on
+    ran = 1800.0 if lost == "lost_late" else 0.0  # what the container's mark says
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(ran + 600.0 + 3600.0)
+    assert again.marks == {}  # the marks are cleared once their time is counted
+
+
+def test_a_call_stopped_before_it_was_made_counts_nothing(tmp_path: Path) -> None:
+    ledger = tmp_path / "hours.json"
+
+    class Building(FakeModal):
+        def run(self, *a: Any) -> Any:
+            raise KeyboardInterrupt  # Ctrl+C while the image is built: nothing spawned
+
+    with pytest.raises(KeyboardInterrupt):
+        cloud.run_until_done(Building(), [], [], 24, ledger)
+    assert cloud.hours_used(ledger) == 0.0
+    assert json.loads(ledger.read_text())["open"] == {}
+
+
+def test_nothing_is_removed_while_an_old_call_may_still_run(
+    bank: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake, ledger, args, run = _old_run(bank, ["lost_late"])
+    args.append("max_hours=48")
+    assert cloud.main(args, backend=lambda gpu: fake) == 1  # Ctrl+C, a lost line
+    again = _again(fake, [])
+    again.marks = fake.marks
+    again.alive = set(fake.tokens)  # Modal: still running
+    assert cloud.main([*args, "fresh=1"], backend=lambda gpu: again) == 1
+    assert "kan fortfarande vara igång" in capsys.readouterr().err
+    assert again.removed == [] and again.sent == [] and again.calls == []
+    assert f"{run}/last.pt" in again.volume and cloud.fresh_pending(ledger)
+    again.alive = set()  # it has ended: the removal is done by the next command
+    later = _again(again, ["done"])
+    later.marks = again.marks
+    assert cloud.main(args, backend=lambda gpu: later) == 0  # fresh=1 still pending
+    assert later.removed and later.resumed == [None]
+
+
+def test_an_old_call_past_its_timeout_has_ended_but_keeps_its_worst_case(bank: Path) -> None:
+    fake, ledger, args, _run = _old_run(bank, ["lost_late"])
+    args.append("max_hours=48")
+    assert cloud.main(args, backend=lambda gpu: fake) == 1
+    body = json.loads(ledger.read_text())
+    (token,) = body["open"]
+    worst = body["open"][token]["worst"]
+    body["open"][token]["at"] -= worst + 1  # longer ago than Modal lets a call run
+    ledger.write_text(json.dumps(body))
+    again = _again(fake, ["done"])
+    again.marks = fake.marks
+    again.alive = set(fake.tokens)  # Modal cannot say (or says so wrongly)
+    assert cloud.main(args, backend=lambda gpu: again) == 0
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(worst + 3600.0)
+    assert json.loads(ledger.read_text())["open"] == {}
+
+
 def test_a_call_that_never_got_a_gpu_says_so(
     bank: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -727,7 +820,8 @@ def test_the_worst_case_is_counted_before_each_call(tmp_path: Path) -> None:
     seen: list[float] = []
 
     class Peek(FakeModal):
-        def run(self, train: Any, export: Any, budget_s: float, timeout_s: int) -> Any:
+        def run(self, *a: Any) -> Any:
+            a[-1]("fc-1")  # spawned: the call is out there
             seen.append(cloud.hours_used(ledger) * 3600)
             raise SystemExit("power gone")  # nothing after this runs, as on a hard stop
 
@@ -742,7 +836,7 @@ def test_the_worst_case_is_counted_before_each_call(tmp_path: Path) -> None:
 def test_the_ledger_is_written_whole(tmp_path: Path) -> None:
     ledger = tmp_path / "train" / "hours.json"
     cloud.start_fresh(ledger)
-    assert json.loads(ledger.read_text()) == {"seconds": 0.0, "fresh_pending": True}
+    assert json.loads(ledger.read_text()) == {"seconds": 0.0, "fresh_pending": True, "open": {}}
     assert [p.name for p in ledger.parent.iterdir()] == [ledger.name]  # no temp file left
 
 
