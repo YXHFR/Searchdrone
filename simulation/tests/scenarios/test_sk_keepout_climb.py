@@ -281,7 +281,8 @@ async def _a_goto_leaves(
     told = holds[-1]["payload"]
     assert told.get("inside") is False, told  # it leaves: not over the person
     assert "climb_to_m" not in told, told
-    assert await _events(sc, "keepout_exit")
+    # A moving drone stops first; the way out (and its event) begins where it stopped.
+    await until_event(sc, "keepout_exit", 30.0)
     after = await sc.command(goto["id"])
     assert after["status"] == "superseded", after
     assert "KEEPOUT_VIOLATION" in str(after), after
