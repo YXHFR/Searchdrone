@@ -1,5 +1,7 @@
-"""Decide the commit status ``gate/owner``: the owner's OK for hardware, CODEOWNERS and the
-release's gate check.
+"""Decide the commit status ``gate/owner``: the owner's OK for the paths in ``PROTECTED``.
+
+The owner turned this off on 2026-11-04: ``PROTECTED`` is empty, so every pull request
+gets ``success`` at step 1 below. The rest stays so that a path can be protected again.
 
 Pull requests are opened with the owner's own account, so GitHub's Approve button cannot
 be used. Instead the owner says OK and the label ``owner-ok`` is set on the pull request
@@ -44,17 +46,10 @@ LABEL = "owner-ok"
 CONTEXT = "gate/owner"
 ACTIONS_BOT = "github-actions[bot]"
 MAX_FILES = 3000  # GitHub lists at most this many files of a pull request
-PROTECTED = (
-    re.compile(r"^hardware/", re.IGNORECASE),
-    re.compile(r"^\.github/CODEOWNERS$"),
-    # The gates and what a release accepts (check_merged_pr_gates.py), so that loosening
-    # any of their rules, this list included, needs the owner too.
-    re.compile(r"^tools/accept/pr_gate_exceptions\.txt$"),
-    re.compile(
-        r"^tools/(check_merged_pr_gates|workflow_rules|check_owner_gate|check_review_comments)\.py$"
-    ),
-    re.compile(r"^\.github/workflows/(review-gate|owner-gate|pr-title|release)\.yml$"),
-)
+# The owner chose (2026-11-04) that no path needs owner-ok any more: the three AI reviews
+# (gate/review) and CI decide every pull request. The mechanism stays, so a path can be put
+# back here; with an empty list gate/owner is always ``success``.
+PROTECTED: tuple[re.Pattern[str], ...] = ()
 # Issue events after which an earlier owner-ok no longer covers the pull request.
 RESETS = ("base_ref_changed", "head_ref_force_pushed", "reopened")
 
@@ -93,9 +88,10 @@ def flatten(pages: Any) -> list[dict[str, Any]]:
 
 
 def protected_files(
-    files: list[dict[str, Any]], rules: Sequence[re.Pattern[str]] = PROTECTED
+    files: list[dict[str, Any]], rules: Sequence[re.Pattern[str]] | None = None
 ) -> list[str]:
     """The changed paths (old and new names) that one of ``rules`` matches."""
+    rules = PROTECTED if rules is None else rules
     hits = []
     for f in files:
         for name in (f.get("filename"), f.get("previous_filename")):

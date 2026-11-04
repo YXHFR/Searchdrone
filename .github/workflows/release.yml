@@ -21,9 +21,9 @@ concurrency:
 
 jobs:
   # First and alone: nothing from the repository runs here except the four gate scripts,
-  # which check_owner_gate.PROTECTED keeps behind owner-ok. The anchor, the release to
-  # start after, comes from GitHub and git alone: the newest published vX.Y.Z[-rc.N]
-  # release whose tag is on the tagged commit's line, made by github-actions[bot] (none
+  # which the three reviews guard (check_owner_gate.PROTECTED is empty). The anchor,
+  # the release to start after, comes from GitHub and git alone: the newest published
+  # vX.Y.Z[-rc.N] release whose tag is on the tagged commit's line, made by github-actions[bot] (none
   # for the first release, and then no such release may exist anywhere else and no
   # release tag on the line). The check runs with the anchor's scripts, which first
   # confirm that release.yml made the anchor and that its run and gates job succeeded
