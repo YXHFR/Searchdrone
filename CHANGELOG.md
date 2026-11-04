@@ -811,6 +811,11 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- `hardware/drone.yaml` uses the retailer's listed 0.913 kg for the 10 000 mAh 6S2P pack
+  (was 0.87 kg), as the fpv7 CAD already does. `just hw-check` now gives 2.343 kg in all,
+  291 W hover power and 35.6 min hover time; every limit still holds. The SITL frame
+  `sd_quad14.json` follows with `mass` 2.343, and the hwcalc tests read the mass from the
+  file instead of repeating it.
 - The AI commander's search-again rule: the lane spacing never goes below the survey
   tool's 10 m minimum, and the 30 m default and the 10 m floor are filled into the prompt
   from the code. The battery check compares "till hemgräns" with the minutes of a pass,
