@@ -19,7 +19,7 @@ from sd_onboard.executor.link_loss import LinkLossInput, LinkLossRule
 from sd_onboard.skills import inspect_steps
 from sd_onboard.skills.base import InspectShot
 from sd_onboard.skills.inspect_steps import estimate, is_clear, look_radius_m, pick
-from sd_safety.constants import LINK_LOSS_DETECT_S
+from sd_safety.constants import LINK_LOSS_DETECT_S, OVERRIDE_NOTICE_WINDOW_S
 from sd_safety.floor import FloorPack, floor_at
 from sd_schemas.base import LatLon, new_id
 from sd_schemas.executor import ExecutorState as S
@@ -110,6 +110,9 @@ def test_abort_reasons() -> None:
     assert abort_reason(S.HELD, "operator_home", None, "human") == "home"
     assert abort_reason(S.HELD, "system_battery", None, "human") == "battery"
     assert abort_reason(S.HELD, "external", None, "human") == "override"
+    # FLY HOME seen at the flight controller before the ground's notice: still home.
+    assert abort_reason(S.HELD, "external", None, "human", flying_home=True) == "home"
+    assert abort_reason(S.HELD, "operator_stop", None, "human", flying_home=True) == "stop"
     assert abort_reason(S.FAILSAFE, None, None, "gnss") == "gnss"
     assert abort_reason(S.RTL, None, None, "battery") == "battery"
     assert abort_reason(S.RTL, None, None, None) == "home"
@@ -612,6 +615,66 @@ async def test_stop_during_the_look_ends_it_without_the_wait() -> None:
         assert r.ex.state == S.HELD
         assert [d["reason"] for d in events(r, "inspect.aborted")] == ["stop"]
         assert r.ex.snapshot().inspect is None
+
+
+def _aborted(r: Rig) -> list[str]:
+    return [d["reason"] for d in events(r, "inspect.aborted")]
+
+
+@pytest.mark.parametrize("mode", [CopterMode.BRAKE, CopterMode.LOITER])
+async def test_stop_seen_at_the_flight_controller_first_is_still_stop(mode: CopterMode) -> None:
+    """STOP's MAVLink (BRAKE, or LOITER after it) before its SD-link notice."""
+    async with rig() as r:
+        await start(r, pack=meadow())
+        await r.run(3)
+        r.fc.set_mode_external(mode)
+        await r.run(0.5)
+        assert r.ex.state == S.HELD and r.ex.held_by == "external"
+        assert r.ex.snapshot().inspect is None  # the look is over at once
+        assert _aborted(r) == []  # its reason waits for the notice
+        r.ex.on_override(r.notice("stop"))
+        await r.run(0.5)
+        assert _aborted(r) == ["stop"]
+        await r.run(OVERRIDE_NOTICE_WINDOW_S + 1)
+        assert _aborted(r) == ["stop"]
+
+
+async def test_stop_notice_first_then_the_flight_controller_is_stop() -> None:
+    async with rig() as r:
+        await start(r, pack=meadow())
+        await r.run(3)
+        r.ex.on_override(r.notice("stop"))
+        await r.run(0.1)
+        r.fc.set_mode_external(CopterMode.BRAKE)
+        await r.run(OVERRIDE_NOTICE_WINDOW_S + 1)
+        assert r.ex.state == S.HELD and r.ex.held_by == "operator_stop"
+        assert _aborted(r) == ["stop"]
+
+
+@pytest.mark.parametrize("mode", [CopterMode.BRAKE, CopterMode.LOITER])
+async def test_a_pilots_own_mode_change_is_never_stop(mode: CopterMode) -> None:
+    """A BRAKE or LOITER with no notice from the ground (the RC's mode switch) is the
+    pilot's takeover, reported when the notice window has passed."""
+    async with rig() as r:
+        await start(r, pack=meadow())
+        await r.run(3)
+        r.fc.set_mode_external(mode)
+        await r.run(0.5)
+        assert _aborted(r) == []
+        await r.run(OVERRIDE_NOTICE_WINDOW_S + 0.5)
+        assert r.ex.state == S.HELD and r.ex.held_by == "external"
+        assert _aborted(r) == ["override"]
+
+
+async def test_fly_home_seen_at_the_flight_controller_first_is_home() -> None:
+    async with rig() as r:
+        await start(r, pack=meadow())
+        await r.run(3)
+        r.fc.set_mode_external(CopterMode.SMART_RTL)
+        await r.run(0.3)
+        r.ex.on_override(r.notice("return_home"))
+        await r.run(OVERRIDE_NOTICE_WINDOW_S + 1)
+        assert _aborted(r) == ["home"]
 
 
 async def test_fly_home_is_allowed_from_inspect() -> None:

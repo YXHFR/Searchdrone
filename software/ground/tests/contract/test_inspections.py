@@ -24,7 +24,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "helpers"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from flow_rig import H, Rig, rig  # pyright: ignore[reportMissingImports]
+from flow_rig import VID, H, Rig, rig  # pyright: ignore[reportMissingImports]
 from test_candidate_decisions import (  # pyright: ignore[reportMissingImports]
     decide,
     person,
@@ -283,6 +283,45 @@ async def test_an_aborted_look(r: Rig, reason: str, outcome: str) -> None:
     await event(r, "inspect.done", command_id="nonsense")
     await event(r, "inspect.laser_lost", command_id=str(sent.command_id))
     assert (await looks(r, mid))[0]["outcome"] == outcome
+
+
+async def test_a_look_the_drone_drops_itself_ends_with_its_reason(r: Rig) -> None:
+    """STOP during a look (TN10): the drone answers the look's order "superseded"
+    (``ONB_CONTROL_HELD``) before its ``inspect.aborted``. That is no other order
+    replacing the look: the look ends aborted, with the drone's reason."""
+    mid, cid, sent = await started(r)
+    assert r.onboard.session is not None
+    await r.onboard.session.ack(sent.command_id, "superseded", reason_codes=["ONB_CONTROL_HELD"])
+    await wait_order_status(r, mid, str(sent.command_id), "superseded")
+    assert (await looks(r, mid))[0]["outcome"] is None
+    await event(
+        r, "inspect.aborted", command_id=str(sent.command_id), candidate_id=cid, reason="stop"
+    )
+    (look,) = await looks(r, mid)
+    assert (look["outcome"], look["detail"]) == ("aborted", "stop"), look
+    assert (await card(r.panel, cid))["card"]["state"] == "ready"
+
+
+@pytest.mark.parametrize(
+    ("latch", "reason"),
+    [("OPERATOR_STOP", "stop"), ("OPERATOR_RTL", "home"), ("BATTERY_RTL", "battery")],
+)
+async def test_the_grounds_stop_before_the_drones_report_ends_with_the_drones_reason(
+    r: Rig, latch: str, reason: str
+) -> None:
+    """STOP during a look (TN10): the ground cancels the open orders (``cancel_open``)
+    before the drone's ``inspect.aborted``, which waits for the ground's notice to name
+    the mode change. The look ends at once with the drone's word for it, never the
+    latch's code, and the report that comes after changes nothing."""
+    mid, cid, sent = await started(r)
+    await commands.cancel_open(r.flow, VID, latch)
+    (look,) = await looks(r, mid)
+    assert (look["outcome"], look["detail"]) == ("aborted", reason), look
+    assert (await card(r.panel, cid))["card"]["state"] == "ready"
+    await event(
+        r, "inspect.aborted", command_id=str(sent.command_id), candidate_id=cid, reason=reason
+    )
+    assert [(x["outcome"], x["detail"]) for x in await looks(r, mid)] == [("aborted", reason)]
 
 
 async def test_another_order_replaces_the_look(r: Rig) -> None:

@@ -515,6 +515,9 @@ class Executor:
         # plan and the gate do not see (the charter allows flying over it).
         self._inspect_pending: tuple[UUID, LatLon, float] | None = None
         self._inspect_ai: LimitAction | None = None  # L-AI held back during a look
+        # A look ended by a mode change not yet told apart (``_inspect_abort_later``): the
+        # look and the reason it would get now, reported once the change is classified.
+        self._inspect_unclassified: tuple[InspectSession, InspectAbortReason] | None = None
         # The hover a look's straight climb with no session ends in: the link-loss rule's
         # (the link lost), or the usual one (a failed look, the laser lost over a find).
         self._inspect_climb_hold = "link_loss"
@@ -1869,6 +1872,7 @@ class Executor:
             self._run_link_rule(now)
         self._inspect_tick(now)
         self._inspect_watch()
+        self._inspect_abort_later()
         self._find_watch_tick(now)
         if self._gcs_continue and self.state == S.HELD and t.fc_connected:
             self._gcs_home_from_hold()
@@ -2768,12 +2772,7 @@ class Executor:
         self._inspect = None
         self._keepouts_changed = True  # the candidate's cylinder is in force again
         if reason is not None and s.phase in SUSPENDED_PHASES:
-            self.emit_inspect(
-                EVENT_ABORTED,
-                InspectAborted(
-                    command_id=s.command_id, candidate_id=s.candidate_id, reason=reason
-                ).model_dump(mode="json"),
-            )
+            self._inspect_aborted(s, reason)
         self.emit(
             "inspect_ended",
             {"command_id": str(s.command_id), "candidate_id": str(s.candidate_id), "cause": cause},
@@ -2781,6 +2780,14 @@ class Executor:
         held, self._inspect_ai = self._inspect_ai, None
         if held is not None and cause in _INSPECT_AI_AFTER:
             self._apply_limit(held)  # the AI went quiet during the look: as usual now
+
+    def _inspect_aborted(self, s: InspectSession, reason: InspectAbortReason) -> None:
+        self.emit_inspect(
+            EVENT_ABORTED,
+            InspectAborted(
+                command_id=s.command_id, candidate_id=s.candidate_id, reason=reason
+            ).model_dump(mode="json"),
+        )
 
     def _inspect_skill_done(self, active: _Active) -> bool:
         """A look's own orders ending well; True when handled here."""
@@ -3016,8 +3023,51 @@ class Executor:
             case _:
                 ok = self.state == S.INSPECT and a is not None and a.skill == INTERNAL_INSPECT_CLIMB
         if not ok:
-            reason = abort_reason(self.state, self.held_by, self.hold_reason, self._taken_by)
-            self._inspect_finish(f"left:{self.state}", reason)
+            reason = self._inspect_abort_reason()
+            if s.phase in SUSPENDED_PHASES and self._mode_change_unclassified():
+                self._inspect_unclassified = (s, reason)
+                self._inspect_finish(f"left:{self.state}")
+            else:
+                self._inspect_finish(f"left:{self.state}", reason)
+
+    def _inspect_abort_reason(self) -> InspectAbortReason:
+        return abort_reason(
+            self.state,
+            self.held_by,
+            self.hold_reason,
+            self._taken_by,
+            flying_home=self._flying_home(),
+        )
+
+    def _mode_change_unclassified(self) -> bool:
+        """HELD by a mode change nobody here has named yet, within the notice window.
+
+        STOP and FLY HOME reach the flight controller by MAVLink and this process by
+        SD-link, in either order. Seen at the flight controller first, the change is
+        ``external`` until the ground's notice names it (``_classify``, ``on_override``);
+        a pilot's own change is still ``external`` when the window ends."""
+        return (
+            self.state == S.HELD
+            and self.held_by == "external"
+            and self.auth.in_window(self.now_ms())
+        )
+
+    def _inspect_abort_later(self) -> None:
+        """The ``inspect.aborted`` of a look ended by an unclassified mode change, sent
+        once the change has a name: STOP (``stop``) or FLY HOME (``home``) when the
+        operator's notice came within the window, a takeover (``override``) when none
+        did. The look itself ended at once; only its report waits."""
+        pending = self._inspect_unclassified
+        if pending is None:
+            return
+        s, reason = pending
+        if self.state == S.HELD:
+            reason = self._inspect_abort_reason()
+            self._inspect_unclassified = (s, reason)
+        if self._mode_change_unclassified():
+            return
+        self._inspect_unclassified = None
+        self._inspect_aborted(s, reason)
 
     def _inspect_return(self, cause: str) -> None:
         """Back to where the search broke off: straight up to the start height first."""

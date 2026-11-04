@@ -212,8 +212,10 @@ class Flight:
     sent: list[Any] = field(default_factory=list)  # everything 1/191 wrote
     track: list[tuple[float, float, float, float]] = field(default_factory=list)  # t, lat, lon, alt
     acks: dict[Any, list[Ack]] = field(default_factory=dict)
+    inbound: list[tuple[float, Any]] = field(default_factory=list)  # (monotonic, every message up)
     commander: bool = True  # whether the test ground reports the AI as connected
     tasks: list[asyncio.Future[Any]] = field(default_factory=list)
+    link: OnboardLink | None = None  # the onboard side of SD-link (perception goes up here)
 
     def at(self, east: float, north: float) -> tuple[float, float]:
         return self.plane.latlon(east, north)
@@ -278,6 +280,7 @@ async def _read_acks(f: Flight, session: LinkSession) -> None:
     while True:
         inbound = await next_inbound(session)
         body = inbound.body
+        f.inbound.append((time.monotonic(), body))
         if isinstance(body, Ack) and body.ref_id in f.acks:
             f.acks[body.ref_id].append(body)
         elif isinstance(body, CharterAck):
@@ -341,7 +344,7 @@ async def flight(sim: Sim) -> AsyncIterator[Flight]:
         )
         holder.append(ex)
         link.executor = ex
-        f = Flight(ex, onboard, ground, fake, proxy, plane, sim, sent=sent)
+        f = Flight(ex, onboard, ground, fake, proxy, plane, sim, sent=sent, link=link)
         stop = asyncio.Event()
         f.tasks += [asyncio.ensure_future(ex.run(stop)), asyncio.ensure_future(link.run(stop))]
         onboard.subscribe(

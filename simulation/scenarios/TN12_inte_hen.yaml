@@ -1,0 +1,10 @@
+# TN12: "Inte hen" while the drone waits: straight back, and the search goes on from
+# where it broke off.
+scenario: TN12
+title: "Inte hen under väntan: tillbaka direkt, sökningen fortsätter"
+mode: exercise
+laser: none
+start_alt_m: 40
+target: { at_enu: [0, 100], jitter_m: 10, visible_m: 0.2, score: 0.45 }
+map: { scan_year: 2019 }
+seeds: [1, 2, 3]

@@ -290,6 +290,7 @@ def test_sitl_jobs_and_aggregate() -> None:
         "changes",
         "sitl",
         "sitl-search",
+        "sitl-inspect",
         "sitl-ok",
         "sitl-nightly",
         "sitl-search-nightly",
@@ -303,7 +304,7 @@ def test_sitl_jobs_and_aggregate() -> None:
         "e2e-nightly",
     }
     assert jobs["sitl-ok"]["if"] == "always()"
-    pr_jobs = {"sitl", "sitl-search", "video", "e2e", "e2e-offline", "e2e-search"}
+    pr_jobs = {"sitl", "sitl-search", "sitl-inspect", "video", "e2e", "e2e-offline", "e2e-search"}
     assert set(jobs["sitl-ok"]["needs"]) == {"changes"} | pr_jobs
     assert "ci_aggregate.jq" in jobs["sitl-ok"]["steps"][-1]["run"]
     for name in pr_jobs:
@@ -337,6 +338,7 @@ def test_search_jobs() -> None:
     for name, shards, mode in (
         ("sitl-search", "SEARCH_SHARDS", "mode=search "),
         ("sitl-search-nightly", "SEARCH_NIGHTLY_SHARDS", "mode=search-nightly "),
+        ("sitl-inspect", "INSPECT_SHARDS", "mode=inspect "),
     ):
         job = jobs[name]
         assert job["strategy"]["matrix"]["shard"] == list(range(1, int(env[shards]) + 1)), name
@@ -344,6 +346,9 @@ def test_search_jobs() -> None:
         assert step["timeout-minutes"] <= 35
         assert mode in step["run"] and f'"shards=${shards}"' in step["run"], name
         assert "physics=builtin" in step["run"] and "brain=scripted" in step["run"], name
+    inspect_run = _run_of(jobs["sitl-inspect"], "ci-sitl")["run"]
+    assert int(env["INSPECT_WORKERS"]) <= 2
+    assert '"workers=$INSPECT_WORKERS"' in inspect_run
     nightly_run = _run_of(jobs["sitl-search-nightly"], "ci-sitl")["run"]
     assert "seeds=1-50 " in nightly_run and "sk06_seeds=1-100" in nightly_run
     e2e = jobs["e2e-search"]

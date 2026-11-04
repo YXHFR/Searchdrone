@@ -56,6 +56,7 @@ from sd_schemas.inspect import (
     INSPECT_MAX_S,
     LOWER_OFFER_S,
     InspectAborted,
+    InspectAbortReason,
     InspectDone,
     Inspection,
     InspectLowerOffer,
@@ -108,6 +109,15 @@ _ORDER_END: Final = {
     "expired": "failed",
     "cancelled": "aborted",
     "superseded": "resumed_by_pilot",
+}
+# The ground's latch cancelling the open orders (``commands.cancel_open``) -> the reason
+# the drone's ``inspect.aborted`` gives for the same mode change.
+_LATCH_ABORT: Final[dict[str, InspectAbortReason]] = {
+    "OPERATOR_STOP": "stop",
+    "WATCHDOG_STOP": "stop",
+    "OPERATOR_RTL": "home",
+    "WATCHDOG_RTL": "home",
+    "BATTERY_RTL": "battery",
 }
 # The onboard reason of ``inspect.aborted`` -> the outcome (the rest are "aborted").
 _ABORT_OUTCOME: Final = {"refused_onboard": "refused_onboard", "failed": "failed"}
@@ -545,10 +555,26 @@ async def decided(flow: MissionFlow, mission: Mission, candidate_id: str, decisi
 
 
 async def on_order_end(flow: MissionFlow, cmd: Command, status: str, reason: str | None) -> None:
-    """The look's order ended before a decision (``commands.set_status``)."""
+    """The look's order ended before a decision (``commands.set_status``).
+
+    Superseded with a code, the drone dropped the look itself (STOP, a takeover, a limit,
+    a cylinder: ``ONB_CONTROL_HELD``, ``L-BATT`` ...), not for another order: its
+    ``inspect.aborted`` that follows says why (``aborted`` with the reason), and the tick
+    ends a look whose report never comes. Another order's replacement comes uncoded and
+    is closed by ``replaced`` as the drone takes the new order.
+
+    Cancelled by the ground's own STOP, FLY HOME or battery guard (``cancel_open``), the
+    look ends at once with the reason the drone's ``inspect.aborted`` gives for it
+    (``stop``, ``home``, ``battery``): the drone may report later than the cancel (it
+    waits for the ground's notice to name a mode change), and the report then finds the
+    look already ended."""
+    if status == "superseded" and reason is not None:
+        return
     outcome = _ORDER_END.get(status)
     look = None if outcome is None else await _open(flow, str(cmd.id))
     if look is not None and outcome is not None:
+        if status == "cancelled" and reason is not None:
+            reason = _LATCH_ABORT.get(reason, reason)
         await _end(flow, look, outcome, detail=reason)
 
 

@@ -1,0 +1,11 @@
+# TN03: the same spruce with a LightWare GRF-250. The confirmed laser lets the pilot take
+# the drone down to the trees plus 5 m, never nearer the surface it sees than 12 m.
+scenario: TN03
+title: "Granskog, GRF-250: ned till träd + 5 m, aldrig närmare än 12 m från ytan"
+mode: exercise
+laser: grf250
+start_alt_m: 60
+target: { at_enu: [40, 0], jitter_m: 5, visible_m: 0.4, score: 0.45 }
+stands: [{ name: granar, at_enu: [40, 0], radius_m: 30, height_m: 24, spacing_m: 6 }]
+map: { scan_year: 2021 }
+seeds: [1, 2, 3]
