@@ -554,11 +554,13 @@ def test_executor_silent_mid_search_holds_clear_of_the_keepout(sim: Sim, how: st
     asyncio.run(run())
 
 
-# The mission-end test: the same box and spacing. From south of the box the lawnmower
-# ends at the west or the east end of its northmost row, depending on where the drone
-# stands (SITL is shared between tests, so that varies). A person's cylinder stands just
-# outside each of the two, along the line from the box's middle, ``_END_GAP_M`` from
+# The mission-end test: the same box and spacing, the lines fixed east-west (the box is
+# square, so without a heading rounding picks the direction). From south of the box the
+# lawnmower ends at the west or the east end of its northmost row, depending on where the
+# drone stands (SITL is shared between tests, so that varies). A person's cylinder stands
+# just outside each of the two, along the line from the box's middle, ``_END_GAP_M`` from
 # that end to its edge; the one past the mission's hover is the one this test is about.
+_END_HEADING_DEG = 90.0
 _END_SPACING_M = 20.0
 _END_R_M = 10.0
 _END_GAP_M = 11.0
@@ -616,7 +618,9 @@ def test_mission_end_without_onboard_hovers_clear_of_the_keepout(
             # The two hovers the onboard computer can plan from south of the box: from
             # the west or the east of its middle.
             ends = [
-                lawnmower(corners, _END_SPACING_M, None, (mid_e + dx * 2 * half, here[1]))[-1]
+                lawnmower(
+                    corners, _END_SPACING_M, _END_HEADING_DEG, (mid_e + dx * 2 * half, here[1])
+                )[-1]
                 for dx in (-1, 1)
             ]
             centres = []
@@ -643,14 +647,20 @@ def test_mission_end_without_onboard_hovers_clear_of_the_keepout(
             assert all(p in f.ex.keepouts for p in persons)
             box = f.square(*_SILENT_BOX_M)
             await f.order(
-                "survey_sector", {"polygon": box, "spacing_m": _END_SPACING_M, "speed_ms": 5}
+                "survey_sector",
+                {
+                    "polygon": box,
+                    "spacing_m": _END_SPACING_M,
+                    "heading_deg": _END_HEADING_DEG,
+                    "speed_ms": 5,
+                },
             )
             await f.until(lambda: f.ex.state == S.SURVEY and e.mode() == "AUTO", 20, "search")
             active = f.ex.active
             assert active is not None
-            run = getattr(active.handler, "run", None)
-            assert isinstance(run, SurveyRun)
-            last = run.waypoints[-1]
+            survey = getattr(active.handler, "run", None)
+            assert isinstance(survey, SurveyRun)
+            last = survey.waypoints[-1]
             end_lat, end_lon = last.lat, last.lon
             # The case this test is about: the hover point is one of those two ends, a cylinder
             # past it ``_END_GAP_M`` away (if the plan differs, this fails instead of
@@ -672,7 +682,9 @@ def test_mission_end_without_onboard_hovers_clear_of_the_keepout(
 
             watcher = asyncio.ensure_future(watch())
             try:
-                await e.wait(lambda: "alarm.MISSION_FALLBACK" in e.events, 240, "fallback alarm")
+                # About 450 m from home through the box at 5 m/s (some 130 s with the turns), then
+                # the 10 s grace.
+                await e.wait(lambda: "alarm.MISSION_FALLBACK" in e.events, 180, "fallback alarm")
                 total = e.fc.mission_total
                 assert e.mode() == "AUTO" and total is not None
                 assert e.fc.mission_seq_current == total  # on the hover at the end
