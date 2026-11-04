@@ -131,6 +131,9 @@ from sd_safety.constants import (
     HOME_MATCH_M,
     KEEPOUT_PAIR_MIN_M,
     KEEPOUT_PAIR_WINDOW_S,
+    KEEPOUT_PASS_GAP_S,
+    KEEPOUT_PASS_MAX_S,
+    KEEPOUT_RESTART_CAUTION_S,
     KEEPOUT_SCORE_MIN,
     KEEPOUT_SCORE_SURE,
     LINK_LOSS_DETECT_S,
@@ -540,18 +543,17 @@ class Executor:
         # The order the way out replaced (command id, skill) for as long as it runs: a
         # cylinder that comes meanwhile may make it plan the way out again (``_exit_reflex``).
         self._exit_data: dict[str, str] | None = None
-        # When (monotonic s) the drone came inside each unconfirmed cylinder it is in now,
-        # by keepout_id (``_keepout_inside_s``): the pass it is on counts that time.
-        self._soft_since: dict[UUID, float] = {}
-        # The unconfirmed cylinders the drone is in now for a time nobody knows (it was
-        # inside when this process first looked): the first leg may only leave them.
-        self._soft_unknown: set[UUID] = set()
+        # The pass the drone is on through each unconfirmed cylinder it is in, or left less
+        # than KEEPOUT_PASS_GAP_S ago, by keepout_id (``_keepout_inside_s``): when (monotonic
+        # s) it came in (None: nobody knows, the first leg may only leave it) and when it
+        # went out (None: inside now).
+        self._soft_pass: dict[UUID, tuple[float | None, float | None]] = {}
         # Whether ``_keepout_inside_s`` has looked since the start (with a plane). Until
         # it has, every cylinder the drone is in counts as unknown time when it does.
         self._soft_primed = False
-        # After a restart in the air: the first install taken counts as a first look too
-        # (a cylinder the ground made while this process was down may hold the drone).
-        self._soft_prime_on_install = False
+        # When (monotonic s) this process started with the drone in the air: for
+        # KEEPOUT_RESTART_CAUTION_S after it, a new cylinder around the drone is unknown time.
+        self._restarted_at: float | None = None
         self._keepouts_changed = False  # the reflex runs on the next tick
         self._keepout_watch = False  # an order heads for a cylinder, still far off: every tick
         self._keepouts_seen: set[UUID] = set()  # the cylinders the reflex has looked at
@@ -1629,9 +1631,6 @@ class Executor:
             return
         self.keepout_seq = install.install_seq
         self.keepouts = tuple(install.keepouts)
-        if self._soft_prime_on_install:
-            self._soft_prime_on_install = False
-            self._soft_primed = False
         # Our own cylinders give way to the ground's once one of those covers them (the
         # ground has had time to include them as candidates). One it never covers stays,
         # until a person rejects a candidate one of its detections belongs to (spec
@@ -1942,7 +1941,7 @@ class Executor:
         if v.armed or is_airborne(v):
             self.state = S.HELD
             self.held_by = "onboard_restart"
-            self._soft_prime_on_install = True
+            self._restarted_at = self.clock.monotonic()
             self.emit("onboard_restart", {"armed": v.armed, "fc_mode": v.fc_mode})
         else:
             self.state = S.IDLE
@@ -2153,44 +2152,60 @@ class Executor:
         return True
 
     def _keepout_inside_s(self) -> dict[UUID, float]:
-        """How long (s) the drone has been inside each unconfirmed cylinder it is in now,
-        by keepout_id: a search route that starts inside one continues the pass the drone
-        is on and counts that time (``sd_safety.keepout.passes``). A cylinder that comes
-        around the drone starts at 0, unless the drone was inside unconfirmed cylinders
-        already: then it takes the longest of their times (a cylinder grown, merged or
-        handed over to the ground's is the same person, and gives no fresh budget).
+        """How much (s) of its budget the pass the drone is on has used, for each
+        unconfirmed cylinder it is in or left less than ``KEEPOUT_PASS_GAP_S`` ago, by
+        keepout_id: a search route continues that pass and counts that time
+        (``sd_safety.keepout.passes``). A break outside shorter than the gap is no new pass
+        (owner decision 2026-11-04): the time counts on from when the drone came in. A
+        cylinder that comes around the drone starts at 0, unless the drone was inside
+        unconfirmed cylinders already: then it takes the longest of their times (a cylinder
+        grown, merged or handed over to the ground's is the same person, and gives no fresh
+        budget).
 
-        The first look after a start (and, after a restart in the air, after the first
-        install taken) knows nothing of the cylinders the drone is in already: their time
-        is unknown, and they are left out (the first leg may only leave them, never go
-        deeper). So is every cylinder that comes around the drone while it is in one of
-        unknown time (the same person). One is known again once the drone has been
-        outside it. Without a plane nothing is known, and the next look is a first one."""
+        Unknown time counts as the whole budget used (``KEEPOUT_PASS_MAX_S``): the first
+        leg may only leave the cylinder, never go deeper, and not come back in within the
+        gap. It is so for the cylinders the drone is in at the first look after a start
+        (with a plane); for every cylinder that comes around the drone for
+        ``KEEPOUT_RESTART_CAUTION_S`` after a restart in the air (its own fresh detections
+        and the ground's first install too: the same person may be among them, owner
+        decision 2026-11-04); and for one that comes while the drone is in one of unknown
+        time. A pass ends once the drone has been outside the cylinder for the gap.
+        Without a plane nothing is known, and the next look is a first one."""
         plane = self.plane()
         if plane is None:
-            self._soft_since, self._soft_unknown, self._soft_primed = {}, set(), False
+            self._soft_pass, self._soft_primed = {}, False
             return {}
         now = self.clock.monotonic()
         v = self.vehicle_state()
         here = plane.xy(v.lat, v.lon)
-        inside = [
-            k.keepout_id
-            for k in self.keepouts_in_force()
-            if unconfirmed(k) and math.dist(here, plane.xy(k.lat, k.lon)) < k.radius_m
-        ]
-        before, unknown = self._soft_since, self._soft_unknown
-        if not self._soft_primed:
-            self._soft_primed = True
-            unknown = unknown | {kid for kid in inside if kid not in before}
-        came_unknown = bool(unknown)  # the drone was in one of unknown time already
-        self._soft_unknown = {
-            kid for kid in inside if kid in unknown or (kid not in before and came_unknown)
+        soft = [k for k in self.keepouts_in_force() if unconfirmed(k)]
+        inside = {
+            k.keepout_id for k in soft if math.dist(here, plane.xy(k.lat, k.lon)) < k.radius_m
         }
-        inherit = min(before.values(), default=now)
-        self._soft_since = {
-            kid: before.get(kid, inherit) for kid in inside if kid not in self._soft_unknown
+        before = self._soft_pass
+        came = [since for since, left in before.values() if left is None]  # in at the last look
+        first, self._soft_primed = not self._soft_primed, True
+        careful = (
+            self._restarted_at is not None and now - self._restarted_at < KEEPOUT_RESTART_CAUTION_S
+        )
+        fresh: float | None = None  # the pass a cylinder that comes around the drone is on
+        if not (first or careful or None in came):
+            fresh = min((t for t in came if t is not None), default=now)
+        passes: dict[UUID, tuple[float | None, float | None]] = {}
+        for k in soft:
+            kid = k.keepout_id
+            was = before.get(kid)
+            if kid in inside:
+                passes[kid] = (fresh if was is None else was[0], None)
+            elif was is not None:
+                left = now if was[1] is None else was[1]
+                if now - left < KEEPOUT_PASS_GAP_S:
+                    passes[kid] = (was[0], left)  # out for a moment: the same pass
+        self._soft_pass = passes
+        return {
+            kid: KEEPOUT_PASS_MAX_S if since is None else now - since
+            for kid, (since, _) in passes.items()
         }
-        return {kid: now - t for kid, t in self._soft_since.items()}
 
     def _exiting_keepouts(self) -> bool:
         """Whether the way out of the cylinders (``_exit_keepouts``) is under way."""
