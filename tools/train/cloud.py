@@ -27,11 +27,18 @@ What happens:
 2. The cost is printed (GPU price per hour from ``PRICES``, times the hours) and you
    are asked before anything is started.
 3. ``train_detector.py`` and then ``export_onnx.py`` run on the GPU (``modal_app.py``),
-   with their checkpoints on the volume. Modal stops a call after at most 24 hours; the
-   run is stopped a little before, saved, and started again from ``last.pt`` until it is
-   done or ``max_hours`` is used up. A stopped command (Ctrl+C, a lost line) carries on
-   from the last save when run again.
-4. ``best.pt`` and ``settings.json`` come back to ``<data>/train/<run>`` and the ONNX file
+   with their checkpoints on the volume (``gpu_call.py``). The training saves
+   ``last.pt`` every ``save_minutes`` (default 10) and after every epoch, not when it is
+   stopped. A Modal call lasts at most 24 hours, so each call is given a deadline a
+   little before (and before ``max_hours`` runs out); then the script is stopped and the
+   next call starts from the last save, until the run is done. Up to about 15 minutes of
+   training (since the last save, and the volume is committed every 5 minutes) may be
+   done again. Modal never retries a call by itself; every second of every call is
+   counted against ``max_hours``, for this run folder in all (``LEDGER``), so it is a
+   real ceiling. A stopped command (Ctrl+C, a lost line) carries on the same way when
+   run again.
+4. ``best.pt`` and ``settings.json`` come back to ``<data>/train/<run>`` (never over a
+   local training's folder: ``check_local_run``) and the ONNX file
    and its manifest to ``<data>/models/detector``, where the local training puts them, so
    ``just bench-detector``, ``just pick-detector`` and the simulator use them unchanged.
 
@@ -63,6 +70,7 @@ from bench.datasets import (
     load_register,
     read_source,
 )
+from gpu_call import STOP_GRACE_S
 
 HERE = Path(__file__).resolve().parent
 
@@ -94,6 +102,51 @@ OWN_KEYS = ("gpu", "yes", "hours", "max_hours", "name")
 LOCAL_ONLY_KEYS = ("device", "simfarm", "simfarm_epochs")
 # The record of what was uploaded, per volume, in the data folder (size, mtime_ns).
 RECORD = "train/.modal-{volume}.json"
+# The GPU seconds used so far, per run on the volume, in the data folder: max_hours= is
+# a ceiling for all calls of a run together, also over several commands.
+LEDGER = "train/.modal-hours-{run}.json"
+# Each call ends this long after its deadline at most: the script's own stop
+# (STOP_GRACE_S) and the last commit of the volume. Modal's timeout is set to it.
+FINISH_SLACK_S = 5 * 60
+# A call shorter than this is not worth starting (the container and data take minutes).
+MIN_CALL_S = 15 * 60
+# The local run folder of a run made here, with what came back from which run on the
+# volume; a folder without it (or with last.pt) is a local training's and is never
+# written to.
+MARKER = "modal-run.json"
+# An init= file: a best.pt, of at most this size (yolox_m's is about 200 MB).
+INIT_SUFFIXES = (".pt", ".pth")
+MAX_INIT_BYTES = 1_000_000_000
+# Where the repository's files lie in the container (bench.common.ROOT there).
+IN_CONTAINER = PurePosixPath("/root/sd")
+# Exactly the files of tools/ the container needs to run train_detector.py and
+# export_onnx.py (and this module and modal_app.py, which Modal imports there), as
+# globs relative to tools/. Nothing else is put in the image: no .env, no local
+# settings, no weights or data (``image_files`` refuses them even if listed).
+IMAGE_FILES: tuple[str, ...] = (
+    "bench/common.py",
+    "bench/datasets.py",
+    "bench/datasets.toml",
+    "bench/layouts.py",
+    "bench/splits.py",
+    "bench/splits/*.json",
+    "train/cloud.py",
+    "train/evaluate.py",
+    "train/export_onnx.py",
+    "train/families.py",
+    "train/gpu_call.py",
+    "train/modal_app.py",
+    "train/tiles.py",
+    "train/train_detector.py",
+    "train/vendor/NOTICE.md",
+    "train/vendor/damoyolo/*.py",
+    "train/vendor/damoyolo/LICENSE",
+    "train/vendor/damoyolo/NOTICE",
+    "train/vendor/damoyolo/tinynas_L25_k1kx.txt",
+    "train/vendor/yolox/*.py",
+    "train/vendor/yolox/LICENSE",
+)
+FORBIDDEN_SUFFIXES = (".pt", ".pth", ".onnx", ".npy", ".npz", ".jpg", ".png", ".tif")
 # Files sent per batch; the record is written after each, so a stopped upload carries on.
 CHUNK_FILES = 500
 CHUNK_BYTES = 2_000_000_000
@@ -117,6 +170,63 @@ def train_keys() -> tuple[str, ...]:
 
 def pretrained_files() -> dict[str, str]:
     return dict(_literal(HERE / "families.py", "PRETRAINED"))
+
+
+def default_sets() -> tuple[str, ...]:
+    """``train_detector.Settings.sets``, the sets ``train-detector`` trains on when
+    ``sets=`` is not given, read the same way."""
+    tree = ast.parse((HERE / "train_detector.py").read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "Settings":
+            for item in node.body:
+                if (
+                    isinstance(item, ast.AnnAssign)
+                    and isinstance(item.target, ast.Name)
+                    and item.target.id == "sets"
+                    and item.value is not None
+                ):
+                    return tuple(ast.literal_eval(item.value))
+    raise RuntimeError("Settings.sets saknas i train_detector.py")
+
+
+def image_files(tools: Path) -> list[tuple[Path, PurePosixPath]]:
+    """(file here, path in the container) of every file ``IMAGE_FILES`` names under
+    ``tools``. Raises if a pattern finds nothing or a file is one that must never be
+    sent (secrets, local settings, weights, pictures)."""
+    out: list[tuple[Path, PurePosixPath]] = []
+    for pattern in IMAGE_FILES:
+        found = sorted(p for p in tools.glob(pattern) if p.is_file())
+        if not found:
+            raise BenchError(f"{pattern} saknas under {tools}.", 1)
+        for path in found:
+            name = path.name
+            if (
+                name.startswith(".")
+                or ".local." in name
+                or name.endswith(FORBIDDEN_SUFFIXES)
+                or "__pycache__" in path.parts
+            ):
+                raise BenchError(f"{path} får inte skickas till Modal.", 1)
+            rel = path.relative_to(tools)
+            out.append((path, IN_CONTAINER / "tools" / PurePosixPath(*rel.parts)))
+    return out
+
+
+def check_init(path: Path) -> int:
+    """An ``init=`` file must be a ``best.pt`` of a sane size; checked here, before
+    anything is sent, and again by ``guard``. Returns its size."""
+    if not path.is_file():
+        raise BenchError(f"init={path} finns inte.", 2)
+    if path.suffix not in INIT_SUFFIXES:
+        raise BenchError(f"init= ska vara en .pt-fil (best.pt), inte {path.name}.", 2)
+    size = path.stat().st_size
+    if size > MAX_INIT_BYTES:
+        raise BenchError(
+            f"init={path.name} är {size / 1e9:.1f} GB; en best.pt är högst "
+            f"{MAX_INIT_BYTES / 1e9:.0f} GB. Fel fil?",
+            2,
+        )
+    return size
 
 
 # --- what may leave this computer ---------------------------------------------------
@@ -179,10 +289,12 @@ class Upload:
     remote: PurePosixPath  # relative to the volume's root (the data folder there)
 
 
-def guard(remote: PurePosixPath, register: Mapping[str, Dataset]) -> None:
+def guard(remote: PurePosixPath, register: Mapping[str, Dataset], size: int) -> None:
     """The hard check every upload passes, file by file, just before it is sent: the
-    path must be one the training reads, and a dataset path must name a set
-    ``refusal`` lets go. Raises ``BenchError`` (exit 1) otherwise, and nothing is sent."""
+    path must be one the training reads, a dataset path must name a set ``refusal``
+    lets go, and an ``init/`` file must be a ``.pt``/``.pth`` of at most
+    ``MAX_INIT_BYTES`` (``size``). Raises ``BenchError`` (exit 1) otherwise, and nothing
+    is sent."""
     parts: tuple[str, ...] = remote.parts
     if remote.is_absolute() or ".." in parts or len(parts) < 2:
         raise BenchError(f"Uppladdningen stoppad: {remote} är ingen tillåten sökväg.", 1)
@@ -197,7 +309,8 @@ def guard(remote: PurePosixPath, register: Mapping[str, Dataset]) -> None:
         if parts[2] in pretrained_files().values():
             return
     elif parts[0] == "init" and len(parts) == 3:
-        return
+        if remote.suffix in INIT_SUFFIXES and 0 <= size <= MAX_INIT_BYTES:
+            return
     raise BenchError(f"Uppladdningen stoppad: {remote} är ingen tillåten sökväg.", 1)
 
 
@@ -344,11 +457,13 @@ class Places:
 
 def places(data: Path, model: str, out: str = "", name: str = "") -> Places:
     """The local run folder is ``out=`` or ``<data>/train/<model>``, as for
-    ``train-detector``; on the volume the run has the same folder name under ``train/``."""
+    ``train-detector``. On the volume the run is ``train/<folder name>-<hash>``, the
+    hash of the whole local path, so two ``out=`` folders with the same name never share
+    a run there."""
     local_run = Path(out).expanduser().resolve() if out else data / "train" / model
-    run = local_run.name
-    if not run or run.startswith("."):
+    if not local_run.name or local_run.name.startswith("."):
         raise BenchError(f"out= ska sluta på ett mappnamn, inte {out!r}.", 2)
+    run = f"{local_run.name}-{hashlib.sha256(str(local_run).encode()).hexdigest()[:8]}"
     name = name or f"person_{model}"
     if "/" in name or name.startswith("."):
         raise BenchError(f"name= ska vara ett filnamn, inte {name!r}.", 2)
@@ -397,10 +512,13 @@ class Backend(Protocol):
 
     def upload(self, uploads: Sequence[Upload]) -> None: ...
 
-    def run(self, train: Sequence[str], export: Sequence[str], budget_s: float) -> dict[str, Any]:
-        """One call on the GPU: ``{"status": "done" | "stopped" | "failed", "code": int,
-        "seconds": float}``. ``stopped``: the budget ran out and the last save is on the
-        volume."""
+    def run(
+        self, train: Sequence[str], export: Sequence[str], deadline: float, timeout_s: int
+    ) -> dict[str, Any]:
+        """One call on the GPU (``gpu_call.call``), stopped at ``deadline`` (wall clock)
+        and by Modal after ``timeout_s``: ``{"status": "done" | "stopped" | "failed",
+        "code": int | None, "seconds": float}``. ``stopped``: the deadline came first;
+        the next call carries on from the last save on the volume."""
         ...
 
     def fetch(self, remote: PurePosixPath, local: Path) -> None: ...
@@ -426,10 +544,11 @@ def upload(
     """Send what is new or changed; every file passes ``guard`` and the orthophoto check
     first, and nothing is sent if one fails. Returns how many files were sent."""
     for u in uploads:
-        guard(u.remote, register)
         if not u.local.is_file():
             raise BenchError(f"{u.local} saknas. Kör just bench-fetch igen.", 2)
     local = {u.remote: stat_of(u.local) for u in uploads}
+    for u in uploads:
+        guard(u.remote, register, local[u.remote][0])
     record = _read_record(record_file)
     todo = plan_upload(uploads, local, backend.remote_sizes(), record)
     findings = [f for u in todo for f in orthophoto_findings(u.local)]
@@ -470,38 +589,129 @@ def confirm(yes: bool, ask: Callable[[str], str] = input) -> bool:
     return ask("Starta? Skriv ja för att fortsätta: ").strip().lower() in ("ja", "j", "yes", "y")
 
 
+def hours_used(ledger: Path) -> float:
+    """The GPU hours the run has used so far (``LEDGER``)."""
+    try:
+        body = json.loads(ledger.read_text(encoding="utf-8"))
+        return float(body["seconds"]) / 3600
+    except (OSError, ValueError, KeyError, TypeError):
+        return 0.0
+
+
+def _add_seconds(ledger: Path, seconds: float) -> None:
+    total = hours_used(ledger) * 3600 + seconds
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    tmp = ledger.with_name(f".{ledger.name}.tmp")
+    tmp.write_text(json.dumps({"seconds": round(total, 1)}) + "\n", encoding="utf-8")
+    tmp.replace(ledger)
+
+
+def call_budget(left_s: float) -> float:
+    """How long the next call may train (to its deadline) when ``left_s`` of
+    ``max_hours`` is left: under Modal's 24 hours with a margin, and so that the call,
+    with its stop and last commit (``STOP_GRACE_S``, ``FINISH_SLACK_S``), ends within
+    ``left_s``. 0: not worth starting."""
+    budget = min(CALL_LIMIT_S - STOP_MARGIN_S, left_s) - STOP_GRACE_S - FINISH_SLACK_S
+    return budget if budget >= MIN_CALL_S else 0.0
+
+
 def run_until_done(
-    backend: Backend, train: Sequence[str], export: Sequence[str], max_hours: float
+    backend: Backend,
+    train: Sequence[str],
+    export: Sequence[str],
+    max_hours: float,
+    ledger: Path,
+    clock: Callable[[], float] = time.time,
 ) -> float:
-    """Call the GPU until the run is done, each call at most ``CALL_LIMIT_S -
-    STOP_MARGIN_S`` long, together at most ``max_hours``. Returns the hours used."""
-    spent = 0.0
+    """Call the GPU until the run is done, together at most ``max_hours`` for the run
+    (all calls, also earlier commands', from ``ledger``). Each call's seconds are
+    counted, the client's wall time or the container's, whichever is longer, also when
+    the call fails or is interrupted. Returns the hours used by this command."""
+    used_here = 0.0
     while True:
-        left = max_hours * 3600 - spent
-        if left < STOP_MARGIN_S:
+        spent = hours_used(ledger) * 3600
+        budget = call_budget(max_hours * 3600 - spent)
+        if not budget:
             raise BenchError(
-                f"max_hours={max_hours:g} är slut ({spent / 3600:.1f} h). Kör samma kommando med "
-                "större max_hours= för att fortsätta från senaste sparningen.",
+                f"max_hours={max_hours:g} är slut ({spent / 3600:.1f} h använda av den här "
+                "körningen). Kör samma kommando med större max_hours= för att fortsätta "
+                "från senaste sparningen.",
                 1,
             )
-        budget = min(CALL_LIMIT_S - STOP_MARGIN_S, left)
-        res = backend.run(train, export, budget)
-        spent += float(res.get("seconds", budget))
+        timeout_s = math.ceil(budget + STOP_GRACE_S + FINISH_SLACK_S)
+        started = clock()
+        res: Mapping[str, Any] = {}
+        try:
+            res = backend.run(train, export, started + budget, timeout_s)
+        finally:
+            seconds = max(clock() - started, float(res.get("seconds", 0.0)))
+            _add_seconds(ledger, seconds)
+            used_here += seconds
         status = res.get("status")
         if status == "done":
-            return spent / 3600
+            return used_here / 3600
         if status != "stopped":
             raise BenchError(
                 f"Träningen på Modal slutade med kod {res.get('code')}; se utskriften ovan. "
                 "Samma kommando fortsätter från senaste sparningen.",
                 1,
             )
-        say(
-            f"Anropet tog slut efter {res.get('seconds', 0) / 3600:.1f} h; fortsätter från last.pt."
+        say(f"Anropet stoppades efter {seconds / 3600:.1f} h; fortsätter från senaste sparningen.")
+
+
+def check_local_run(where: Places) -> None:
+    """Refuse to write into a local training's folder: one with ``last.pt``, or with
+    ``best.pt`` or ``settings.json`` but no ``MARKER`` naming this run on the volume.
+    Checked before anything is sent and again before anything comes back."""
+    folder = where.local_run
+    if (folder / "last.pt").exists():
+        raise BenchError(
+            f"{folder} har en lokal träning (last.pt). Välj en annan mapp med out=.", 2
+        )
+    marker = folder / MARKER
+    ours = False
+    try:
+        body = json.loads(marker.read_text(encoding="utf-8"))
+        ours = body.get("volume") == VOLUME and body.get("remote_run") == where.remote_run.name
+    except (OSError, ValueError, AttributeError):
+        ours = False
+    if not ours and any((folder / f).exists() for f in ("best.pt", "settings.json")):
+        raise BenchError(
+            f"{folder} har redan en träning som inte kommer från den här körningen i Modal. "
+            "Välj en annan mapp med out=.",
+            2,
         )
 
 
+def _write_marker(where: Places) -> None:
+    where.local_run.mkdir(parents=True, exist_ok=True)
+    body = {"volume": VOLUME, "remote_run": where.remote_run.name}
+    (where.local_run / MARKER).write_text(json.dumps(body) + "\n", encoding="utf-8")
+
+
+def remote_error(exc: BaseException) -> BenchError:
+    """A short Swedish message for an error from Modal or the network, instead of a
+    traceback. Modal's own message is kept to its first line."""
+    if isinstance(exc, ImportError):
+        return BenchError(
+            "Modal är inte installerat här. Kör via: just train-detector-cloud ...", 2
+        )
+    first = (str(exc).strip().splitlines() or [""])[0][:200]
+    return BenchError(
+        f"Modal eller nätet svarade inte som väntat ({type(exc).__name__}"
+        + (f": {first}" if first else "")
+        + "). Kontrollera nätet och inloggningen (cd tools/train && uv run --no-sync modal "
+        "token new). Samma kommando fortsätter sedan där det slutade.",
+        1,
+    )
+
+
 def fetch_results(backend: Backend, where: Places) -> None:
+    """Fetch ``best.pt``, ``settings.json``, the ONNX file and its manifest. Each file
+    is written beside and then moved in place; the run folder is marked as this run's
+    first (``MARKER``) and checked again (``check_local_run``)."""
+    check_local_run(where)
+    _write_marker(where)
     for remote, local in where.results():
         local.parent.mkdir(parents=True, exist_ok=True)
         tmp = local.with_name(f".{local.name}.part")
@@ -536,14 +746,13 @@ def main(
         if gpu not in PRICES:
             raise BenchError(f"gpu= ska vara en av {', '.join(PRICES)}, inte {gpu!r}.", 2)
         register = load_register()
-        requested = [s for s in args.get("sets", "heridal,kios,wisard").split(",") if s]
+        requested = [s for s in args.get("sets", ",".join(default_sets())).split(",") if s]
         sets = cloud_sets(requested, register, data)
         where = places(data, model, args.get("out", ""), args.get("name", ""))
         init_local = Path(args["init"]).expanduser().resolve() if args.get("init") else None
         init_sha, init_remote_path = "", ""
         if init_local is not None:
-            if not init_local.is_file():
-                raise BenchError(f"init={init_local} finns inte.", 2)
+            check_init(init_local)
             init_sha = hashlib.sha256(init_local.read_bytes()).hexdigest()
             init_remote_path = str(REMOTE_DATA / init_remote(init_local, init_sha))
         try:
@@ -566,24 +775,38 @@ def main(
             raise BenchError(
                 f"COCO-vikterna saknas ({weights.name}). Kör: just detector-fetch yes=1", 2
             )
+        check_local_run(where)
+        ledger = data / LEDGER.format(run=where.remote_run.name)
+        before = hours_used(ledger)
         uploads = plan(data, sets, model, limit, init_local, init_sha)
         say(f"Tränar {model} på {', '.join(sets)} i Modal ({len(uploads)} filer behövs).")
         for line in price.lines(guessed):
             say(line)
+        if before:
+            say(
+                f"Körningen har redan använt {before:.1f} h av max_hours={max_hours:g} "
+                f"(ungefär {before * price.price:.0f} $)."
+            )
         say(f"Resultatet hamnar i {where.local_run} och {where.local_models}.")
         if not confirm(flag(args, "yes")):
             say("Avbrutet; inget startades.")
             return 1
         started = time.monotonic()
-        client = backend(gpu)
-        upload(client, uploads, register, data / RECORD.format(volume=VOLUME))
-        used = run_until_done(
-            client,
-            train_argv(args, sets, where, init_remote_path),
-            export_argv(model, where),
-            max_hours,
-        )
-        fetch_results(client, where)
+        try:
+            client = backend(gpu)
+            upload(client, uploads, register, data / RECORD.format(volume=VOLUME))
+            used = run_until_done(
+                client,
+                train_argv(args, sets, where, init_remote_path),
+                export_argv(model, where),
+                max_hours,
+                ledger,
+            )
+            fetch_results(client, where)
+        except (BenchError, KeyboardInterrupt):
+            raise
+        except Exception as exc:  # Modal's and the network's errors, in plain words
+            raise remote_error(exc) from exc
         say(
             f"Klart på {used:.1f} GPU-timmar (ungefär {used * price.price:.0f} $), "
             f"{(time.monotonic() - started) / 3600:.1f} h i allt."
