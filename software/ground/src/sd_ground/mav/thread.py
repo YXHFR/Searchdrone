@@ -42,7 +42,7 @@ from sd_ground.mav import fence as mav_fence
 from sd_ground.mav.companion_watchdog import CompanionWatchdog, WatchInput
 from sd_ground.mav.gcs import OverrideAction, OverrideResult, guard_override, run_override
 from sd_ground.mav.gnss_watch import GnssWatch, alarm, text_alarm
-from sd_ground.mav.mission_end_watch import MissionEndWatch, fallback_alarm
+from sd_ground.mav.mission_end_watch import MissionEndWatch
 from sd_ground.services.latches import (
     BATTERY_LOW_SV,
     ENERGY_HOME_SV,
@@ -630,9 +630,9 @@ class GroundMav:
         if action == "watchdog_stop":
             self._on_event("vehicle.onboard_silent", "warning", {})
             self._system_action(self.vehicle_id, action, None)
-            if fresh_mode == CopterMode.AUTO:  # the search stops here, not at its end
+            if fresh_mode == CopterMode.AUTO:  # the search stops here, or at its end
                 t = snap.telemetry
-                self._on_event(*fallback_alarm(t.mission_seq_current, t.mission_total))
+                self.mission_end.raise_alarm(t.mission_seq_current, t.mission_total)
 
     def energy_short(self, short: bool) -> None:
         """The wind check's ``ENERGY_HOME`` (``sd_ground.services.wind``): the battery
