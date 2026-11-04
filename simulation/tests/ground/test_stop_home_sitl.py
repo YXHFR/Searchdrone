@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import sys
 import time
 import urllib.request
@@ -51,6 +52,7 @@ from test_onboard_sitl import (  # pyright: ignore[reportMissingImports]
     sim,
 )
 
+from sd_geo import lawnmower
 from sd_ground.auth import Principal
 from sd_ground.liveness import LoopLiveness
 from sd_ground.mav.thread import GroundMav, HeartbeatGate, ThreadSafeMav
@@ -552,10 +554,14 @@ def test_executor_silent_mid_search_holds_clear_of_the_keepout(sim: Sim, how: st
     asyncio.run(run())
 
 
-# The search for the mission-end test: the same box; the lawnmower from home ends at its
-# north-west corner (20 E, 130 N), and a person's cylinder stands just outside it there.
-_END_LAST = (20.0, 130.0)  # east, north: the last search point (the mission's hover)
-_END_PERSON = (5.0, 145.0, 10.0)  # east, north, radius (m): 11 m past the hover point
+# The mission-end test: the same box and spacing. From south of the box the lawnmower
+# ends at the west or the east end of its northmost row, depending on where the drone
+# stands (SITL is shared between tests, so that varies). A person's cylinder stands just
+# outside each of the two, along the line from the box's middle, ``_END_GAP_M`` from
+# that end to its edge; the one past the mission's hover is the one this test is about.
+_END_SPACING_M = 20.0
+_END_R_M = 10.0
+_END_GAP_M = 11.0
 
 
 class _NoEndSwitch:
@@ -599,41 +605,65 @@ def test_mission_end_without_onboard_hovers_clear_of_the_keepout(
             await _install(f)
             await _takeoff(f, 25)
             await f.until(lambda: f.ex.state == S.HOLD, 60, "takeoff done")
-            east, north, r = _END_PERSON
-            lat, lon = f.at(east, north)
-            person = Keepout(
-                keepout_id=new_id(),
-                lat=lat,
-                lon=lon,
-                radius_m=r,
-                source="candidate",
-                source_id=new_id(),
-            )
+            half, mid_e, mid_n = _SILENT_BOX_M
+            here = f.plane.xy(e.fc.lat, e.fc.lon)
+            assert here[1] < mid_n - half, f"not south of the box: {here}"
+            r = _END_R_M
+            corners = [
+                (mid_e + dx * half, mid_n + dy * half)
+                for dx, dy in ((-1, -1), (1, -1), (1, 1), (-1, 1))
+            ]
+            # The two hovers the onboard computer can plan from south of the box: from
+            # the west or the east of its middle.
+            ends = [
+                lawnmower(corners, _END_SPACING_M, None, (mid_e + dx * 2 * half, here[1]))[-1]
+                for dx in (-1, 1)
+            ]
+            centres = []
+            for x, y in ends:
+                out = (x - mid_e, y - mid_n)
+                k = (r + _END_GAP_M) / math.hypot(*out)
+                centres.append((x + k * out[0], y + k * out[1]))
+            persons = []
+            for x, y in centres:
+                c_lat, c_lon = f.at(x, y)
+                persons.append(
+                    Keepout(
+                        keepout_id=new_id(),
+                        lat=c_lat,
+                        lon=c_lon,
+                        radius_m=r,
+                        source="candidate",
+                        source_id=new_id(),
+                    )
+                )
             f.ex.on_keepouts(
-                KeepoutInstall(install_seq=f.ex.keepout_seq + 1, keepouts=[person]), new_id()
+                KeepoutInstall(install_seq=f.ex.keepout_seq + 1, keepouts=persons), new_id()
             )
-            assert person in f.ex.keepouts
+            assert all(p in f.ex.keepouts for p in persons)
             box = f.square(*_SILENT_BOX_M)
-            await f.order("survey_sector", {"polygon": box, "spacing_m": 20, "speed_ms": 5})
+            await f.order(
+                "survey_sector", {"polygon": box, "spacing_m": _END_SPACING_M, "speed_ms": 5}
+            )
             await f.until(lambda: f.ex.state == S.SURVEY and e.mode() == "AUTO", 20, "search")
             active = f.ex.active
             assert active is not None
             run = getattr(active.handler, "run", None)
             assert isinstance(run, SurveyRun)
             last = run.waypoints[-1]
-            end_lat, end_lon = f.at(*_END_LAST)
-            # The case this test is about: the hover point is the planned last point, near
-            # the cylinder (if the pattern changes, this fails instead of testing nothing).
-            assert distance_m(last.lat, last.lon, end_lat, end_lon) <= 2.0
-            gap = distance_m(last.lat, last.lon, lat, lon) - r
-            assert 5.0 <= gap <= 15.0, gap
+            end_lat, end_lon = last.lat, last.lon
+            # The case this test is about: the hover point is one of those two ends, a cylinder
+            # past it ``_END_GAP_M`` away (if the plan differs, this fails instead of
+            # testing nothing).
+            gap = min(distance_m(end_lat, end_lon, p.lat, p.lon) for p in persons) - r
+            assert abs(gap - _END_GAP_M) <= 1.0, gap
             closest = [float("inf")]
 
             def clear() -> None:
                 t = e.fc
-                d = distance_m(lat, lon, t.lat, t.lon)
+                d = min(distance_m(p.lat, p.lon, t.lat, t.lon) for p in persons)
                 closest[0] = min(closest[0], d)
-                assert d >= r, f"inside the cylinder: {d:.1f} m from its centre"
+                assert d >= r, f"inside a cylinder: {d:.1f} m from its centre"
 
             async def watch() -> None:
                 while True:
