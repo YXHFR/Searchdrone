@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import itertools
 import json
 import math
 import sys
@@ -55,6 +56,7 @@ from test_onboard_sitl import (  # pyright: ignore[reportMissingImports]
 from sd_geo import lawnmower
 from sd_ground.auth import Principal
 from sd_ground.liveness import LoopLiveness
+from sd_ground.mav.mission_end_watch import FALLBACK_GRACE_MS
 from sd_ground.mav.thread import GroundMav, HeartbeatGate, ThreadSafeMav
 from sd_ground.services.latches import Latches
 from sd_ground.services.vehicle_actions import NoticeResult, VehicleActions
@@ -564,6 +566,11 @@ _END_HEADING_DEG = 90.0
 _END_SPACING_M = 20.0
 _END_R_M = 10.0
 _END_GAP_M = 11.0
+_END_SPEED_MS = 5.0
+# The wait for the fallback alarm: the planned route at the ordered speed, this much
+# slower for the climb-out and the corners' braking, plus this long at each search point.
+_END_SLACK = 1.5
+_END_PER_POINT_S = 4.0
 
 
 class _NoEndSwitch:
@@ -646,13 +653,14 @@ def test_mission_end_without_onboard_hovers_clear_of_the_keepout(
             )
             assert all(p in f.ex.keepouts for p in persons)
             box = f.square(*_SILENT_BOX_M)
+            start = (e.fc.lat, e.fc.lon)
             await f.order(
                 "survey_sector",
                 {
                     "polygon": box,
                     "spacing_m": _END_SPACING_M,
                     "heading_deg": _END_HEADING_DEG,
-                    "speed_ms": 5,
+                    "speed_ms": _END_SPEED_MS,
                 },
             )
             await f.until(lambda: f.ex.state == S.SURVEY and e.mode() == "AUTO", 20, "search")
@@ -667,6 +675,13 @@ def test_mission_end_without_onboard_hovers_clear_of_the_keepout(
             # testing nothing).
             gap = min(distance_m(end_lat, end_lon, p.lat, p.lon) for p in persons) - r
             assert abs(gap - _END_GAP_M) <= 1.0, gap
+            route = [start, *((w.lat, w.lon) for w in survey.waypoints)]
+            length = sum(distance_m(*a, *b) for a, b in itertools.pairwise(route))
+            alarm_by = (
+                length / _END_SPEED_MS * _END_SLACK
+                + _END_PER_POINT_S * len(survey.waypoints)
+                + FALLBACK_GRACE_MS / 1000
+            )
             closest = [float("inf")]
 
             def clear() -> None:
@@ -682,9 +697,9 @@ def test_mission_end_without_onboard_hovers_clear_of_the_keepout(
 
             watcher = asyncio.ensure_future(watch())
             try:
-                # About 450 m from home through the box at 5 m/s (some 130 s with the turns), then
-                # the 10 s grace.
-                await e.wait(lambda: "alarm.MISSION_FALLBACK" in e.events, 180, "fallback alarm")
+                await e.wait(
+                    lambda: "alarm.MISSION_FALLBACK" in e.events, alarm_by, "fallback alarm"
+                )
                 total = e.fc.mission_total
                 assert e.mode() == "AUTO" and total is not None
                 assert e.fc.mission_seq_current == total  # on the hover at the end
