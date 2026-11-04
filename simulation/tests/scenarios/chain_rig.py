@@ -273,7 +273,7 @@ async def _watch(run: SearchRun, stop: asyncio.Event) -> None:
 def _onboard_quiet(run: SearchRun) -> str | None:
     """Why the onboard computer no longer steers the flight, or None: one of its tasks
     ended (the executor, SD-link, perception), or the flight controller flies the search
-    mission's built-in end (hover, then straight home in AUTO), which only happens when
+    mission's built-in end (the hover at the last point in AUTO), which only happens when
     the executor did not take over at the last search point (the ground's alarm
     ``MISSION_FALLBACK``). The executor's log and state are in the run's ``logs/``."""
     onboard = run.onboard
@@ -281,8 +281,8 @@ def _onboard_quiet(run: SearchRun) -> str | None:
     if why is None and run.sc.r.core.mission_end.alarm_active:
         t = run.sc.tel
         why = (
-            "the flight controller flies the mission's built-in end (hover, then home in "
-            f"AUTO; item {t.mission_seq_current} of {t.mission_total}): the onboard "
+            "the flight controller flies the mission's built-in end (the hover at the last "
+            f"point in AUTO; item {t.mission_seq_current} of {t.mission_total}): the onboard "
             f"computer stopped steering; executor {onboard.ex.state}, held by "
             f"{onboard.ex.held_by}, order {getattr(onboard.ex.active, 'skill', None)}"
         )

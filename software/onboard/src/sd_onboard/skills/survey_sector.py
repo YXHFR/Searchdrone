@@ -1,8 +1,10 @@
 """``survey_sector``: search a polygon in a lawnmower pattern as an AUTO mission.
 
-The mission is home, speed, the search points, a 30 s loiter at the last point and
-return-to-launch, so it ends safely even if the onboard computer dies. When the last
-search point is reached the executor switches to LOITER (HOLD). ``resume`` flies a new
+The mission is home, speed, the search points and a hover without end at the last point
+(``sd_mav.mission.survey_mission``): it never flies home by itself, so if the onboard
+computer stops steering the drone hovers there until someone decides (the ground raises
+MISSION_FALLBACK). When the last search point is reached the executor switches to
+LOITER (HOLD). ``resume`` flies a new
 mission from the point where the search was interrupted.
 
 Every mission goes around the keep-out cylinders in force when it is planned

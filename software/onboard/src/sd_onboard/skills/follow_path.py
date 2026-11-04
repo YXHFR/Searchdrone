@@ -2,8 +2,9 @@
 
 The points come from the drawn path (sd-brain resolves ``pa-<n>`` and the ground checks
 it; the model never writes coordinates). They are flown as an AUTO mission like a search
-(``SurveyRun``): home, speed, the points, a 30 s loiter at the last one and
-return-to-launch, so the flight ends safely even if the onboard computer dies. At the
+(``SurveyRun``): home, speed, the points and a hover at the last one with no end, so
+the drone hovers there even if the onboard computer dies, and never flies home on its
+own (``sd_mav.mission``). At the
 last point the executor switches to LOITER (HOLD). STOP, FLY HOME and the pilot's
 takeover act on it like on any other step, and ``resume`` flies the points still left
 (in TRANSIT, with the battery checked again).

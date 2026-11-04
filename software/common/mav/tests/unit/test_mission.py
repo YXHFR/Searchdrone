@@ -27,7 +27,7 @@ from sd_mav.mission import (
     upload,
 )
 from sd_mav.vehicle import ForbiddenMavlinkError, SendOrigin
-from sd_safety.constants import MISSION_END_LOITER_S, MISSION_MAX_ITEMS
+from sd_safety.constants import MISSION_MAX_ITEMS
 from sd_schemas.base import LatLonAlt
 from sd_testing import FakeClock
 
@@ -46,7 +46,7 @@ NEAR = st.tuples(
 )
 def test_mission_encoder(points: list[tuple[float, float]], alt: float, speed: float) -> None:
     items = survey_mission(HOME_LLA, points, alt, speed)
-    assert len(items) == len(points) + 4 <= MISSION_MAX_ITEMS
+    assert len(items) == len(points) + 3 <= MISSION_MAX_ITEMS
     assert [i.seq for i in items] == list(range(len(items)))
     assert items[0].command == 16 and items[0].frame == mavlink.MAV_FRAME_GLOBAL
     assert (items[1].command, items[1].param1, items[1].param2, items[1].param3) == (
@@ -61,14 +61,11 @@ def test_mission_encoder(points: list[tuple[float, float]], alt: float, speed: f
         assert item.command == 16 and item.frame == mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT
         assert abs(item.x - lat * 1e7) <= 1 and abs(item.y - lon * 1e7) <= 1
         assert item.z == alt
-    loiter, rtl = items[-2], items[-1]
-    assert (loiter.command, loiter.param1, loiter.x, loiter.y) == (
-        19,
-        MISSION_END_LOITER_S,
-        nav[-1].x,
-        nav[-1].y,
-    )
-    assert rtl.command == 20
+    hover = items[-1]  # the end: a hover at the last point with no end, never a way home
+    assert (hover.command, hover.x, hover.y, hover.z) == (17, nav[-1].x, nav[-1].y, alt)
+    assert hover.frame == mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT
+    assert (hover.param1, hover.param2, hover.param3, hover.param4) == (0, 0, 0, 0)
+    assert all(i.command not in (19, 20) for i in items)  # no timed hover, no return
     for item in items:  # everything the encoder makes passes the allowlist
         assert check(item.to_message(1), ctx()) is None
 
@@ -77,7 +74,7 @@ def test_mission_encoder_refuses_bad_input() -> None:
     with pytest.raises(ValueError):
         survey_mission(HOME_LLA, [], 40, 5)
     with pytest.raises(ValueError):
-        survey_mission(HOME_LLA, [HOME] * (MISSION_MAX_ITEMS - 3), 40, 5)
+        survey_mission(HOME_LLA, [HOME] * (MISSION_MAX_ITEMS - 2), 40, 5)
     with pytest.raises(ValueError):
         survey_mission(HOME_LLA, [HOME], float("nan"), 5)
     with pytest.raises(ValueError):
