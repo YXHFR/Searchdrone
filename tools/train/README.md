@@ -138,19 +138,61 @@ Har du inget grafikkort, eller vill du träna snabbare, kan samma träning köra
 hyrt grafikkort hos Modal (modal.com). Du betalar per sekund som kortet används. Det är
 samma kod och samma nycklar som `just train-detector`; bara datorn är en annan.
 
-**En gång: skapa konto och nyckel**
+**Kör från din egen dator**
+
+Modal startas från din egen dator (i WSL), inte från en Claude-session i molnet:
+Modals anslutning (gRPC) går inte igenom den sessionens proxy.
+
+**En gång: konto, verktyg och nyckel**
 
 1. Skapa ett konto på modal.com och lägg in ett betalkort (Settings, Billing). Sätt
    gärna en gräns för hur mycket det får kosta per månad på samma sida.
-2. Skapa nyckeln på din dator (i WSL, från repots mapp):
+2. Installera uv och just, om du inte redan har dem, och sedan Modals program (från
+   repots mapp):
 
    ```bash
-   cd tools/train && uv sync --frozen --inexact --group cloud && uv run --no-sync modal token new; cd ../..
+   bash tools/setup/wsl-setup.sh
+   cd tools/train && uv sync --frozen --inexact --group cloud; cd ../..
    ```
 
-   En webbsida öppnas där du loggar in. Nyckeln sparas i `~/.modal.toml` i din
-   hemmapp. Den hamnar aldrig i repot, i CI eller i utskrifter. Lägg aldrig in den i
-   `.env` eller någon fil i repot.
+3. Lägg in nyckeln. Enklast är att logga in i webbläsaren:
+
+   ```bash
+   cd tools/train && uv run --no-sync modal token new; cd ../..
+   ```
+
+   Har du redan en nyckel (modal.com, Settings, API Tokens) går det också så här.
+   Den sparas i `~/.modal.toml` i din hemmapp:
+
+   ```bash
+   cd tools/train && uv run --no-sync modal token set --token-id ak-... --token-secret as-...; cd ../..
+   ```
+
+   Vill du inte spara den på disken kan du i stället sätta den bara för terminalen du är i:
+
+   ```bash
+   read -rp "Token id: " MODAL_TOKEN_ID; read -rsp "Token secret: " MODAL_TOKEN_SECRET; echo
+   export MODAL_TOKEN_ID MODAL_TOKEN_SECRET
+   ```
+
+   Nyckeln hamnar aldrig i repot, i CI eller i utskrifter. Lägg aldrig in den i `.env`
+   eller någon fil i repot.
+4. Kontrollera att det fungerar. Det här kostar ingenting:
+
+   ```bash
+   cd tools/train && uv run --no-sync modal token info && uv run --no-sync modal app list; cd ../..
+   ```
+
+5. Prova med en liten körning först. Den kostar högst ungefär 2,50 $ (`max_hours=1`
+   på A100-80GB, plus några procent för processor och minne) och visar att hela vägen
+   fungerar, ända till ONNX-filen hemma. Egen mapp och eget namn, så att den inte rör
+   en riktig modell:
+
+   ```bash
+   just train-detector-cloud model=yolox_s epochs=1 limit=50 max_hours=1 out="$(just data-dir)/train/smoke" name=person_smoke
+   ```
+
+   Bilderna och startvikterna måste vara hämtade först (steg 1 och 2 ovan).
 
 **Varje gång: träna**
 
