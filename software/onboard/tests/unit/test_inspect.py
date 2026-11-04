@@ -1369,6 +1369,30 @@ async def test_no_way_around_a_search_over_a_person_leaves_by_the_shortest_way(
         assert len(_holds(r)) == 1 and r.ex.state == S.HOLD  # hovering outside: told once
 
 
+async def test_a_moving_drone_brakes_before_it_turns_onto_the_way_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Boxed in at speed, the drone first stops where it is (an internal goto to its own
+    position) and only then flies the way out planned from where it stopped: a turn at
+    speed would carry it on, maybe into the cylinder ahead. The operator is told once.
+    (The fake flight controller reports no ground speed, so \"moving\" is forced.)"""
+    monkeypatch.setattr(executor_module, "still", lambda _v: False)
+    async with rig() as r:
+        cmd, _, _, _ = await _search_over_a_person(r, monkeypatch)
+        await _exiting(r)
+        assert r.ex._exit_braking is not None  # pyright: ignore[reportPrivateUsage]
+        assert r.up.stages(cmd.command_id)[-1] == "superseded"
+        assert "executor.keepout_exit" not in r.up.kinds()  # not before the stop
+        holds = _holds(r)
+        assert len(holds) == 1 and holds[0]["inside"] is False, holds
+        await r.until(lambda: "executor.keepout_exit" in r.up.kinds(), 60)
+        assert r.ex._exit_braking is None  # pyright: ignore[reportPrivateUsage]
+        assert r.ex.active is not None and r.ex.active.skill == INTERNAL_KEEPOUT_EXIT
+        await r.until(lambda: r.ex.state == S.HOLD, 120)
+        assert _outside_all(r) and r.ex.hold_reason == "limit"
+        assert len(_holds(r)) == 1
+
+
 async def test_the_way_out_crosses_an_unconfirmed_cylinder_but_no_confirmed_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

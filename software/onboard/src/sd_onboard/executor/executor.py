@@ -98,6 +98,7 @@ from sd_onboard.executor.state import (
 from sd_onboard.io.persistence import StateStore
 from sd_onboard.rangefinder import LaserReader
 from sd_onboard.skills import HANDLERS, extra_transitions
+from sd_onboard.skills._common import still
 from sd_onboard.skills.base import (
     InspectShot,
     PlanContext,
@@ -512,6 +513,9 @@ class Executor:
         # number, when); the still number counts ``on_detections`` calls.
         self._unpaired: list[tuple[GeoDetectionMsg, int, int]] = []
         self._still_no = 0
+        # The way out of the cylinders (``_exit_keepouts``) brakes first when the drone
+        # moves: the order it replaced (command id, skill) while that brake runs, else None.
+        self._exit_braking: dict[str, str] | None = None
         self._keepouts_changed = False  # the reflex runs on the next tick
         self._keepout_watch = False  # an order heads for a cylinder, still far off: every tick
         self._keepouts_seen: set[UUID] = set()  # the cylinders the reflex has looked at
@@ -918,6 +922,9 @@ class Executor:
         self.active = None
         if self.state == S.RTL:
             return  # return home is done at LANDED
+        braked = active.skill == INTERNAL_KEEPOUT_EXIT and self._exit_braking is not None
+        if braked and self._leave_after_brake():
+            return  # stopped: the way out from here, or home
         if self._inspect_skill_done(active):
             return
         if self.state == S.HOLD and active.skill == "capture_stills":
@@ -977,6 +984,7 @@ class Executor:
         if active.skill == INTERNAL_KEEPOUT_EXIT:
             # The way out cut short (its deadline, the mode not confirmed): the keep-out hold
             # where it is, told as the way out began (``_exit_keepouts``); no second one.
+            self._exit_braking = None
             hold_reason = "limit"
         elif exc.code == "KEEPOUT_VIOLATION":
             # No way around the cylinders from where a search stopped: the same keep-out
@@ -2103,7 +2111,43 @@ class Executor:
         ``KEEPOUT_VIOLATION``) and ends in the keep-out hover outside; the operator is told
         at once (``keepout_hold``, outside, and ``keepout_exit``). With no way out it flies
         home (``keepout_rtl``): return home goes past every cylinder. False when the drone
-        is in no cylinder (the caller hovers where it is)."""
+        is in no cylinder (the caller hovers where it is).
+
+        A drone that still moves brakes first, back to where it is now (the same internal
+        goto, ``_exit_braking``): a turn at speed onto the way out would carry it on, maybe
+        into a cylinder ahead. The way out is planned from where it stopped
+        (:meth:`_leave_after_brake`)."""
+        plane, charter = self.plane(), self.charter
+        if plane is None or charter is None:
+            return False
+        v = self.vehicle_state()
+        here = plane.xy(v.lat, v.lon)
+        if not over_a_person(here, circles(self.keepouts_in_force(), plane)):
+            return False
+        data = {"command_id": str(active.command_id), "skill": active.skill}
+        if still(v):
+            return self._leave(data, told=False, drop=active)
+        target = self.target_of(Trigger.LIMIT_ALT)
+        if isinstance(target, Refusal):
+            return False
+        self.emit("keepout_hold", {**data, str(KeepoutHoldField.INSIDE): False})
+        if self.active is active:
+            self._drop_active(stage="superseded", codes=("KEEPOUT_VIOLATION",))
+        self._exit_goto(target, v.lat, v.lon, v.alt_rel_home_m, charter)
+        self._exit_braking = data
+        return True
+
+    def _leave_after_brake(self) -> bool:
+        """The brake before the way out has ended: the way out from here, or home. False
+        when the brake took the drone out of every cylinder (it hovers there)."""
+        data, self._exit_braking = self._exit_braking, None
+        if data is None:
+            return False
+        return self._leave(data, told=True, drop=None)
+
+    def _leave(self, data: dict[str, str], *, told: bool, drop: _Active | None) -> bool:
+        """The way out from where the drone is (``_exit_keepouts``), or home when there is
+        none. ``told``: the operator heard of it as the brake began."""
         plane, charter = self.plane(), self.charter
         if plane is None or charter is None:
             return False
@@ -2112,7 +2156,6 @@ class Executor:
         keepouts = self.keepouts_in_force()
         if not over_a_person(here, circles(keepouts, plane)):
             return False
-        data = {"command_id": str(active.command_id), "skill": active.skill}
         area = polygon_from_geojson(charter.area, plane)
         out = exit_point(here, keepouts, plane, area)
         if out is None:
@@ -2125,18 +2168,26 @@ class Executor:
         target = self.target_of(Trigger.LIMIT_ALT)
         if isinstance(target, Refusal):
             return False
-        self.emit("keepout_hold", {**data, str(KeepoutHoldField.INSIDE): False})
+        if not told:
+            self.emit("keepout_hold", {**data, str(KeepoutHoldField.INSIDE): False})
         self.emit("keepout_exit", {**data, "lat": out.lat, "lon": out.lon})
-        if self.active is active:
+        if drop is not None and self.active is drop:
             self._drop_active(stage="superseded", codes=("KEEPOUT_VIOLATION",))
+        self._exit_goto(target, out.lat, out.lon, v.alt_rel_home_m, charter)
+        return True
+
+    def _exit_goto(
+        self, target: ExecutorState, lat: float, lon: float, alt_m: float, charter: MissionCharter
+    ) -> None:
+        """The internal goto of the way out (``INTERNAL_KEEPOUT_EXIT``) at ``alt_m``."""
+        self._exit_braking = None
         speed = min(_EXIT_SPEED_MS, charter.max_speed_ms)
         goto = GotoHandler()
         ctx = self._plan_context(new_id())
-        goto.prepare(ctx, out.lat, out.lon, v.alt_rel_home_m, speed)
-        plan = goto_plan(ctx, out.lat, out.lon, v.alt_rel_home_m, speed)
+        goto.prepare(ctx, lat, lon, alt_m, speed)
+        plan = goto_plan(ctx, lat, lon, alt_m, speed)
         self._enter(target, cause="KEEPOUT_VIOLATION")
         self._internal(INTERNAL_KEEPOUT_EXIT, goto, plan, SendOrigin.LIMIT)
-        return True
 
     def path_allowed(self, active: _Active, path: list[LatLonAlt]) -> bool:
         return not self.path_refusal(active, path)
