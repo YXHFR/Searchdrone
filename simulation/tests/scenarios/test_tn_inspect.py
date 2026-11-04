@@ -64,6 +64,7 @@ from sd_ground.app import create_panel_app, panel_asgi
 from sd_safety.targets import Plane, distance_m
 from sd_schemas.inspect import AWAIT_DECISION_S
 from sd_schemas.skills import SKILL_REGISTRY
+from sd_sim.report import measure
 from sd_sim.search_world import seed_offset
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow, pytest.mark.inspect]
@@ -82,15 +83,19 @@ async def stopped_and_holding_in_the_descent(sc: Scenario, t0: float) -> float:
     Returns how far it sank after the button."""
     pressed_alt = sc.tel.alt_rel_home_m
     await sc.until(lambda: sc.mode() == "BRAKE", 2.0 * STOP_ACK_S, "BRAKE")
-    last = [sc.tel.alt_rel_home_m, time.monotonic()]
+    last = [sc.tel.alt_rel_home_m, time.monotonic()]  # the height, and when it last moved
 
-    def still() -> bool:
+    def steady() -> bool:
         now, alt = time.monotonic(), sc.tel.alt_rel_home_m
-        if abs(alt - last[0]) > 0.15:
+        if abs(alt - last[0]) > 0.15 or sc.tel.groundspeed_ms >= 0.5:
             last[:] = [alt, now]
-        return sc.tel.groundspeed_ms < 0.5 and now - last[1] >= 1.0
+        return now - last[1] >= 1.0
 
-    await sc.until(still, STILL_S - (time.monotonic() - t0), "still")
+    # Still is the moment it last moved. The second that confirms it is the test's look,
+    # not the drone's time: counting it failed a drone that was still 4.0 s after STOP.
+    await sc.until(steady, STILL_S + 1.0 - (time.monotonic() - t0), "1 s without moving")
+    stood_s = last[1] - t0
+    assert measure("still", stood_s, STILL_S), f"still {stood_s:.2f} s after STOP"
     here = (sc.tel.lat, sc.tel.lon, sc.tel.alt_rel_home_m)
     await sc.hold_for(
         HOLD_S,
