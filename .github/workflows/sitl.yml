@@ -394,7 +394,12 @@ jobs:
         run: just e2e offline=1 runs=1
       - name: The runner itself still reaches GitHub
         if: always()
-        run: curl -fsS -m 10 -o /dev/null https://api.github.com
+        # Any HTTP answer proves the network (a shared runner's IP can get 403 or 429
+        # from the unauthenticated rate limit); only no answer at all (000) fails.
+        run: |
+          code=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' https://api.github.com || true)
+          echo "api.github.com: HTTP $code"
+          [ "${code:-000}" != "000" ]
       - *summary
       - *scan
       - *results
