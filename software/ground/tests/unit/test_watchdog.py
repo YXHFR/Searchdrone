@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pymavlink.dialects.v20 import ardupilotmega as mavlink
 from stop_helpers import PILOT, VID, stack
 
 from sd_ground.mav.companion_watchdog import CompanionWatchdog, WatchInput
+from sd_ground.mav.mission_end_watch import FALLBACK_GRACE_MS
 from sd_ground.services.vehicle_actions import OperatorPresence
 from sd_mav.modes import HOME_MODES, STOP_MODES, CopterMode
 
@@ -157,6 +159,23 @@ async def test_watchdog_stops_a_silent_auto_flight_and_it_stays_stopped() -> Non
         assert s.fc.mode in STOP_MODES
         assert s.latches.get(VID).action == "watchdog_stop"  # type: ignore[union-attr]
         assert "vehicle.onboard_silent_rtl" not in s.g.types()
+
+
+async def test_mission_end_then_a_silent_onboard_computer_alarms_once() -> None:
+    """On the hover at the mission's end the alarm comes after the grace; when the onboard
+    computer then falls silent the watchdog stops the flight without a second alarm."""
+    async with stack() as s:
+        s.fly(mode=CopterMode.AUTO)
+        end = 14  # the hover at the end of a 12-point search: seq == total
+        s.fc._send(mavlink.MAVLink_mission_current_message(end, end))  # pyright: ignore[reportPrivateUsage]
+        await s.run(FALLBACK_GRACE_MS / 1000 + 1.0)
+        assert s.g.types().count("alarm.MISSION_FALLBACK") == 1
+        s.onboard_alive[0] = False
+        await s.run(3.4)
+        assert s.fc.mode in STOP_MODES
+        latch = s.latches.get(VID)
+        assert latch is not None and latch.action == "watchdog_stop"
+        assert s.g.types().count("alarm.MISSION_FALLBACK") == 1
 
 
 async def test_battery_guard_flies_a_stopped_silent_auto_flight_home() -> None:
