@@ -1,7 +1,8 @@
 # Training the person detector (`tools/train`)
 
 This turns published detectors into person detectors for pictures taken from the
-air. Training runs on your computer's graphics card. You choose the best of them
+air. Training runs on your computer's graphics card, or on a rented one at Modal (see
+"Träna i molnet (Modal)"). You choose the best of them
 with numbers measured on the image bank (`tools/bench`). The pictures, the weights and
 the trained models never go into git or CI: they stay in your data folder
 (`<data_dir>`, set by `just setup-config`).
@@ -130,6 +131,102 @@ home internet line.
    detection is off. Flying goes on. When the variable is not set, no model is
    loaded. The simulator keeps its stand-in detector unless you ask for yours (next
    section).
+
+## Träna i molnet (Modal)
+
+Har du inget grafikkort, eller vill du träna snabbare, kan samma träning köras på ett
+hyrt grafikkort hos Modal (modal.com). Du betalar per sekund som kortet används. Det är
+samma kod och samma nycklar som `just train-detector`; bara datorn är en annan.
+
+**En gång: skapa konto och nyckel**
+
+1. Skapa ett konto på modal.com och lägg in ett betalkort (Settings, Billing). Sätt
+   gärna en gräns för hur mycket det får kosta per månad på samma sida.
+2. Skapa nyckeln på din dator (i WSL, från repots mapp):
+
+   ```bash
+   cd tools/train && uv sync --frozen --inexact --group cloud && uv run --no-sync modal token new; cd ../..
+   ```
+
+   En webbsida öppnas där du loggar in. Nyckeln sparas i `~/.modal.toml` i din
+   hemmapp. Den hamnar aldrig i repot, i CI eller i utskrifter. Lägg aldrig in den i
+   `.env` eller någon fil i repot.
+
+**Varje gång: träna**
+
+Hämta bilderna och startvikterna först, som i steg 1 och 2 ovan. Sedan:
+
+```bash
+just train-detector-cloud gpu=A100-80GB model=yolox_s
+```
+
+Det här händer:
+
+1. Den skriver ut vad det ungefär kostar: vad grafikkortet kostar per timme gånger
+   timmarna, och det högsta det kan kosta (`max_hours=`, 24 timmar om du inte anger
+   något). Sedan frågar den om du vill starta. Skriv `ja`. Med `yes=1` frågar den inte.
+2. Den laddar upp bilderna till en privat lagringsplats hos Modal (en *volym* som heter
+   `searchdrone-train`). Bara det som träningen läser skickas: `train`- och
+   `val`-delarna av de set som får tränas på, aldrig den låsta `test`-delen. Nästa gång
+   skickas bara nya eller ändrade filer. Första gången tar det en stund: några GB för
+   HERIDAL och KIOS, mycket mer med SeaDronesSee eller UIT-Drone4.
+3. Träningen körs, med samma utskrifter som hemma. Modal stoppar en körning efter 24
+   timmar; då sparar den och startar om från senaste sparningen, tills den är klar.
+4. Den gör ONNX-filen och hämtar hem `best.pt`, `person_yolox_s.onnx` och
+   `person_yolox_s.json` till samma ställen som `just train-detector` och
+   `just export-detector` använder. Sedan går du vidare med steg 6 ovan
+   (`just bench-detector`, `just pick-detector`) precis som vanligt.
+
+Avbryter du med Ctrl+C, eller tappar nätet, stannar grafikkortet och du slutar betala.
+Kör samma kommando igen så fortsätter den från senaste sparningen (var tionde minut och
+efter varje epok).
+
+**Vad det kostar**
+
+Priser från modal.com/pricing, lästa 2026-11-04:
+
+| `gpu=` | Kostar per timme | Ungefär för `yolox_s`, 20 epoker |
+|---|---|---|
+| `A100-80GB` (standard) | 2,50 $ | 1 timme, ungefär 2,50 $ |
+| `H100` | 3,95 $ | 40 minuter, ungefär 2,60 $ |
+| `L40S` | 1,95 $ | 1,2 timmar, ungefär 2,30 $ |
+
+Timmarna är en grov gissning, inte uppmätta. Fler epoker, fler `scales=` och
+`upscale=` gör det längre. Vet du bättre, ange `hours=` så räknar den med det.
+`max_hours=` är taket: när de timmarna är slut stannar den, och samma kommando med ett
+större `max_hours=` fortsätter. Processor och minne kostar några procent till.
+Lagringen i volymen kostar lite eller inget; se modal.com/pricing.
+
+**Vad som aldrig laddas upp**
+
+- Set som bara får mätas på: WiSARD, GPL-set, set utan licens och icke-kommersiella
+  set. Koden stoppar dem innan något skickas; det går inte att stänga av.
+- Simulatorns bilder (`simfarm=1` och `simstills`): de stannar på din dator.
+- Ortofoton från Lantmäteriet, och allt annat utanför bildbanken och startvikterna.
+
+**Nycklar** utöver dem för `just train-detector`:
+
+| Nyckel | Vad den gör |
+|---|---|
+| `gpu=A100-80GB` | Grafikkortet: `A100-80GB`, `H100` eller `L40S`. |
+| `yes=1` | Starta utan att fråga. |
+| `hours=2` | Din egen gissning av timmarna, för kostnaden som visas. |
+| `max_hours=24` | Högst så många timmar på grafikkortet för det här kommandot. |
+| `name=person_yolox_s` | Namnet på ONNX-filen och manifestet. |
+
+`device=` och `simfarm=` går inte att använda i molnet.
+
+**Ta bort det som ligger hos Modal**
+
+När du är klar kan du ta bort volymen med bilderna och körningarna:
+
+```bash
+cd tools/train && uv run --no-sync modal volume delete searchdrone-train; cd ../..
+rm "$(just data-dir)/train/.modal-searchdrone-train.json"
+```
+
+Den andra raden glömmer vad som laddats upp, så att allt skickas igen nästa gång.
+Det du hämtat hem ligger kvar på din dator.
 
 ## The larger YOLOX-m
 
@@ -379,6 +476,13 @@ publishing the weights. `software/detector/MODEL_CARD.md` has the details.
 - `train_detector.py`: the training loop, with SGD, warmup, a cosine schedule, mixed
   precision on CUDA, EMA and resume.
 - `export_onnx.py`: writes the ONNX file and its manifest.
+- `cloud.py`: `just train-detector-cloud`. Decides what is uploaded (the licence guard),
+  what changed since last time, what it costs, and where the results go. It never
+  imports `modal` at the top, so its tests run without Modal, the network or an account.
+- `modal_app.py`: the Modal side: the container image (this folder's `uv.lock` with
+  PyTorch for CUDA), the volume and the function that runs `train_detector.py` and
+  `export_onnx.py` on the GPU. Modal is the `cloud` dependency group, installed only by
+  `just train-detector-cloud`.
 - `fetch_weights.py`: downloads the starting weights, checking size and SHA-256
   (`models.toml`).
 - `vendor/`: the authors' model code. `vendor/NOTICE.md` lists what was changed.
@@ -394,7 +498,8 @@ just test-train
 ```
 
 Pyright does not check `families.py`, `train_detector.py`, `export_onnx.py` or
-`tests/`, because they need PyTorch, which the main environment does not have.
+`tests/`, because they need PyTorch, which the main environment does not have, nor
+`modal_app.py`, which needs Modal. CI never calls Modal.
 
 The on-board side is `sd_detect.onnx` (`software/detector`). It needs only ONNX Runtime,
 never PyTorch.

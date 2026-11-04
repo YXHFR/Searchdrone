@@ -53,6 +53,7 @@ RECIPES = [
     "detector-fetch",
     "train-detector",
     "export-detector",
+    "train-detector-cloud",
     "pick-detector",
     "test-train",
     "world-fetch",
