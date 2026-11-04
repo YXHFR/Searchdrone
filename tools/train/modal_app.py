@@ -12,6 +12,11 @@ No retries are asked of Modal: a call that fails ends the command, and the same 
 carries on from the last save. Modal may still move a call to another machine after a
 preemption; the client waits at most the call's timeout plus ``cloud.START_SLACK_S``,
 then cancels it, and counts all of that against ``max_hours``, so the ceiling holds.
+Each call leaves a mark on the volume (``CALLS``) once its container runs, so a call
+that timed out can tell "stopped" from "never got a GPU" (``no_gpu``).
+
+The container asks for exactly ``cloud.CPU_CORES`` and ``cloud.MEMORY_MIB`` (the same
+request and limit), so the price per hour that ``cloud.cost`` prints holds.
 
 This module is imported both here and in the container, where Modal places it at
 ``/root/modal_app.py``: nothing at import time may depend on where it lies. Needs
@@ -22,9 +27,11 @@ this file with the real Modal.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 import tomllib
+import uuid
 from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -46,6 +53,7 @@ from gpu_call import call
 
 HERE = Path(__file__).resolve().parent
 COMMIT_EVERY_S = 300
+CALLS = PurePosixPath(".calls")  # in the volume: a file per call whose container started
 
 
 def _uv_version(here: Path) -> str | None:
@@ -88,11 +96,17 @@ image = build_image(HERE)
     gpu=DEFAULT_GPU,
     volumes={str(REMOTE_DATA): volume},
     timeout=CALL_LIMIT_S,
-    cpu=CPU_CORES,
-    memory=MEMORY_MIB,
+    cpu=(CPU_CORES, CPU_CORES),
+    memory=(MEMORY_MIB, MEMORY_MIB),
 )
-def train_on_gpu(train: list[str], export: list[str], budget_s: float) -> dict[str, Any]:
+def train_on_gpu(
+    train: list[str], export: list[str], budget_s: float, token: str
+) -> dict[str, Any]:
     started = time.monotonic()
+    mark = REMOTE_DATA / CALLS / token
+    Path(mark).parent.mkdir(parents=True, exist_ok=True)
+    Path(mark).touch()
+    volume.commit()
     stop = threading.Event()
 
     def commit_now_and_then() -> None:
@@ -108,6 +122,7 @@ def train_on_gpu(train: list[str], export: list[str], budget_s: float) -> dict[s
         result = call(train, export, budget_s, IN_CONTAINER / "tools" / "train")
     finally:
         stop.set()
+        Path(mark).unlink(missing_ok=True)
         volume.commit()
     return {**result, "seconds": time.monotonic() - started}
 
@@ -132,14 +147,27 @@ class ModalBackend:
     def run(
         self, train: Sequence[str], export: Sequence[str], budget_s: float, timeout_s: int
     ) -> dict[str, Any]:
+        token = uuid.uuid4().hex
         with modal.enable_output(), app.run():
             fn = train_on_gpu.with_options(gpu=self.gpu, timeout=timeout_s)
-            handle = fn.spawn(list(train), list(export), budget_s)
+            handle = fn.spawn(list(train), list(export), budget_s, token)
             try:
                 return handle.get(timeout=timeout_s + START_SLACK_S)
             except TimeoutError:  # e.g. moved after a preemption: the ceiling holds
                 handle.cancel(terminate_containers=True)
-                return {"status": "stopped", "code": None, "seconds": 0.0}
+                started = self._started(token)
+                return {"status": "stopped" if started else "no_gpu", "code": None, "seconds": 0.0}
+
+    def _started(self, token: str) -> bool:
+        """Whether the call's container ever ran (left its mark in ``CALLS``)."""
+        mark = "/" + (CALLS / token).as_posix()
+        try:
+            found = bool(volume.listdir(mark))
+        except (FileNotFoundError, modal.exception.NotFoundError):
+            return False
+        with contextlib.suppress(FileNotFoundError, modal.exception.NotFoundError):
+            volume.remove_file(mark)
+        return found
 
     def fetch(self, remote: PurePosixPath, local: Path) -> None:
         with local.open("wb") as fh:

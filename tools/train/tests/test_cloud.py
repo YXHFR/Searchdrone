@@ -8,6 +8,7 @@ import dataclasses
 import hashlib
 import importlib
 import json
+import math
 import os
 import sys
 from pathlib import Path, PurePosixPath
@@ -81,7 +82,7 @@ class FakeModal:
         if status == "lost":
             raise ConnectionError("secret-looking text\nmore lines")
         targs = dict(a.split("=", 1) for a in train)
-        if "out" in targs:
+        if "out" in targs and status != "no_gpu":  # no_gpu: no container ever ran
             last = f"{PurePosixPath(targs['out']).relative_to(cloud.REMOTE_DATA)}/last.pt"
             # as train_detector.py: fresh=1 starts over, otherwise last.pt is carried on from
             self.resumed.append(last in self.volume and targs.get("fresh") != "1")
@@ -299,7 +300,8 @@ def test_the_cost_is_gpu_price_times_hours_with_its_source() -> None:
     assert c.price == pytest.approx(2.50 + cloud.EXTRA_PER_HOUR)
     assert c.usd == pytest.approx(4 * c.price) and c.max_usd == pytest.approx(24 * c.price)
     text = "\n".join(c.lines(guessed=True))
-    assert "A100-80GB 2.50 $ + processor och minne (8 kärnor, 32 GiB) 0.63 $ = 3.13 $/h" in text
+    per_hour = "A100-80GB 2.50 $ + processor och minne (exakt 8 kärnor, 32 GiB) 0.63 $ = 3.13 $/h"
+    assert per_hour in text
     assert "3.13 $/h x 4.0 h = 13 $" in text and "Högst: 24 h x 3.13 $/h = 75 $" in text
     assert "modal.com/pricing, läst 2026-11-04" in text and "procent" not in text
     h100 = cloud.cost("H100", 2.0, 1.0)
@@ -609,10 +611,85 @@ def test_fresh_goes_to_the_first_call_only_and_resets_the_hours(bank: Path) -> N
 def test_the_message_after_a_stop_says_to_leave_fresh_out(
     bank: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    fake = FakeModal(runs=["lost"])
+    fake = FakeModal(runs=["stopped", "lost"])  # the first call started over
     args = [f"data={bank}", "model=yolox_s", "yes=1", "fresh=1"]
     assert cloud.main(args, backend=lambda gpu: fake) == 1
     assert "samma kommando utan fresh=1" in capsys.readouterr().err
+
+
+def _old_run(bank: Path) -> tuple[FakeModal, Path, list[str]]:
+    remote = cloud.places(bank, "yolox_s").remote_run.name
+    fake = FakeModal()
+    fake.volume[f"train/{remote}/last.pt"] = b"old run"
+    ledger = bank / cloud.LEDGER.format(run=remote)
+    return fake, ledger, [f"data={bank}", "model=yolox_s", "yes=1"]
+
+
+def test_fresh_stays_pending_when_stopped_during_the_upload(
+    bank: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake, ledger, args = _old_run(bank)
+
+    def interrupted(uploads: Any) -> None:
+        raise KeyboardInterrupt
+
+    fake.upload = interrupted  # type: ignore[method-assign]
+    assert cloud.main([*args, "fresh=1"], backend=lambda gpu: fake) == 130
+    err = capsys.readouterr().err
+    assert "samma kommando" in err and "utan fresh=1" not in err
+    assert fake.calls == [] and cloud.fresh_pending(ledger)
+    again = FakeModal()
+    again.volume = fake.volume
+    assert cloud.main(args, backend=lambda gpu: again) == 0  # without fresh=1
+    assert "börjar om från noll nu också" in capsys.readouterr().out
+    assert ["fresh=1" in train for train, *_ in again.calls] == [True]
+    assert again.resumed == [False]  # the old last.pt was not carried on from
+    assert not cloud.fresh_pending(ledger)
+
+
+@pytest.mark.parametrize("first", ["lost", "no_gpu"])
+def test_fresh_stays_pending_when_the_first_call_never_ran(
+    bank: Path, capsys: pytest.CaptureFixture[str], first: str
+) -> None:
+    fake, ledger, args = _old_run(bank)
+    fake.runs = [first]
+    assert cloud.main([*args, "fresh=1"], backend=lambda gpu: fake) == 1
+    err = capsys.readouterr().err
+    assert "samma kommando" in err and "utan fresh=1" not in err
+    assert cloud.fresh_pending(ledger)
+    again = FakeModal(runs=["stopped", "done"])
+    again.volume = fake.volume
+    assert cloud.main(args, backend=lambda gpu: again) == 0
+    assert ["fresh=1" in train for train, *_ in again.calls] == [True, False]
+    assert again.resumed == [False, True]
+
+
+def test_a_call_that_never_got_a_gpu_says_so(
+    bank: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeModal(runs=["no_gpu"])
+    assert cloud.main([f"data={bank}", "model=yolox_s", "yes=1"], backend=lambda gpu: fake) == 1
+    err = capsys.readouterr().err
+    assert "inget grafikkort" in err and "inget tränades" in err
+    assert "kod" not in err
+
+
+def test_the_worst_case_is_counted_before_each_call(tmp_path: Path) -> None:
+    ledger = tmp_path / "hours.json"
+    seen: list[float] = []
+
+    class Peek(FakeModal):
+        def run(self, train: Any, export: Any, budget_s: float, timeout_s: int) -> Any:
+            seen.append(cloud.hours_used(ledger) * 3600)
+            raise SystemExit("power gone")  # nothing after this runs, as on a hard stop
+
+    cloud.start_fresh(ledger)
+    with pytest.raises(SystemExit):
+        cloud.run_until_done(Peek(), [], [], 24, ledger, clock=lambda: 0.0)
+    budget = cloud.call_budget(24 * 3600)
+    worst = math.ceil(budget + cloud.STOP_GRACE_S + cloud.FINISH_SLACK_S) + cloud.START_SLACK_S
+    assert seen == [pytest.approx(worst)]
+    assert cloud.fresh_pending(ledger)
 
 
 @pytest.mark.parametrize("found", ["person_yolox_s.onnx", "person_yolox_s.json"])

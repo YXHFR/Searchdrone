@@ -37,6 +37,28 @@ class FakeImage:
         return self
 
 
+class NotFoundError(Exception):
+    pass
+
+
+class FakeVolume:
+    """The marks in ``modal_app.CALLS`` that a started container leaves."""
+
+    def __init__(self) -> None:
+        self.files: set[str] = set()
+
+    def listdir(self, path: str) -> list[str]:
+        if path not in self.files:
+            raise FileNotFoundError(path)
+        return [path]
+
+    def remove_file(self, path: str) -> None:
+        self.files.discard(path)
+
+    def commit(self) -> None:
+        pass
+
+
 class FakeCall:
     def __init__(self, log: list[Any], late: bool) -> None:
         self.log, self.late = log, late
@@ -89,10 +111,12 @@ def fake_modal(local: bool) -> tuple[types.ModuleType, list[Any]]:
         def run(self) -> Iterator[None]:
             yield
 
+    volume = FakeVolume()
+
     class Volume:
         @staticmethod
-        def from_name(name: str, create_if_missing: bool = False) -> str:
-            return f"volume:{name}"
+        def from_name(name: str, create_if_missing: bool = False) -> FakeVolume:
+            return volume
 
     @contextlib.contextmanager
     def enable_output() -> Iterator[None]:
@@ -103,6 +127,7 @@ def fake_modal(local: bool) -> tuple[types.ModuleType, list[Any]]:
     mod.Volume = Volume  # type: ignore[attr-defined]
     mod.enable_output = enable_output  # type: ignore[attr-defined]
     mod.is_local = lambda: local  # type: ignore[attr-defined]
+    mod.exception = types.SimpleNamespace(NotFoundError=NotFoundError)  # type: ignore[attr-defined]
     mod.images = images  # type: ignore[attr-defined]
     return mod, log
 
@@ -128,7 +153,9 @@ def test_it_imports_in_the_container_at_root(monkeypatch: pytest.MonkeyPatch) ->
     function = next(kw for kind, kw in log if kind == "function")
     assert "retries" not in function
     assert function["timeout"] == cloud.CALL_LIMIT_S
-    assert (function["cpu"], function["memory"]) == (cloud.CPU_CORES, cloud.MEMORY_MIB)
+    # request and limit alike, so the price per hour that cloud.cost prints holds
+    assert function["cpu"] == (cloud.CPU_CORES, cloud.CPU_CORES)
+    assert function["memory"] == (cloud.MEMORY_MIB, cloud.MEMORY_MIB)
 
 
 def test_here_the_image_gets_only_the_listed_files(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -152,14 +179,22 @@ def test_a_call_uses_the_gpu_timeout_and_budget_given(monkeypatch: pytest.Monkey
     res = app.ModalBackend("H100").run(["a=1"], ["b=2"], 1234.5, 3600)
     assert res["status"] == "done"
     assert ("options", {"gpu": "H100", "timeout": 3600}) in log
-    assert ("spawn", (["a=1"], ["b=2"], 1234.5)) in log
+    spawn = next(args for kind, args in log if kind == "spawn")
+    assert spawn[:3] == (["a=1"], ["b=2"], 1234.5) and len(spawn[3]) == 32  # its token
     assert ("get", 3600 + cloud.START_SLACK_S) in log
     assert not any(kind == "cancel" for kind, _ in log)
 
 
-def test_a_call_that_runs_over_is_cancelled(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(("started", "status"), [(True, "stopped"), (False, "no_gpu")])
+def test_a_call_that_runs_over_is_cancelled(
+    monkeypatch: pytest.MonkeyPatch, started: bool, status: str
+) -> None:
     app, _mod, log = load(monkeypatch, local=True, at=str(SOURCE))
     monkeypatch.setattr(app.train_on_gpu, "late", True)
+    if started:  # the container left its mark when it ran
+        monkeypatch.setattr(app.uuid, "uuid4", lambda: types.SimpleNamespace(hex="t" * 32))
+        app.volume.files.add(f"/{app.CALLS}/{'t' * 32}")
     res = app.ModalBackend("H100").run(["a=1"], ["b=2"], 10.0, 60)
-    assert res["status"] == "stopped"
+    assert res["status"] == status
     assert ("cancel", True) in log
+    assert not app.volume.files  # the mark is cleaned up

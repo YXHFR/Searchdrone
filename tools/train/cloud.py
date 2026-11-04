@@ -87,8 +87,9 @@ REMOTE_DATA = PurePosixPath("/data")
 # memory are billed on top (EXTRA_PER_HOUR); the volume is not counted.
 PRICES_SOURCE = "modal.com/pricing, läst 2026-11-04"
 PRICES: dict[str, float] = {"A100-80GB": 2.50, "H100": 3.95, "L40S": 1.95}
-# The container beside the GPU (modal_app.py asks for these), and their price from the
-# same page: USD per CPU core hour and per GiB hour.
+# The container beside the GPU (modal_app.py asks for exactly these, as both request
+# and limit, so it is never billed for more), and their price from the same page: USD
+# per CPU core hour and per GiB hour.
 CPU_CORES = 8.0
 MEMORY_MIB = 32768
 CPU_CORE_HOUR = 0.0472
@@ -435,7 +436,7 @@ class Cost:
         how = "grov gissning" if guessed else "din uppskattning (hours=)"
         return [
             f"Per timme: {self.gpu} {self.gpu_price:.2f} $ + processor och minne "
-            f"({CPU_CORES:g} kärnor, {MEMORY_MIB // 1024} GiB) {self.extra:.2f} $ "
+            f"(exakt {CPU_CORES:g} kärnor, {MEMORY_MIB // 1024} GiB) {self.extra:.2f} $ "
             f"= {self.price:.2f} $/h ({PRICES_SOURCE}).",
             f"Ungefärlig kostnad: {self.price:.2f} $/h x {self.hours:.1f} h "
             f"= {self.usd:.0f} $ ({how}).",
@@ -614,21 +615,45 @@ def confirm(yes: bool, ask: Callable[[str], str] = input) -> bool:
     return ask("Starta? Skriv ja för att fortsätta: ").strip().lower() in ("ja", "j", "yes", "y")
 
 
-def hours_used(ledger: Path) -> float:
-    """The GPU hours the run has used so far (``LEDGER``)."""
+def _read_ledger(ledger: Path) -> tuple[float, bool]:
+    """(seconds used, ``fresh=1`` not yet handed to a call) from ``LEDGER``."""
     try:
         body = json.loads(ledger.read_text(encoding="utf-8"))
-        return float(body["seconds"]) / 3600
-    except (OSError, ValueError, KeyError, TypeError):
-        return 0.0
+        return float(body["seconds"]), bool(body.get("fresh_pending", False))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return 0.0, False
 
 
-def _add_seconds(ledger: Path, seconds: float) -> None:
-    total = hours_used(ledger) * 3600 + seconds
+def _write_ledger(ledger: Path, seconds: float, fresh_pending: bool) -> None:
     ledger.parent.mkdir(parents=True, exist_ok=True)
     tmp = ledger.with_name(f".{ledger.name}.tmp")
-    tmp.write_text(json.dumps({"seconds": round(total, 1)}) + "\n", encoding="utf-8")
+    body = {"seconds": round(seconds, 1), "fresh_pending": fresh_pending}
+    tmp.write_text(json.dumps(body) + "\n", encoding="utf-8")
     tmp.replace(ledger)
+
+
+def hours_used(ledger: Path) -> float:
+    """The GPU hours the run has used so far (``LEDGER``)."""
+    return _read_ledger(ledger)[0] / 3600
+
+
+def fresh_pending(ledger: Path) -> bool:
+    """``fresh=1`` was asked for but no call has run with it yet."""
+    return _read_ledger(ledger)[1]
+
+
+def start_fresh(ledger: Path) -> None:
+    """``fresh=1``: the run's hours from 0, and the next call that runs starts over,
+    whatever command starts it, until one has (``run_until_done``)."""
+    _write_ledger(ledger, 0.0, True)
+
+
+def again_text(fresh_given: bool, ledger: Path) -> str:
+    """What to run to carry on: without ``fresh=1`` once a call has started over with
+    it (or the run would start over again), as given before that."""
+    if fresh_given and not fresh_pending(ledger):
+        return "samma kommando utan fresh=1"
+    return "samma kommando"
 
 
 def call_budget(left_s: float) -> float:
@@ -647,41 +672,55 @@ def run_until_done(
     export: Sequence[str],
     max_hours: float,
     ledger: Path,
-    first: Sequence[str] = (),
-    again: str = "samma kommando",
+    fresh_given: bool = False,
     clock: Callable[[], float] = time.monotonic,
 ) -> float:
     """Call the GPU until the run is done, together at most ``max_hours`` for the run
-    (all calls, also earlier commands', from ``ledger``). ``first`` (``fresh=1``) is
-    added to the first call's training arguments only, so the later calls carry on from
-    ``last.pt``. Each call's seconds are counted, the client's wall time or the
-    container's, whichever is longer, also when the call fails or is interrupted.
-    ``again`` is what to run to carry on. Returns the hours used by this command."""
+    (all calls, also earlier commands', from ``ledger``).
+
+    While ``ledger`` says ``fresh=1`` is pending, it is added to the call's training
+    arguments, and cleared only once a call has run with it (the call came back, also
+    ``failed``); a call that never ran (no GPU, a lost line, Ctrl+C) leaves it pending,
+    so the next command starts over too instead of carrying on from an old ``last.pt``.
+
+    Each call's worst case (Modal's timeout and the wait for the container) is written
+    to ``ledger`` before the call, then corrected to the seconds used: the client's wall
+    time or the container's, whichever is longer, also when the call fails or is
+    interrupted. A hard stop of this computer thus leaves the worst case counted.
+    Returns the hours used by this command."""
     used_here = 0.0
-    extra = list(first)
     while True:
-        spent = hours_used(ledger) * 3600
+        spent, pending = _read_ledger(ledger)
         budget = call_budget(max_hours * 3600 - spent)
         if not budget:
             raise BenchError(
                 f"max_hours={max_hours:g} är slut ({spent / 3600:.1f} h använda av den här "
-                f"körningen). Kör {again} med större max_hours= för att fortsätta "
-                "från senaste sparningen.",
+                f"körningen). Kör {again_text(fresh_given, ledger)} med större max_hours= "
+                "för att fortsätta från senaste sparningen.",
                 1,
             )
         timeout_s = math.ceil(budget + STOP_GRACE_S + FINISH_SLACK_S)
+        _write_ledger(ledger, spent + timeout_s + START_SLACK_S, pending)
+        argv = [*train, "fresh=1"] if pending else list(train)
         started = clock()
         res: Mapping[str, Any] = {}
-        argv, extra = [*train, *extra], []
         try:
             res = backend.run(argv, export, budget, timeout_s)
         finally:
             seconds = max(clock() - started, float(res.get("seconds", 0.0)))
-            _add_seconds(ledger, seconds)
+            ran = res.get("status") in ("done", "stopped", "failed")
+            _write_ledger(ledger, spent + seconds, pending and not ran)
             used_here += seconds
         status = res.get("status")
+        again = again_text(fresh_given, ledger)
         if status == "done":
             return used_here / 3600
+        if status == "no_gpu":
+            raise BenchError(
+                f"Modal gav inget grafikkort på {seconds / 60:.0f} minuter, så inget tränades. "
+                f"Försök igen senare ({again}), eller med en annan gpu=.",
+                1,
+            )
         if status != "stopped":
             raise BenchError(
                 f"Träningen på Modal slutade med kod {res.get('code')}; se utskriften ovan. "
@@ -863,7 +902,6 @@ def main(
         check_local_run(where)
         check_local_model(where)
         fresh = flag(args, "fresh")
-        again = "samma kommando utan fresh=1" if fresh else "samma kommando"
         ledger = data / LEDGER.format(run=where.remote_run.name)
         before = 0.0 if fresh else hours_used(ledger)
         uploads = plan(data, sets, model, limit, init_local, init_sha)
@@ -880,12 +918,17 @@ def main(
                 "fresh=1: körningen börjar om från noll i Modal, och dess timmar räknas om "
                 "från 0. Fortsätt sedan med samma kommando utan fresh=1."
             )
+        elif fresh_pending(ledger):
+            say(
+                "Ett tidigare fresh=1 har inte börjat i Modal än, så körningen börjar om "
+                "från noll nu också."
+            )
         say(f"Resultatet hamnar i {where.local_run} och {where.local_models}.")
         if not confirm(flag(args, "yes")):
             say("Avbrutet; inget startades.")
             return 1
         if fresh:
-            ledger.unlink(missing_ok=True)
+            start_fresh(ledger)
         started = time.monotonic()
         try:
             client = backend(gpu)
@@ -896,17 +939,19 @@ def main(
                 export_argv(model, where),
                 max_hours,
                 ledger,
-                first=["fresh=1"] if fresh else [],
-                again=again,
+                fresh_given=fresh,
             )
             fetch_results(client, where)
         except KeyboardInterrupt:
-            warn(f"Avbruten. Kör {again} för att fortsätta där det sparades senast.")
+            warn(
+                f"Avbruten. Kör {again_text(fresh, ledger)} för att fortsätta där det "
+                "sparades senast."
+            )
             return 130
         except BenchError:
             raise
         except Exception as exc:  # Modal's and the network's errors, in plain words
-            raise remote_error(exc, again) from exc
+            raise remote_error(exc, again_text(fresh, ledger)) from exc
         say(
             f"Klart på {used:.1f} timmar i Modal (ungefär {used * price.price:.0f} $), "
             f"{(time.monotonic() - started) / 3600:.1f} h i allt."
