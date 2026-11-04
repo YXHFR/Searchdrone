@@ -6,7 +6,10 @@ straight through the keep-out cylinders around persons without someone deciding 
 all goes well the flight controller never gets there: the onboard computer switches to
 LOITER at the last search point. If the flight controller stays in AUTO on that last
 item, the onboard computer has stopped steering, and the drone hovers there until the
-operator presses STOP or FLY HOME, takes over, or the battery failsafe brings it home.
+operator presses FLY HOME or takes over, or a failsafe brings it home (the flight
+controller's own for a low battery, a lost link or the fence, or the ground's battery and
+energy watch). FLY HOME tries SMART_RTL first, but plain RTL flies straight, through the
+keep-out cylinders too; the alarm text says so.
 
 ``MissionEndWatch`` follows ``MISSION_CURRENT`` on the ground's own MAVLink channel, so it
 works whatever state the onboard computer is in. It only raises the alarm (once per
@@ -31,10 +34,10 @@ __all__ = ["FALLBACK_GRACE_MS", "MISSION_FALLBACK_SV", "MissionEndWatch", "fallb
 FALLBACK_GRACE_MS: Final = 10_000
 
 MISSION_FALLBACK_SV: Final = (
-    "Ombordsdatorn styr inte drönaren längre. Sökningen har avbrutits och drönaren svävar där "
-    "den är. Den flyger hem bara om du trycker FLYG HEM eller om flygkontrollerns eget skydd "
-    "slår till (lågt batteri, tappad länk till marken, geostängslet). Tryck FLYG HEM för att "
-    "flyga hem (rakt, även genom förbudszoner runt personer) eller ta över med RC."
+    "Ombordsdatorn styr inte drönaren längre. Sökningen går inte vidare och drönaren svävar "
+    "där den är. Den flyger hem när du trycker FLYG HEM eller när ett skydd slår till (till "
+    "exempel lågt batteri eller förlorad länk). FLYG HEM kan flyga rakt genom förbudszoner "
+    "runt personer. Ta över med RC om du vill styra själv."
 )
 
 
