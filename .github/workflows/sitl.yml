@@ -290,58 +290,19 @@ jobs:
     if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    env:
-      VIDEO_APT_PACKAGES: >-
-        gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
-        gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav
-        gstreamer1.0-rtsp python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0
-        ffmpeg iproute2
     steps:
       - *checkout
       - *setup
       - name: GStreamer and ffmpeg for the video processes and checks
-        # A slow apt mirror used to eat the whole step (azure's at 20-60 kB/s: 13 min and
-        # no test run). The first try uses the runner's default mirror with the download
-        # capped at 150 s, then the runner's mirror list is cut down to archive.ubuntu.com
-        # for two more tries. The tries only download (--download-only), and what a try
-        # got stays in apt's archive folder for the next one. The install then runs once
-        # from those .debs with no time limit of its own: a timeout inside dpkg would
-        # leave it half done. apt gives up on a dead connection after 30 s. The man-db
-        # index is not rebuilt.
+        # tools/ci/apt-install.sh falls back to archive.ubuntu.com when the runner's
+        # default mirror is slow (azure's at 20-60 kB/s used to eat this whole step).
         timeout-minutes: 20
-        env:
-          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo rm -f /var/lib/man-db/auto-update
-          apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
-          read -ra packages <<< "$VIDEO_APT_PACKAGES"
-          use_archive_mirror() {
-            # The runner's sources read their mirrors from apt-mirrors.txt, azure's first.
-            if [ -f /etc/apt/apt-mirrors.txt ]; then
-              sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
-              grep -q . /etc/apt/apt-mirrors.txt \
-                || echo 'http://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt
-            fi
-            for f in /etc/apt/sources.list.d/*.sources /etc/apt/sources.list; do
-              if [ -f "$f" ]; then
-                sudo sed -i 's#azure\.archive\.ubuntu\.com#archive.ubuntu.com#g' "$f"
-              fi
-            done
-          }
-          ok=0
-          for try in 1 2 3; do
-            if [ "$try" = 1 ]; then limit=150; else limit=240; use_archive_mirror; fi
-            if sudo timeout 90 apt-get "${apt_opts[@]}" update -q && \
-               sudo timeout "$limit" apt-get "${apt_opts[@]}" install -y -q --download-only \
-                 --no-install-recommends "${packages[@]}"; then
-              ok=1
-              break
-            fi
-            echo "apt try $try failed or timed out"
-            if [ "$try" != 3 ]; then sleep 10; fi
-          done
-          [ "$ok" = 1 ]
-          sudo apt-get "${apt_opts[@]}" install -y -q --no-install-recommends "${packages[@]}"
+          bash tools/ci/apt-install.sh \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
+            gstreamer1.0-rtsp python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
+            ffmpeg iproute2
       - *db
       - name: Database schema and MediaMTX
         run: |
@@ -677,8 +638,7 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 30
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y --no-install-recommends gdal-bin
+          bash tools/ci/apt-install.sh gdal-bin
           just trees-fetch site=hellasgarden
       - name: The terrain world built twice from scratch gives the same files
         id: terrain
@@ -804,7 +764,7 @@ jobs:
       - *image
       - *versions
       - name: Browsers for Playwright
-        run: pnpm --filter @searchdrone/panel exec playwright install --with-deps chromium
+        run: bash tools/ci/playwright-install.sh chromium
       - name: Panel against SITL
         timeout-minutes: 30
         env:
