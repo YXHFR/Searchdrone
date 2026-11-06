@@ -84,8 +84,10 @@ def test_e1_rows_with_their_times_run_again(tmp_path: Path) -> None:
 
 def test_a_case_holds_numbers_only_and_stays_small(tmp_path: Path) -> None:
     """A 30 minute flight at 10 Hz stays well under the few MB an artifact may take."""
+    height_m = 40.123456
+    speed_mps = 5.4321
     track = [
-        Sample(i / 10.0, *PLANE.latlon(0.5 * i, 0.3 * i), 40.123456, 5.4321, "AUTO", True)
+        Sample(i / 10.0, *PLANE.latlon(0.5 * i, 0.3 * i), height_m, speed_mps, "AUTO", True)
         for i in range(30 * 60 * 10)
     ]
     path = write_case(tmp_path, scenario="SK06", seed=1, broken=["E8: x"], track=track,
