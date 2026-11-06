@@ -236,8 +236,10 @@ Det här händer:
    anropet står kvar med sin längsta tid tills Modal säger att det har slutat, och
    räknas då med sin egen tid. Visar modal.com/apps att inget kör men Modal svarar ändå
    inte, säger körningen hur du stänger anropet med `close_call=`; det räknas då med sin
-   längsta tid, eller mer om anropet skrev mer. Anropet avbryts först, och säger Modal
-   att det ändå kör vidare varnar körningen, så att du hinner trycka Ctrl+C. Ingen körning startar ett nytt anrop
+   längsta tid, eller mer om anropet skrev mer. Anropet avbryts först, och körningen
+   frågar Modal igen i upp till en minut. Säger Modal fortfarande att det kör stannar
+   körningen och ber dig titta på modal.com/apps; först när du ger samma `close_call=`
+   en gång till stängs anropet, med en varning. Ingen körning startar ett nytt anrop
    medan ett gammalt kanske fortfarande kör, eftersom det annars kunde spara över den
    nya träningen. Går räkningen inte att läsa stannar den också: titta då på
    modal.com/apps att inget kör, och kör samma kommando med `reset_hours=` och de
@@ -304,7 +306,7 @@ Lagringen i volymen kostar lite eller inget; se modal.com/pricing.
 | `max_hours=24` | Högst så många timmar på grafikkortet för körningen, allt sammanräknat. |
 | `name=person_yolox_s` | Namnet på ONNX-filen och manifestet. |
 | `init=<best.pt>` | Som för `just train-detector`. Måste vara en `.pt`-fil på högst 1 GB. |
-| `close_call=<id>` | Bara när körningen ber om det: ett gammalt anrop som modal.com/apps visar inte kör, fast Modal inte säger att det har slutat, räknas med sin längsta tid och stoppar inte längre körningen. Går först efter den tiden. Ge den bara en gång. |
+| `close_call=<id>` | Bara när körningen ber om det: ett gammalt anrop som modal.com/apps visar inte kör, fast Modal inte säger att det har slutat, räknas med sin längsta tid och stoppar inte längre körningen. Går först efter den tiden. Säger Modal efter avbrottet fortfarande att anropet kör, stannar körningen; ge den då en gång till när modal.com/apps visar att det har stannat. |
 | `reset_hours=<h>` | Bara när körningen ber om det: timräkningen går inte att läsa. Den börjar om på `h` timmar, utan öppna anrop; ge de timmar körningen redan har använt, hellre för många. En timräkning som går att läsa ändras aldrig: då vägras `reset_hours=`. Går inte ihop med `fresh=1` eller `close_call=`. Ge den bara en gång. |
 
 `device=` och `simfarm=` går inte att använda i molnet.

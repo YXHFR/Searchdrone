@@ -27,6 +27,13 @@ HERE = Path(__file__).resolve().parent
 SEQS = {"AAA": "train", "BBB": "val", "CCC": "test"}
 
 
+@pytest.fixture(autouse=True)
+def _no_cancel_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """close_call= asks Modal again after its cancel for ``CANCEL_WAIT_S``: not in a
+    test, unless it says so."""
+    monkeypatch.setattr(cloud, "CANCEL_WAIT_S", 0)
+
+
 @pytest.fixture
 def bank(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A fetched 'heridal' of two pictures in each part, a fetched 'wisard' (measure
@@ -873,12 +880,22 @@ def test_an_old_call_modal_never_answers_for_can_be_closed_by_hand(
     later.marks = again.marks
     later.alive = set(again.alive)
     later.stuck = set(again.stuck)  # Modal still does not say
+    # Modal still says it runs after the cancel: the first close_call= stops and says
+    # what to look at; the call stays open, with its worst case
+    assert cloud.main([*args, f"close_call={token}"], backend=lambda gpu: later) == 1
+    err = capsys.readouterr().err
+    assert "avbrottet skickades" in err and f"fc-{token}" in err and "modal.com/apps" in err
+    assert later.cancelled == [f"fc-{token}"] and later.calls == []
+    assert json.loads(ledger.read_text())["open"][token]["cancelled"]
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(worst)
+    # the owner has looked, and gives it again: it is closed, with a warning
     assert cloud.main([*args, f"close_call={token}"], backend=lambda gpu: later) == 0
-    assert later.cancelled[0] == f"fc-{token}"  # cancelled once more first
+    assert later.cancelled == [f"fc-{token}"] * 2  # cancelled once more first
+    closed = capsys.readouterr()
+    assert "Varning" in closed.err and "utan close_call=" in closed.out
     assert token not in later.marks and later.calls  # closed, then the run went on
     assert cloud.hours_used(ledger) * 3600 == pytest.approx(worst + 3600.0)  # never less
     assert all("close_call" not in a for a in later.calls[0][0])  # not for the script
-    assert "utan close_call=" in capsys.readouterr().out  # not to be given again
 
 
 def test_close_call_waits_for_the_calls_worst_case(
@@ -907,13 +924,73 @@ def test_close_call_counts_the_marks_seconds_if_they_are_more(
     fake = FakeModal()
     fake.marks[token] = {"seconds": 1800.0, "ended": False}
     fake.alive = fake.stuck = {token}
-    cloud.close_lost_call(fake, ledger, token, wall=lambda: 101.0)
-    out, err = capsys.readouterr()
-    assert fake.cancelled == [f"fc-{token}"] and "Avbrott skickat" in out
-    # Modal still says it runs after the cancel (stuck): a warning names it
-    assert "Varning" in err and token in err and f"fc-{token}" in err and "Ctrl+C" in err
+    with pytest.raises(BenchError) as err:  # stuck: Modal still says it runs
+        cloud.close_lost_call(fake, ledger, token, wall=lambda: 101.0)
+    assert err.value.code == 1 and f"fc-{token}" in str(err.value)
+    cloud.close_lost_call(fake, ledger, token, wall=lambda: 102.0)  # the second closes
+    out, err_text = capsys.readouterr()
+    assert fake.cancelled == [f"fc-{token}"] * 2 and "Avbrott skickat" in out
+    assert "Varning" in err_text and f"fc-{token}" in err_text
     assert cloud.hours_used(ledger) * 3600 == pytest.approx(1800.0 + 600.0)  # the mark's
     assert json.loads(ledger.read_text())["open"] == {} and token not in fake.marks
+
+
+def test_close_call_waits_for_modal_to_say_the_cancelled_call_ended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """After the cancel, Modal is asked again for up to CANCEL_WAIT_S: a call that ends
+    within it is closed at once; one that does not stops the command (code 1)."""
+    monkeypatch.setattr(cloud, "CANCEL_WAIT_S", 60)
+    token = "t" * 32
+    call = {"worst": 100.0, "at": 0.0, "call": f"fc-{token}", "waited": 0.0}
+
+    class Slow(FakeModal):
+        def __init__(self, answers: int) -> None:
+            super().__init__()
+            self.alive = self.stuck = {token}
+            self.answers = answers
+
+        def call_state(self, token: str, call_id: str) -> dict[str, Any]:
+            self.answers -= 1
+            if self.answers <= 0:
+                self.alive = set()
+            return super().call_state(token, call_id)
+
+    slept: list[float] = []
+    ends = Slow(answers=3)  # says it runs twice, then that it has ended
+    ledger = tmp_path / "ends.json"
+    cloud._write_ledger(ledger, {"seconds": 100.0, "fresh_pending": False, "open": {token: call}})
+    cloud.close_lost_call(ends, ledger, token, wall=lambda: 101.0, sleep=slept.append)
+    assert slept == [cloud.CANCEL_POLL_S] * 2 and json.loads(ledger.read_text())["open"] == {}
+    assert "Varning" not in capsys.readouterr().err
+
+    slept.clear()
+    runs = Slow(answers=10**6)  # never says it has ended
+    ledger = tmp_path / "runs.json"
+    cloud._write_ledger(ledger, {"seconds": 100.0, "fresh_pending": False, "open": {token: call}})
+    with pytest.raises(BenchError, match=r"modal\.com/apps") as err:
+        cloud.close_lost_call(runs, ledger, token, wall=lambda: 101.0, sleep=slept.append)
+    assert err.value.code == 1 and sum(slept) == cloud.CANCEL_WAIT_S
+    assert json.loads(ledger.read_text())["open"][token]["cancelled"] == 101.0
+
+
+def test_close_call_closes_a_call_with_no_modal_id_after_its_worst_case(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No Modal id: nothing to cancel or ask, so only its worst case counts, and only
+    after it."""
+    ledger = tmp_path / "hours.json"
+    token = "t" * 32
+    call = {"worst": 1000.0, "at": 0.0, "call": "", "waited": 0.0}
+    cloud._write_ledger(ledger, {"seconds": 1000.0, "fresh_pending": False, "open": {token: call}})
+    fake = FakeModal()  # no mark: it tells 600 s, less than the worst case
+    with pytest.raises(BenchError, match="kan fortfarande köra"):
+        cloud.close_lost_call(fake, ledger, token, wall=lambda: 999.0)
+    cloud.close_lost_call(fake, ledger, token, wall=lambda: 1001.0)
+    assert fake.cancelled == [] and json.loads(ledger.read_text())["open"] == {}
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(1000.0)
+    out, err = capsys.readouterr()
+    assert "utan Modal-id" in out and "Varning" not in err
 
 
 def test_close_call_says_nothing_more_when_the_cancel_ended_the_call(
@@ -1126,7 +1203,20 @@ def test_a_call_stopped_while_it_was_sent_is_waited_for(tmp_path: Path) -> None:
     assert json.loads(ledger.read_text())["open"] == {}
 
 
-@pytest.mark.parametrize("text", ["{", '{"open": {}}', '{"seconds": 1, "open": []}'])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "{",
+        '{"open": {}}',
+        '{"seconds": 1, "open": []}',
+        '{"seconds": NaN, "open": {}}',
+        '{"seconds": Infinity, "open": {}}',
+        '{"seconds": -3600, "open": {}}',
+        '{"seconds": "nan", "open": {}}',
+        '{"seconds": 1, "open": {"t": {"worst": -1, "at": 0}}}',
+        '{"seconds": 1, "open": {"t": {"worst": 1, "at": NaN}}}',
+    ],
+)
 def test_a_ledger_that_cannot_be_read_stops_the_command(tmp_path: Path, text: str) -> None:
     ledger = tmp_path / "hours.json"
     ledger.write_text(text)
@@ -1183,6 +1273,15 @@ def test_reset_hours_keeps_a_call_that_may_still_run(bank: Path) -> None:
     again.marks, again.alive = fake.marks, set(fake.tokens)
     assert cloud.main([*args, "reset_hours=0"], backend=lambda gpu: again) == 2
     assert ledger.read_text() == before and again.calls == []
+
+
+def test_reset_hours_itself_refuses_a_ledger_that_can_be_read(tmp_path: Path) -> None:
+    ledger = tmp_path / "hours.json"
+    cloud._write_ledger(ledger, {"seconds": 5 * 3600, "fresh_pending": False, "open": {}})
+    before = ledger.read_text()
+    with pytest.raises(BenchError, match="går att läsa") as err:
+        cloud.reset_hours(ledger, 0)
+    assert err.value.code == 2 and ledger.read_text() == before
 
 
 @pytest.mark.parametrize("extra", ["reset_hours=-1", "reset_hours=x", "reset_hours=inf", "fresh=1"])
