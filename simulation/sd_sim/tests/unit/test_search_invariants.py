@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import math
 from dataclasses import replace
 
 import pytest
@@ -134,6 +135,44 @@ def test_inside_since_it_came_braking_may_take_it_its_stop_deeper() -> None:
     # Heading out when it came: no stop to allow for.
     turned = _track([(0, 75, 0), (1, 70, 0), (2, 77, 0)])
     assert keepout_never_entered([_cyl()], turned)
+
+
+def _turning_in(brake_after_s: float | None) -> list[Sample]:
+    """A cylinder comes 10 m around a drone at a survey corner: it flies north-east at
+    3 m/s, 1 m/s of it towards the middle, and turns east (2.6 m/s² east), as in SK03 seed
+    2 (CI run 42166655395: 1.35 m/s deeper when the cylinder came, 2.86 m/s 0.65 s later).
+    With ``brake_after_s`` it then brakes at 2.7 m/s² to a stop."""
+    e, n, ve, vn = 80.0, 0.0, 1.0, 2.8
+    out: list[tuple[float, float, float, float]] = []
+    dt_s = 0.1
+    for i in range(41):
+        t = i * dt_s
+        out.append((t, e, n, math.hypot(ve, vn)))
+        if brake_after_s is None or t < brake_after_s:
+            ve += 2.6 * dt_s
+            vn = max(0.0, vn - 4.3 * dt_s)  # the turn takes the northward speed
+            speed = math.hypot(ve, vn)
+            if speed > 3.4:
+                ve, vn = ve * 3.4 / speed, vn * 3.4 / speed
+        else:
+            speed = math.hypot(ve, vn)
+            if speed > 0.0:
+                slower = max(0.0, speed - 2.7 * dt_s) / speed
+                ve, vn = ve * slower, vn * slower
+        e, n = e + ve * dt_s, n + vn * dt_s
+    return _flown(out)
+
+
+def test_a_cylinder_that_comes_in_a_turn_towards_it_allows_the_turns_speed() -> None:
+    """The speed deeper at the first sample (about 0) is not what braking starts from: the
+    flight controller finishes the turn until the way out takes, and the drone brakes
+    from the fastest it went deeper before the braking is in force. Without braking it is
+    still caught."""
+    braked = _turning_in(brake_after_s=0.65)
+    assert keepout_never_entered([_cyl()], braked) == []
+    on = _turning_in(brake_after_s=None)
+    broken = keepout_never_entered([_cyl()], on)
+    assert broken and broken[0].startswith("E8") and "djupare" in broken[0]
 
 
 def test_a_new_shape_of_a_cylinder_is_no_new_grace() -> None:

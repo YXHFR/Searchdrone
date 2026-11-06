@@ -32,6 +32,7 @@ flight. Nothing here touches the flight stack.
 from __future__ import annotations
 
 import datetime as dt
+import itertools
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -261,6 +262,26 @@ def _closing_ms(rows: Sequence[tuple[float, float, Sample]]) -> float:
     return v0
 
 
+def _reaction_closing_ms(rows: Sequence[tuple[float, float, Sample]]) -> float:
+    """The fastest the drone headed deeper from the first row until its braking is in
+    full force (``STOP_REACT_S``, then the jerk-limited ramp to ``STOP_DECEL_MS2``), and
+    never below :func:`_closing_ms`. A cylinder that comes while the drone turns towards it
+    (a survey corner) finds it gaining speed inwards: the flight controller finishes the
+    turn it was flying until the new order takes, so the speed at the first row alone is
+    too low. Between two samples the speed is at most the faster sample's ground speed (a
+    wobble of the position is no speed)."""
+    t0 = rows[0][0]
+    window = STOP_REACT_S + STOP_DECEL_MS2 / STOP_JERK_MS3
+    fastest = _closing_ms(rows)
+    for (ta, da, sa), (tb, db, sb) in itertools.pairwise(rows):
+        if tb > t0 + window:
+            break
+        if tb > ta:
+            inwards = (da - db) / (tb - ta)
+            fastest = max(fastest, min(inwards, max(sa.groundspeed_ms, sb.groundspeed_ms)))
+    return fastest
+
+
 def _brake_allowance(
     k: SeenKeepout, rows: Sequence[tuple[float, float, Sample]]
 ) -> tuple[float, float]:
@@ -285,11 +306,12 @@ def _entered(
     """How the track broke the full cylinder (kept out as a confirmed find), or None."""
     brake_m, braking_until = _brake_allowance(k, rows)
     # Inside when it came (made around a person under the drone): on its way out, never
-    # deeper than then, plus what braking takes it on when it was heading deeper (only
-    # with a sample from when the id came, as for a cylinder ahead).
+    # deeper than then, plus what braking takes it on when it was heading deeper, from the
+    # fastest it went deeper until the braking is in force (only with a sample from when
+    # the id came, as for a cylinder ahead).
     came_in = -rows[0][1] if rows[0][1] < 0.0 else None
     came_brake_m = (
-        stop_distance_m(_closing_ms(rows))
+        stop_distance_m(_reaction_closing_ms(rows))
         if came_in is not None and rows[0][0] - k.arrival <= ARRIVAL_S
         else 0.0
     )
