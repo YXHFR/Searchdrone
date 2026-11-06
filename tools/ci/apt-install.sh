@@ -3,8 +3,12 @@
 # the job. The runner's default mirror (azure.archive.ubuntu.com) has served packages at
 # 20-60 kB/s, which ran CI steps into their timeouts before any test ran.
 #
-#   bash tools/ci/apt-install.sh PACKAGE...    update, download, install
-#   bash tools/ci/apt-install.sh --update-only update only (same mirror fallback)
+#   bash tools/ci/apt-install.sh PACKAGE...        update, download, install
+#   bash tools/ci/apt-install.sh --update-only     update only (same mirror fallback)
+#   bash tools/ci/apt-install.sh --fresh PACKAGE.. the lists were just updated: the first
+#                                                  try skips its update
+#   bash tools/ci/apt-install.sh --archive-mirror  cut azure out of the mirror list and
+#                                                  update, for a script that runs apt itself
 #
 # The first try uses the runner's default mirror with the download capped at 150 s. The
 # two tries after it first cut azure out of the runner's mirror list, so they go to
@@ -15,13 +19,30 @@
 # dead connection after 30 s. The man-db index is not rebuilt.
 set -euo pipefail
 
-update_only=false
-if [ "${1:-}" = --update-only ]; then
-  update_only=true
-  shift
-fi
-if ! $update_only && [ $# -eq 0 ]; then
-  echo "usage: $0 PACKAGE... | --update-only" >&2
+usage="usage: $0 [--fresh] PACKAGE... | --update-only | --archive-mirror"
+# The tests point these at a scratch folder; on a runner they are the system's.
+apt_dir="${APT_INSTALL_ETC_APT:-/etc/apt}"
+man_db="${APT_INSTALL_MAN_DB:-/var/lib/man-db}"
+mirrors="$apt_dir/apt-mirrors.txt"
+
+mode=install
+fresh=false
+case "${1:-}" in
+  --update-only | --archive-mirror)
+    mode="${1#--}"
+    shift
+    if [ $# -ne 0 ]; then
+      echo "$usage" >&2
+      exit 2
+    fi
+    ;;
+  --fresh)
+    fresh=true
+    shift
+    ;;
+esac
+if [ "$mode" = install ] && [ $# -eq 0 ]; then
+  echo "$usage" >&2
   exit 2
 fi
 
@@ -32,34 +53,44 @@ opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Time
 
 use_archive_mirror() {
   # The runner's sources read their mirrors from apt-mirrors.txt, azure's first.
-  if [ -f /etc/apt/apt-mirrors.txt ]; then
-    sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
-    if ! grep -q . /etc/apt/apt-mirrors.txt; then
-      echo 'http://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+  if [ -f "$mirrors" ]; then
+    sudo sed -i '/azure\.archive\.ubuntu\.com/d' "$mirrors"
+    if ! grep -q . "$mirrors"; then
+      echo 'http://archive.ubuntu.com/ubuntu/' | sudo tee "$mirrors" >/dev/null
     fi
   fi
-  for f in /etc/apt/sources.list.d/*.sources /etc/apt/sources.list; do
+  for f in "$apt_dir"/sources.list.d/*.sources "$apt_dir/sources.list"; do
     if [ -f "$f" ]; then
       sudo sed -i 's#azure\.archive\.ubuntu\.com#archive.ubuntu.com#g' "$f"
     fi
   done
 }
 
-sudo rm -f /var/lib/man-db/auto-update
+sudo rm -f "$man_db/auto-update"
+first=1
+if [ "$mode" = archive-mirror ]; then
+  # A script that installs with apt itself gets archive.ubuntu.com from the start.
+  first=2
+fi
 for try in 1 2 3; do
+  if [ "$try" -lt "$first" ]; then
+    continue
+  fi
+  update=true
   if [ "$try" = 1 ]; then
     limit=150
+    if $fresh; then update=false; fi
   else
     limit=240
     echo "apt: dropping azure.archive.ubuntu.com, trying archive.ubuntu.com"
     use_archive_mirror
   fi
-  if apt_get timeout 90 apt-get "${opts[@]}" update -q && {
-    $update_only ||
+  if { ! $update || apt_get timeout 90 apt-get "${opts[@]}" update -q; } && {
+    [ "$mode" != install ] ||
       apt_get timeout "$limit" apt-get "${opts[@]}" install -y -q --download-only \
         --no-install-recommends "$@"
   }; then
-    if ! $update_only; then
+    if [ "$mode" = install ]; then
       apt_get apt-get "${opts[@]}" install -y -q --no-install-recommends "$@"
     fi
     exit 0
