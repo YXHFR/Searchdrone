@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import socket
 from collections import deque
@@ -78,6 +79,9 @@ class Ground:
     _events: deque[EventRow] = field(
         default_factory=lambda: deque[EventRow](maxlen=EVENT_QUEUE_MAX)
     )
+    # One flush at a time: two at once write the same rows, and the later one fails on
+    # their ids without writing the rows queued since (its caller then reads too early).
+    _flush_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     logins: PendingLogins = field(init=False)
     sessions: SessionStore = field(init=False)
 
@@ -157,16 +161,20 @@ class Ground:
         self._events.append(row)
 
     async def flush_events(self) -> None:
-        if self.repo is None or not self._events:
-            return
-        batch = list(self._events)
-        try:
-            await self.repo.add_events(batch)
-        except Exception as exc:
-            log.warning("events.flush_failed", error=type(exc).__name__)
-            return
-        for _ in batch:
-            self._events.popleft()
+        """Write the queued events. A caller that flushes and then reads finds every event
+        queued before its call: a flush already under way is waited for, then this one
+        writes the rest."""
+        async with self._flush_lock:
+            if self.repo is None or not self._events:
+                return
+            batch = list(self._events)
+            try:
+                await self.repo.add_events(batch)
+            except Exception as exc:
+                log.warning("events.flush_failed", error=type(exc).__name__)
+                return
+            for _ in batch:
+                self._events.popleft()
 
     def queued_events(self) -> list[EventRow]:
         return list(self._events)
