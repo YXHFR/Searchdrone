@@ -1,6 +1,7 @@
 """The AI's two candidate lines in ``Situation``: the open candidates
 (``sd_schemas.candidate_ai.candidates_line``, shared with the simulator exam) and the
-confirmed finds.
+confirmed finds. The candidates line also carries the open look, if any
+(``services.inspections.situation_line``).
 
 Read-only, and built from enum-like values only: never from anything typed by a person.
 The AI sees the candidates; only a person confirms a find.
@@ -61,6 +62,7 @@ async def candidate_lines(
     """(candidates_line, finds_line) for the situation. A fault here never takes the rest
     of the situation with it: it is logged and both lines are None."""
     from sd_ground.services import candidates as candidates_service
+    from sd_ground.services import inspections as inspections_service
 
     try:
         cards = await candidates_service.card_list(flow, mission_id)
@@ -84,7 +86,12 @@ async def candidate_lines(
                 if confirms:
                     confirmed_at[str(c.candidate_id)] = confirms[-1]["created_at"]
         drone = drone_position(mav)
-        return candidates_line(cards, profiles, drone), finds_line(cards, confirmed_at)
+        line = candidates_line(cards, profiles, drone)
+        # The open look, if any (on card K{seq}): the AI waits for its close event.
+        look = await inspections_service.situation_line(flow, mission_id)
+        if look is not None:
+            line = look if line is None else f"{line} | {look}"
+        return line, finds_line(cards, confirmed_at)
     except Exception:
         log.exception("candidates.situation_lines_failed", mission_id=mission_id)
         return None, None

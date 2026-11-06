@@ -455,3 +455,40 @@ async def test_scripted_at_here_without_a_position_refuses(tmp_path: Path) -> No
     turn = turn.model_copy(update={"situation": s.model_copy(update={"vehicle": vehicle})})
     with pytest.raises(ScriptError):
         await b.decide(turn, _NoTools())
+
+
+async def test_scripted_when_reads_a_closed_looks_details(tmp_path: Path) -> None:
+    """A closed look's outcome and next are in its details; the search flown on after it
+    ends with its sector at the top of the event."""
+    path = tmp_path / "s.yaml"
+    path.write_text(
+        "scenario: SCX\nturns:\n  - on: skill_event\n"
+        "    when: {skill: inspect_detection, status: closed, outcome: [rejected, unsure],"
+        " next: [hold, null]}\n"
+        "    action: {skill: survey_sector, params: {sector_id: B}}\n"
+        "  - on: skill_event\n"
+        "    when: {skill: survey_sector, status: done, sector_id: B}\n"
+        "    action: {skill: return_home}\n"
+    )
+    b = ScriptedBackend.from_file(path)
+    details: dict[str, Any] = {"outcome": "confirmed", "next": "hold"}
+    body = {"skill": "inspect_detection", "status": "closed", "details": details}
+    ev = [{"type": "event.skill", "body": body}]
+    assert (
+        await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
+    ).action is None
+    details |= {"outcome": "rejected", "next": "resume"}
+    assert (
+        await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
+    ).action is None
+    details["next"] = None  # the drone did not say (the ground closed it after a while)
+    out = await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
+    assert out.action is not None and out.action.params == {"sector_id": "B"}
+    done = {"skill": "survey_sector", "status": "done", "sector_id": "A", "details": {}}
+    ev = [{"type": "event.skill", "body": done}]
+    assert (
+        await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
+    ).action is None
+    done["sector_id"] = "B"
+    out = await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
+    assert out.action is not None and out.action.skill == "return_home"

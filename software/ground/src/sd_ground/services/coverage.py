@@ -3,7 +3,9 @@
 The covered area is the union of discs of radius ``spacing_m / 2 + 2 m`` around the
 telemetry points flown during a ``survey_sector`` order within ±3 m of its search height,
 clipped to the sector: the same reach and height band as ``sd_geo.coverage``. The onboard
-computer sends no coverage of its own.
+computer sends no coverage of its own. A search the drone flies on after a closer look
+(``inspections.flown_on``: its order stays ``superseded`` on the ground) counts from the
+drone's report that it flies on until that run ends.
 
 The work is incremental: each tick reads only the track points newer than the last one
 counted and adds their discs to what each sector already has. The geometry runs in a
@@ -107,6 +109,8 @@ def _grow(
 
 
 async def tick(flow: MissionFlow, mission: Mission) -> None:
+    from sd_ground.services import inspections as inspections_service
+
     mid = str(mission.id)
     state = flow.coverage.of(mid)
     now = flow.g.clock.monotonic()
@@ -116,11 +120,12 @@ async def tick(flow: MissionFlow, mission: Mission) -> None:
     charter = await flow.active_charter(mission)
     if charter is None:
         return
+    flown_on = {f.command_id: f.since for f in inspections_service.flown_on(flow, mid)}
     surveys = [
         c
         for c in await flow.repo.commands(mid, None)
         if c.skill == "survey_sector"
-        and str(c.status) in ("running", "done")
+        and (str(c.status) in ("running", "done") or str(c.id) in flown_on)
         and c.params.get("sector_id")
         and str(c.id) not in state.finished
     ]
@@ -138,10 +143,11 @@ async def tick(flow: MissionFlow, mission: Mission) -> None:
         area = sectors.get(sector_id)
         if area is None:
             continue
+        since = max(cmd.created_at, flown_on.get(str(cmd.id), cmd.created_at))
         points = [
             (float(p["lat"]), float(p["lon"]), float(p["alt_rel_home_m"] or 0.0))
             for p in new_points
-            if p["t"] >= cmd.created_at
+            if p["t"] >= since
         ]
         if not points:
             continue
