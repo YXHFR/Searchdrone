@@ -27,6 +27,7 @@ not measured). Both refuse to start outside the simulator (``SD_SIM=1``).
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import random
@@ -53,6 +54,8 @@ from sd_schemas.colors import COLOR_TABLE
 from sd_schemas.geo import local_xy
 from sd_sim import paths
 from sd_sim.search_world import Thing, World
+
+_log = logging.getLogger(__name__)
 
 __all__ = [
     "DEFAULT_PROFILE",
@@ -363,9 +366,13 @@ class OracleDetector:
         self.drawn: list[Drawn] = []
         self.in_view: dict[str, int] = {}  # thing id -> stills it was in
         # A detection's box and score -> what it was drawn from (the perception task copies
-        # both unchanged into the report, where the detection gets its id).
+        # both unchanged into the report, where the detection gets its id). Two detections
+        # share a key only with the same four box edges (each with its own jitter, or a
+        # random place for a false positive) and the same four-digit score; the later one
+        # then wins, which at worst answers for a sighting of another thing.
         self._sources: OrderedDict[tuple[float, float, float, float, float], Drawn] = OrderedDict()
         self._sources_lock = threading.Lock()
+        self.sources_dropped = 0  # sources pushed out by SOURCES_KEPT, for the run's record
 
     def _latency_s(self) -> float:
         p50, p95 = self.profile.latency_ms
@@ -396,6 +403,13 @@ class OracleDetector:
             self._sources[self._key(det.bbox, det.score)] = drawn
             while len(self._sources) > SOURCES_KEPT:
                 self._sources.popitem(last=False)
+                if self.sources_dropped == 0:
+                    _log.warning(
+                        "oracle: more than %d detections, the oldest sources are forgotten "
+                        "(their cards are judged by position)",
+                        SOURCES_KEPT,
+                    )
+                self.sources_dropped += 1
 
     def source_of(self, bbox: BBox, score: float) -> Drawn | None:
         """What a detection with this box and score was drawn from (a thing, or plain

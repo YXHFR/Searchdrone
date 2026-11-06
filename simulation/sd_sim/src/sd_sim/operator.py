@@ -37,6 +37,7 @@ OPEN_STATES = frozenset({"ready", "assessing", "inspecting"})
 APPROVED_LOOKS = frozenset({"inspect_detection"})
 DELAY_S = (5.0, 20.0)
 POLL_S = 1.0
+Judged = Literal["picture", "position"]
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,9 @@ class Decision:
     rank: int  # the card's place in the queue when the operator came to it (1 = top)
     priority_class: str
     fields: Mapping[str, Any]
+    # How the truth was found: from the card's picture (what its detection was drawn
+    # from) or from the thing at the card's position.
+    by: Judged = "position"
 
 
 @dataclass
@@ -137,11 +141,20 @@ class ScriptedOperator:
         self.looks_approved += approved
         return approved
 
-    def truth_of(self, card: Mapping[str, Any]) -> tuple[str | None, bool]:
-        """The thing a card shows and whether it is the missing person: what its picture
-        came from when known, otherwise the thing at its position."""
+    def judge(self, card: Mapping[str, Any]) -> tuple[str | None, bool, Judged]:
+        """The thing a card shows, whether it is the missing person, and how that was
+        found: what its picture came from when known, otherwise the thing at its
+        position."""
         known = None if self.card_truth is None else self.card_truth(card)
-        return known if known is not None else self.truth(card["lat"], card["lon"])
+        if known is not None:
+            return known[0], known[1], "picture"
+        thing, target = self.truth(card["lat"], card["lon"])
+        return thing, target, "position"
+
+    def truth_of(self, card: Mapping[str, Any]) -> tuple[str | None, bool]:
+        """The thing a card shows and whether it is the missing person (:meth:`judge`)."""
+        thing, target, _ = self.judge(card)
+        return thing, target
 
     async def queue(self) -> list[dict[str, Any]]:
         data = await self._json("GET", f"/missions/{self.mission_id}/candidates")
@@ -179,7 +192,7 @@ class ScriptedOperator:
             now = detail["card"]
             if now["state"] not in OPEN_STATES:
                 return None
-            thing, target = self.truth_of(now)
+            thing, target, by = self.judge(now)
             if now.get("thumb_detection_id"):
                 await self._json("POST", f"/detections/{now['thumb_detection_id']}/view")
             decision: Literal["confirm", "reject"] = "confirm" if target else "reject"
@@ -200,6 +213,7 @@ class ScriptedOperator:
                 rank=rank,
                 priority_class=str(now.get("priority_class")),
                 fields=dict(now.get("fields") or {}),
+                by=by,
             )
             self.decisions.append(d)
             return d

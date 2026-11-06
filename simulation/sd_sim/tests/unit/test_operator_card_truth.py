@@ -24,7 +24,7 @@ def _card(cid: str, seq: int, thumb: str | None) -> dict[str, Any]:
 
 def _run(
     cards: list[dict[str, Any]], sources: Mapping[str, tuple[str | None, bool]]
-) -> list[tuple[str, str, str | None]]:
+) -> list[tuple[str, str, str | None, str]]:
     def handler(req: httpx.Request) -> httpx.Response:
         path = req.url.path.removeprefix("/api/v1")
         if path == f"/missions/{MID}/candidates":
@@ -58,25 +58,27 @@ def _run(
             pass
 
     asyncio.run(work())
-    return [(d.candidate_id, d.decision, d.thing) for d in op.decisions]
+    return [(d.candidate_id, d.decision, d.thing, d.by) for d in op.decisions]
 
 
 def test_a_card_whose_picture_shows_the_person_is_confirmed_though_nearer_a_decoy() -> None:
     cards = [_card("bag", 1, "d1"), _card("person", 2, "d2")]
     sources = {"d1": ("backpack-0-0", False), "d2": ("target", True)}
     assert _run(cards, sources) == [
-        ("bag", "reject", "backpack-0-0"),
-        ("person", "confirm", "target"),
+        ("bag", "reject", "backpack-0-0", "picture"),
+        ("person", "confirm", "target", "picture"),
     ]
 
 
 def test_a_card_whose_source_is_unknown_goes_by_the_thing_at_its_position() -> None:
     cards = [_card("old", 1, "d9"), _card("nothumb", 2, None)]
     assert _run(cards, {}) == [
-        ("old", "reject", "backpack-0-0"),
-        ("nothumb", "reject", "backpack-0-0"),
+        ("old", "reject", "backpack-0-0", "position"),
+        ("nothumb", "reject", "backpack-0-0", "position"),
     ]
 
 
 def test_a_false_positive_on_plain_ground_is_nothing() -> None:
-    assert _run([_card("ground", 1, "d1")], {"d1": (None, False)}) == [("ground", "reject", None)]
+    assert _run([_card("ground", 1, "d1")], {"d1": (None, False)}) == [
+        ("ground", "reject", None, "picture")
+    ]

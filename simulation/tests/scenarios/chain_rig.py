@@ -90,7 +90,7 @@ from sd_sim.search_invariants import (
     keepout_never_entered,
     no_confirm_without_human,
 )
-from sd_sim.search_world import DECOY_CLEAR_M, World
+from sd_sim.search_world import CARD_ERR_MAX_M, DECOY_CLEAR_M, World
 from sd_sim.vlm_oracle import OracleMatcher, Truth
 
 __all__ = ["ChainOnboard", "SearchRun", "search_run", "search_service"]
@@ -192,6 +192,10 @@ class SearchRun:
     battery_start: float | None = None
     keepouts: dict[str, SeenKeepout] = field(default_factory=dict[str, SeenKeepout])
     candidates: CandidateWatch = field(default_factory=CandidateWatch)
+    # Cards judged by what their picture was drawn from, and those whose picture's thing
+    # lies farther than CARD_ERR_MAX_M from the card (so not a find of that thing).
+    by_picture: set[str] = field(default_factory=set[str])
+    misplaced: set[str] = field(default_factory=set[str])
 
     def thing_at(self, lat: float, lon: float) -> tuple[str | None, bool]:
         """The simulator's truth at a point: the nearest thing within ``TRUTH_M`` and
@@ -204,11 +208,21 @@ class SearchRun:
 
     def card_truth(self, card: Mapping[str, Any]) -> tuple[str | None, bool] | None:
         """What a card's picture shows: the thing its thumbnail's detection was drawn from
-        (``None`` for plain ground) and whether it is the missing person; ``None`` when the
-        rig does not know (the operator then goes by :meth:`thing_at`)."""
+        and whether it is the missing person, or nothing (plain ground, or a card lying
+        farther than CARD_ERR_MAX_M from that thing: a find at the wrong place is no find
+        of it); ``None`` when the rig does not know (the operator then goes by
+        :meth:`thing_at`)."""
         thumb = card.get("thumb_detection_id")
         drawn = None if thumb is None else self.onboard.sources.get(str(thumb))
-        return None if drawn is None else (drawn.thing_id, drawn.target)
+        if drawn is None:
+            return None
+        cid = str(card["candidate_id"])
+        self.by_picture.add(cid)
+        east, north = self.plane.xy(card["lat"], card["lon"])
+        truth = self.world.picture_truth(drawn.thing_id, east, north)
+        if drawn.thing_id is not None and truth[0] is None:
+            self.misplaced.add(cid)
+        return truth
 
     def card_thing(self, card: Mapping[str, Any]) -> tuple[str | None, bool]:
         """The thing a card is (its picture's source, else the thing at its position)."""
@@ -417,6 +431,7 @@ async def _metrics(run: SearchRun, broken: list[str]) -> RunMetrics:
             "seq": d.seq,
             "decision": d.decision,
             "truth": d.thing or "inget",
+            "by": d.by,
             "rank": d.rank,
             "priority_class": d.priority_class,
         }
@@ -678,6 +693,9 @@ async def search_run(
         measure(f"{world.scenario} take-off -> confirmed", metrics.time_to_confirmed_s, limit)
     assert not broken, broken
     assert metrics.false_confirms == 0, metrics.decisions
+    if metrics.confirmed_thing is not None and metrics.geo_error_m is not None:
+        # The confirmed find lies where the person is, within a card's error.
+        assert metrics.geo_error_m <= CARD_ERR_MAX_M, (metrics.geo_error_m, metrics.decisions)
     if (
         require_found
         and world.target is not None

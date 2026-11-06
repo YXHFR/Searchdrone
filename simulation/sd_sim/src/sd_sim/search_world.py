@@ -61,11 +61,15 @@ MAX_SEEDS = 200
 Pose = Literal["lying", "sitting", "standing"]
 POSES: tuple[Pose, ...] = ("lying", "sitting", "standing")
 DECOY_KINDS = ("rock", "backpack", "log", "tarp")
-# How far a card lies from the thing it was made from, at most: the oracle detector's
+# How far a card lies from the thing it was made from, at most. The oracle detector's
 # position errs by its receiver (``POS_SIGMA_M``, 1.2 m per axis) and its attitude
-# (``ATT_SIGMA_DEG``, 0.7 deg, about 0.6 m at the scenarios' 50 m), about 1.4 m per axis,
-# and 6 m is more than four times that (test_oracle_detector pins it).
-CARD_ERR_MAX_M = 6.0
+# (``ATT_SIGMA_DEG``, 0.7 deg per axis). The attitude's share is largest at the picture's
+# corner (about 37 deg off nadir with the 66 deg stills camera): there a tilt moves the
+# point by h / cos^2 and a turn by h tan, about 0.95 m and 0.45 m at 50 m, the highest any
+# SK script flies. That is about 1.6 m per axis in all, and 7 m is more than four times
+# it (test_oracle_detector pins it to the scripts' altitudes and the camera). A card's
+# position is a weighted mean of its sightings, so it lies within this of its thing too.
+CARD_ERR_MAX_M = 7.0
 # A thing this far from every person is never the nearest thing to a person's card: a
 # card lies at most CARD_ERR_MAX_M from its person, so at least as far from the thing. A
 # decoy drawn in an area keeps this clearance; one placed ``at_enu`` may lie nearer, and
@@ -148,6 +152,21 @@ class World:
         if best is None or math.hypot(best.east - east, best.north - north) > within_m:
             return None
         return best
+
+    def picture_truth(
+        self, thing_id: str | None, east: float, north: float
+    ) -> tuple[str | None, bool]:
+        """The thing a card is, from what its picture was drawn from (``thing_id``,
+        ``None`` for plain ground) and where the card lies: that thing and whether it is
+        the missing person, or nothing when the card lies farther than ``CARD_ERR_MAX_M``
+        from it. A card with the person's picture far from the person (misplaced, or
+        merged with another thing's card) is not a find of the person."""
+        if thing_id is None:
+            return None, False
+        t = next(t for t in self.things if t.thing_id == thing_id)
+        if math.hypot(t.east - east, t.north - north) > CARD_ERR_MAX_M:
+            return None, False
+        return t.thing_id, t.target
 
     def terrain(self) -> list[dict[str, Any]]:
         """The trail as the map's terrain layer (GeoJSON features, WGS84 lon/lat)."""

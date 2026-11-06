@@ -13,9 +13,9 @@ break no invariant (the flight invariants and E1, E2, E8):
   shows the top in conflict when the code scored it.
 * SK09: the operator rejects the person in red without a backpack in sector A; the right
   person in sector B is confirmed after that.
-* SK10: a grey backpack lies 4 m from the person. The person is confirmed and no card
-  whose picture shows the backpack is (the operator judges a card by what its picture
-  was drawn from, not by the nearest thing).
+* SK10: a grey backpack lies 4 m from the person. The person is confirmed by the card's
+  picture (what its detection was drawn from, not the nearest thing), and the find lies
+  within a card's error of the person.
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ from scenario_rig import (  # pyright: ignore[reportMissingImports]
 from test_onboard_sitl import Sim  # pyright: ignore[reportMissingImports]
 
 from sd_sim import search_world
+from sd_sim.search_world import CARD_ERR_MAX_M
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow, pytest.mark.brain, pytest.mark.search]
 __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
@@ -113,6 +114,10 @@ async def test_sk10_chain_decoy_near_the_person(
 ) -> None:
     m = await _run(sim, migrated_db, tmp_path, "SK10", seed)
     assert m.confirmed_thing == "target", m.decisions
-    assert m.false_confirms == 0, m.decisions
-    bag = [d for d in m.decisions if d["truth"] == "backpack-0-0"]
-    assert all(d["decision"] == "reject" for d in bag), m.decisions
+    # The confirmation went by the card's picture: with the backpack 4 m away, the
+    # nearest thing would not tell the person from it (the fallback by position would).
+    confirm = next(d for d in m.decisions if d["decision"] == "confirm")
+    assert confirm["by"] == "picture", m.decisions
+    # And the find lies where the person is, measured from the world, not the truth the
+    # operator used.
+    assert m.geo_error_m is not None and m.geo_error_m <= CARD_ERR_MAX_M, m.geo_error_m

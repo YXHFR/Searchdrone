@@ -85,7 +85,8 @@ def test_no_room_clear_of_the_people_for_a_decoy_is_a_world_error(tmp_path: Path
     data["search"]["decoys"] = [{"kind": "rock", "count": 1, "area": "sector_a"}]
     path = tmp_path / "SK01_cramped.yaml"
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
-    with pytest.raises(WorldError, match="ingen punkt i ytan 12 m"):
+    clear = f"{search_world.DECOY_CLEAR_M:.0f} m"
+    with pytest.raises(WorldError, match=f"ingen punkt i ytan {clear}"):
         load(path, 1)
 
 
@@ -161,3 +162,19 @@ def test_scenario_names_are_unique() -> None:
     assert len(list(SCENARIOS.glob("SK01_*.yaml"))) == 1
     with pytest.raises(WorldError):
         search_world.scenario_path("SK77")
+
+
+def test_a_card_is_its_pictures_thing_only_near_it() -> None:
+    """A card with the person's picture is the person within CARD_ERR_MAX_M of them; one
+    farther off (misplaced, or merged with another thing's card) is no find of anything,
+    though the nearest thing to it may be a decoy or the person."""
+    w = load("SK10", 1)
+    t = next(x for x in w.things if x.target)
+    assert w.picture_truth("target", t.east + 3.0, t.north - 4.0) == ("target", True)
+    edge = search_world.CARD_ERR_MAX_M
+    assert w.picture_truth("target", t.east + edge - 0.01, t.north) == ("target", True)
+    assert w.picture_truth("target", t.east + edge + 0.01, t.north) == (None, False)
+    assert w.picture_truth("target", t.east + 40.0, t.north) == (None, False)
+    bag = next(x for x in w.things if x.thing_id == "backpack-0-0")
+    assert w.picture_truth("backpack-0-0", bag.east, bag.north) == ("backpack-0-0", False)
+    assert w.picture_truth(None, t.east, t.north) == (None, False)
