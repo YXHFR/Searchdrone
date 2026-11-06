@@ -257,8 +257,22 @@ class _Io:
         return True
 
 
+class _IoThatCannotSend(_Io):
+    """An ``ExecutorIO`` whose ``survey_blocked`` send fails (the link's queue is full,
+    a bug in the encoder)."""
+
+    def emit_event(self, type: str, data: dict[str, Any]) -> None:
+        if type == "survey_blocked":
+            raise RuntimeError("the send failed")
+        super().emit_event(type, data)
+
+
 async def _plan_and_fly(
-    skill: str | None, centre: tuple[float, float], radius: float, source: str = "candidate"
+    skill: str | None,
+    centre: tuple[float, float],
+    radius: float,
+    source: str = "candidate",
+    io: _Io | None = None,
 ) -> tuple[SurveyRun, _Io]:
     """A search route from home along y=0 to (100, 0) and up to (100, 100), live (no
     passage), with one cylinder; planned around it and flown."""
@@ -274,7 +288,7 @@ async def _plan_and_fly(
     )
     run.around_keepouts(ctx)  # type: ignore[arg-type]
     assert run.detours()  # it does go around (a point of its own on the way)
-    io = _Io()
+    io = io or _Io()
     home = LatLonAlt(lat=lat, lon=lon, alt_amsl_m=0.0)
     await run.fly(SimpleNamespace(expected_duration_s=1.0), io, home)  # type: ignore[arg-type]
     return run, io
@@ -324,6 +338,16 @@ async def test_a_failure_working_out_the_blocking_never_stops_the_way_around(
     _, io = await _plan_and_fly("survey_sector", (50.0, 0.0), 10.0)
     assert _blocked(io) == []
     assert f"mode:{CopterMode.AUTO}" in io.calls
+
+
+async def test_a_failed_send_of_the_blocking_never_stops_the_way_around() -> None:
+    """The blocking is worked out, but sending it fails: the route still flies on in
+    AUTO to its end, and nothing goes out."""
+    io = _IoThatCannotSend()
+    run, _ = await _plan_and_fly("survey_sector", (50.0, 0.0), 10.0, io=io)
+    assert run.blocked  # there was something to send
+    assert _blocked(io) == []
+    assert io.calls.index(f"mode:{CopterMode.AUTO}") > io.calls.index("upload")
 
 
 # --- the time inside, and the way out (review of #202) -----------------------------------
