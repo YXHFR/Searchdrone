@@ -40,7 +40,7 @@ import statistics
 import sys
 import time
 import zlib
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -80,7 +80,7 @@ from sd_sim.detector_choice import ORACLE, DetectorChoice
 from sd_sim.eval_search import RunMetrics, write_run
 from sd_sim.onboard_watch import EXECUTOR_LOG, EXECUTOR_STATE, guarded
 from sd_sim.operator import ScriptedOperator
-from sd_sim.oracle_detector import OracleDetector, OraclePerception, SyntheticStillSource
+from sd_sim.oracle_detector import Drawn, OracleDetector, OraclePerception, SyntheticStillSource
 from sd_sim.perf.stats import percentile
 from sd_sim.report import measure
 from sd_sim.search_invariants import (
@@ -90,14 +90,17 @@ from sd_sim.search_invariants import (
     keepout_never_entered,
     no_confirm_without_human,
 )
-from sd_sim.search_world import World
+from sd_sim.search_world import DECOY_CLEAR_M, World
 from sd_sim.vlm_oracle import OracleMatcher, Truth
 
 __all__ = ["ChainOnboard", "SearchRun", "search_run", "search_service"]
 
 SIM_ENV = {"SD_SIM": "1"}
 PERIOD_S = 0.2  # how often perception asks for a still (the source gives one a second)
-TRUTH_M = 12.0  # a card or a detection this near a thing is that thing
+# A card or a detection this near a thing is that thing, where the rig does not know what
+# it was drawn from (a card lies at most CARD_ERR_MAX_M from its thing, and a decoy drawn
+# in an area at least twice that from every person).
+TRUTH_M = DECOY_CLEAR_M
 LANDED_LIMIT_S = 480.0  # SmartRTL retraces the flown path at 5 m/s
 HOLD_LIMIT_S = 60.0  # the AI's hold after a confirmation
 GATE_RATE_S = RATE_ACTION_MIN_GAP_MS / 1000 + 0.1  # the gate's rate limit, and a margin
@@ -128,6 +131,7 @@ class ChainOnboard(SitlOnboard):
             return self.vehicle.telemetry
 
         self.positions: dict[str, tuple[float, float]] = {}  # detection id -> where
+        self.sources: dict[str, Drawn] = {}  # detection id -> what the oracle drew it from
         self.detector: OracleDetector | None = None
         self.perception: PerceptionLoop
         if detector.manifest is None:
@@ -164,6 +168,9 @@ class ChainOnboard(SitlOnboard):
     def _send(self, out: Perception) -> None:
         for d in out.report.detections:
             self.positions[str(d.detection_id)] = (d.lat, d.lon)
+            drawn = None if self.detector is None else self.detector.source_of(d.bbox, d.score)
+            if drawn is not None:
+                self.sources[str(d.detection_id)] = drawn
         self.link.perception(out)
 
     async def start(self, home: tuple[float, float]) -> None:
@@ -195,8 +202,25 @@ class SearchRun:
             return None, False
         return t.thing_id, t.target
 
+    def card_truth(self, card: Mapping[str, Any]) -> tuple[str | None, bool] | None:
+        """What a card's picture shows: the thing its thumbnail's detection was drawn from
+        (``None`` for plain ground) and whether it is the missing person; ``None`` when the
+        rig does not know (the operator then goes by :meth:`thing_at`)."""
+        thumb = card.get("thumb_detection_id")
+        drawn = None if thumb is None else self.onboard.sources.get(str(thumb))
+        return None if drawn is None else (drawn.thing_id, drawn.target)
+
+    def card_thing(self, card: Mapping[str, Any]) -> tuple[str | None, bool]:
+        """The thing a card is (its picture's source, else the thing at its position)."""
+        return self.card_truth(card) or self.thing_at(card["lat"], card["lon"])
+
     def vlm_truth(self, req: Any) -> Truth:
-        """The image model's truth for a request: the thing under its crops."""
+        """The image model's truth for a request: what its crops were drawn from, else the
+        thing under them."""
+        for c in list(req.crops):
+            drawn = self.onboard.sources.get(str(c.detection_id))
+            if drawn is not None:
+                return Truth(person=drawn.person, target=drawn.target, thing=drawn.thing_id)
         for c in list(req.crops):
             where = self.onboard.positions.get(str(c.detection_id))
             if where is None:
@@ -407,12 +431,12 @@ async def _metrics(run: SearchRun, broken: list[str]) -> RunMetrics:
             "priority": c["priority"],
             "priority_class": c["priority_class"],
             "engine": c.get("engine"),
-            "truth": run.thing_at(c["lat"], c["lon"])[0],
+            "truth": run.card_thing(c)[0],
         }
         for c in queue
     ]
     for c in queue:
-        thing = run.thing_at(c["lat"], c["lon"])[0]
+        thing = run.card_thing(c)[0]
         if thing is not None and thing not in m.fields_by_thing and c.get("fields"):
             m.fields_by_thing[thing] = dict(c["fields"])
         top = (c.get("fields") or {}).get("garment:0")
@@ -426,7 +450,7 @@ async def _metrics(run: SearchRun, broken: list[str]) -> RunMetrics:
     if hours > 0:
         by_class: dict[str, int] = {}
         for c in queue:
-            if c["state"] != "merged" and not run.thing_at(c["lat"], c["lon"])[1]:
+            if c["state"] != "merged" and not run.card_thing(c)[1]:
                 by_class[c["priority_class"]] = by_class.get(c["priority_class"], 0) + 1
         m.false_candidates_per_hour = {k: round(v / hours, 1) for k, v in by_class.items()}
     lags = await rows(
@@ -463,7 +487,7 @@ def _others_judged(run: SearchRun, queue: list[dict[str, Any]]) -> bool:
     cards ``_metrics`` counts: not merged)."""
     others = {t.thing_id for t in run.world.people if not t.target}
     judged = {
-        run.thing_at(c["lat"], c["lon"])[0]
+        run.card_thing(c)[0]
         for c in queue
         if c["state"] != "merged"
         and (c.get("fields") or {}).get("garment:0") in ("conflict", "match")
@@ -577,6 +601,7 @@ async def search_run(
             sc.r.panel,
             sc.mid,
             truth=lambda lat, lon: holder[0].thing_at(lat, lon),
+            card_truth=lambda card: holder[0].card_truth(card),
             headers=H,
             seed=world.seed,
             env=SIM_ENV,

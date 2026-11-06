@@ -3,20 +3,24 @@ recall by pixel size from the profile, only in the simulator."""
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import pytest
 
+from sd_detect.api import BBox
 from sd_geo import PinholeCamera
 from sd_mav.vehicle import FcTelemetry
 from sd_sim.oracle_detector import (
+    ATT_SIGMA_DEG,
     NOT_IN_SIMULATOR,
+    POS_SIGMA_M,
     OracleDetector,
     OraclePerception,
     SyntheticStillSource,
     load_det_profile,
 )
-from sd_sim.search_world import load
+from sd_sim.search_world import CARD_ERR_MAX_M, DECOY_CLEAR_M, SCENARIOS, load
 
 SIM = {"SD_SIM": "1"}
 CAM = PinholeCamera(1280, 720, 66.0)
@@ -78,3 +82,34 @@ def test_the_same_seed_draws_the_same_detections() -> None:
         return out
 
     assert draw() == draw()
+
+
+def test_every_detection_says_what_it_was_drawn_from() -> None:
+    """The rig judges a card by its picture's source: each detection the oracle returns
+    (the person's and the false positives on plain ground) maps back to what it drew it
+    from, by its box and score; a box it never made maps to nothing."""
+    src = _source("SK01", "target")
+    det = OracleDetector(src, seed=5, sleep=False, env=SIM)
+    seen: set[str | None] = set()
+    for _ in range(40):
+        src._last = None  # pyright: ignore[reportPrivateUsage]
+        cs = src.poll()
+        assert cs is not None
+        for d in det.detect_still(cs.still):
+            drawn = det.source_of(d.bbox, d.score)
+            assert drawn is not None and drawn.score == d.score
+            seen.add(drawn.thing_id)
+    assert "target" in seen
+    assert det.source_of(BBox(x=1.0, y=2.0, w=3.0, h=4.0), 0.5) is None
+
+
+def test_the_card_error_bound_covers_the_oracles_position_error() -> None:
+    """CARD_ERR_MAX_M is more than four times the oracle's error per axis at the
+    scenarios' survey height (the receiver and the attitude), and a decoy drawn in an area
+    lies twice that from every person, so a person's card is nearer the person."""
+    worlds = [load(p, 1) for p in sorted(SCENARIOS.glob("SK*.yaml"))]
+    survey_alt_m = max(w.survey.get("alt_m", 0.0) for w in worlds)
+    assert survey_alt_m > 0
+    sigma = math.hypot(POS_SIGMA_M, survey_alt_m * math.tan(math.radians(ATT_SIGMA_DEG)))
+    assert 4.0 * sigma <= CARD_ERR_MAX_M
+    assert DECOY_CLEAR_M >= 2.0 * CARD_ERR_MAX_M

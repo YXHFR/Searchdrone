@@ -6,12 +6,13 @@ import math
 from pathlib import Path
 
 import pytest
+import yaml
 from shapely.geometry import LineString, Point, Polygon
 
 from sd_sim import search_world
 from sd_sim.search_world import SCENARIOS, WorldError, load, scenario_path, seeds
 
-SCENARIO_IDS = ("SK01", "SK02", "SK03", "SK04", "SK06", "SK09")
+SCENARIO_IDS = ("SK01", "SK02", "SK03", "SK04", "SK06", "SK09", "SK10")
 
 
 def test_seeds_parse_ranges_and_lists() -> None:
@@ -38,18 +39,54 @@ def test_every_scenario_loads_inside_its_charter(scenario: str) -> None:
         assert sum(t.target for t in w.things) == (0 if scenario == "SK03" else 1)
 
 
+def _drawn_in_an_area(scenario: str) -> set[str]:
+    """The id prefixes of a scenario's decoys drawn in an area (``{kind}-{i}-``); one
+    placed ``at_enu`` lies where the scenario puts it."""
+    data = yaml.safe_load(scenario_path(scenario).read_text(encoding="utf-8"))
+    decoys = data["search"].get("decoys") or []
+    return {f"{d['kind']}-{i}-" for i, d in enumerate(decoys) if "area" in d}
+
+
 @pytest.mark.parametrize("scenario", SCENARIO_IDS)
 def test_a_decoy_drawn_in_an_area_lies_clear_of_every_person(scenario: str) -> None:
     # SK09 seed 2 had a rock 2 m from the target: a card on the target could then be
     # nearer the rock, and the scripted operator rejected the target as the rock.
+    drawn = _drawn_in_an_area(scenario)
     for seed in range(1, 51):
         w = load(scenario, seed)
         for d in w.things:
-            if d.person:
+            if d.person or not any(d.thing_id.startswith(p) for p in drawn):
                 continue
             for p in w.people:
                 gap = math.hypot(d.east - p.east, d.north - p.north)
                 assert gap >= search_world.DECOY_CLEAR_M, (seed, d.thing_id, p.thing_id, gap)
+
+
+def test_a_decoy_placed_at_enu_may_lie_near_a_person() -> None:
+    """SK10 puts a grey backpack 4 m from the person on purpose (the hard case for the
+    tracker and the rig's truth), in every seed."""
+    assert "backpack-0-" not in _drawn_in_an_area("SK10")
+    for seed in range(1, 11):
+        w = load("SK10", seed)
+        bag = next(t for t in w.things if t.thing_id == "backpack-0-0")
+        target = next(t for t in w.things if t.target)
+        assert math.hypot(bag.east - target.east, bag.north - target.north) == pytest.approx(4.0)
+
+
+def test_no_room_clear_of_the_people_for_a_decoy_is_a_world_error(tmp_path: Path) -> None:
+    """A decoy drawn in an area with no point DECOY_CLEAR_M from every person is refused
+    with a WorldError, not placed nearer."""
+    data = yaml.safe_load(scenario_path("SK01").read_text(encoding="utf-8"))
+    data["areas"]["sector_a"] = {"area_enu": [[200, 200], [210, 200], [210, 210], [200, 210]]}
+    data["search"]["people"] = [
+        {"id": "target", "target": True, "at_enu": [205, 205], "jitter_m": 0, "pose": "lying",
+         "upper": "red", "lower": "black"},
+    ]  # fmt: skip
+    data["search"]["decoys"] = [{"kind": "rock", "count": 1, "area": "sector_a"}]
+    path = tmp_path / "SK01_cramped.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    with pytest.raises(WorldError, match="ingen punkt i ytan 12 m"):
+        load(path, 1)
 
 
 def test_the_same_seed_gives_the_same_world_and_another_seed_moves_it() -> None:

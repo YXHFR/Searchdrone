@@ -1,4 +1,4 @@
-"""SK01, SK03, SK04 and SK09: the search chain end to end on ArduCopter SITL (PR CI).
+"""SK01, SK03, SK04, SK09 and SK10: the search chain end to end on ArduCopter SITL (PR CI).
 
 The rig is ``chain_rig``: synthetic stills of the scenario's world, the detector and
 image-model oracles, the product's perception, keep-out cylinders, ``sd-search``,
@@ -13,6 +13,9 @@ break no invariant (the flight invariants and E1, E2, E8):
   shows the top in conflict when the code scored it.
 * SK09: the operator rejects the person in red without a backpack in sector A; the right
   person in sector B is confirmed after that.
+* SK10: a grey backpack lies 4 m from the person. The person is confirmed and no card
+  whose picture shows the backpack is (the operator judges a card by what its picture
+  was drawn from, not by the nearest thing).
 """
 
 from __future__ import annotations
@@ -101,3 +104,15 @@ async def test_sk09_chain_wrong_person_first(
     assert wrong and all(d["decision"] == "reject" for d in wrong), m.decisions
     confirm = next(d for d in m.decisions if d["decision"] == "confirm")
     assert wrong[0]["t_s"] <= confirm["t_s"], m.decisions
+
+
+@pytest.mark.budget_s(720)
+@pytest.mark.parametrize("seed", SEEDS)
+async def test_sk10_chain_decoy_near_the_person(
+    sim: Sim, migrated_db: Any, tmp_path: Path, seed: int
+) -> None:
+    m = await _run(sim, migrated_db, tmp_path, "SK10", seed)
+    assert m.confirmed_thing == "target", m.decisions
+    assert m.false_confirms == 0, m.decisions
+    bag = [d for d in m.decisions if d["truth"] == "backpack-0-0"]
+    assert all(d["decision"] == "reject" for d in bag), m.decisions

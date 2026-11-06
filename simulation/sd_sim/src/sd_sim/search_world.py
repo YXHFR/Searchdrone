@@ -16,7 +16,8 @@ own and never leaves it:
   random in ``area`` (an area name) or one ``at_enu``. ``lure`` is the chance that the
   detector takes one for a person in a still it is in. A decoy drawn in an area lies at
   least ``DECOY_CLEAR_M`` from every person, so the truth at a card (the nearest thing)
-  is the thing the card was made from.
+  is the thing the card was made from; one ``at_enu`` lies where it is put, nearer a
+  person if the scenario wants that (SK10).
 * ``limit_s``: the time the nightly requirement allows to the confirmed find.
 * ``trail``: a path through the area (``[[east, north], ...]``), the map's terrain; a
   person with ``near_trail_m: [lo, hi]`` lies that far from a random point of it.
@@ -43,6 +44,8 @@ from sd_schemas.geo import plane_offset
 from sd_sim import paths
 
 __all__ = [
+    "CARD_ERR_MAX_M",
+    "DECOY_CLEAR_M",
     "SCENARIOS",
     "Thing",
     "World",
@@ -58,10 +61,16 @@ MAX_SEEDS = 200
 Pose = Literal["lying", "sitting", "standing"]
 POSES: tuple[Pose, ...] = ("lying", "sitting", "standing")
 DECOY_KINDS = ("rock", "backpack", "log", "tarp")
-# A card's position errs by a few metres (the receiver and the attitude). A rock closer
-# to a person than twice that can be the nearest thing to a card made from the person,
-# and the scripted operator would reject the person as the rock.
-DECOY_CLEAR_M = 12.0
+# How far a card lies from the thing it was made from, at most: the oracle detector's
+# position errs by its receiver (``POS_SIGMA_M``, 1.2 m per axis) and its attitude
+# (``ATT_SIGMA_DEG``, 0.7 deg, about 0.6 m at the scenarios' 50 m), about 1.4 m per axis,
+# and 6 m is more than four times that (test_oracle_detector pins it).
+CARD_ERR_MAX_M = 6.0
+# A thing this far from every person is never the nearest thing to a person's card: a
+# card lies at most CARD_ERR_MAX_M from its person, so at least as far from the thing. A
+# decoy drawn in an area keeps this clearance; one placed ``at_enu`` may lie nearer, and
+# the rig then knows a card's thing from its picture's source (chain_rig).
+DECOY_CLEAR_M = 2.0 * CARD_ERR_MAX_M
 _TOP = {"scenario", "title", "home", "pilot", "pins", "areas", "charters", "search"}
 _SEARCH = {"limit_s", "survey", "profile", "last_seen_enu", "people", "decoys", "trail",
            "sector_order"}  # fmt: skip
