@@ -697,9 +697,9 @@ def test_release_workflow_writes_only_from_a_job_that_runs_no_repo_code() -> Non
 # Playwright's system packages through tools/ci/playwright-install.sh, which hands them
 # to the same script. A step that calls apt or `--with-deps` itself fails this test.
 DIRECT_APT_RE = re.compile(
-    r"\b(apt|apt-get|aptitude|apt-fast|nala)\s+(\S+\s+)*?"
+    r"\b(apt|apt-get|aptitude|apt-fast|nala)\s+([^\s;&|#]+\s+)*?"
     r"(update|install|upgrade|dist-upgrade|full-upgrade)\b"
-    r"|\bdpkg\s+(\S+\s+)*?(-i|--install)\b|--with-deps|\binstall-deps\b"
+    r"|\bdpkg\s+([^\s;&|#]+\s+)*?(-i|--install)\b|--with-deps|\binstall-deps\b"
 )
 
 
@@ -738,6 +738,8 @@ def test_the_direct_apt_rule_sees_a_gap() -> None:
         "bash tools/ci/playwright-install.sh chromium",
         "bash tools/ci/apt-install.sh --archive-mirror",
         "dpkg --print-architecture",
+        "echo apt is slow; just update",
+        "dpkg -l x && pip install -i https://example.org/simple y",
     ):
         assert not DIRECT_APT_RE.search(ok), ok
 
@@ -831,9 +833,10 @@ def _apt(ran: list[str], kind: str) -> list[str]:
         (("x",), {"FAKE_INSTALL_RC": "100"}, 100, (1, 1, 1), True),
         (("--fresh", "x"), {}, 0, (0, 1, 1), True),
         (("--update-only",), {}, 0, (1, 0, 0), True),
-        (("--archive-mirror",), {}, 0, (1, 0, 0), False),
+        (("--archive-mirror",), {}, 0, (0, 0, 0), False),
         ((), {}, 2, (0, 0, 0), True),
         (("--update-only", "x"), {}, 2, (0, 0, 0), True),
+        (("--fresh", "--update-only"), {}, 2, (0, 0, 0), True),
     ],
 )
 def test_the_apt_script_runs(

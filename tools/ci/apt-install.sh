@@ -7,8 +7,8 @@
 #   bash tools/ci/apt-install.sh --update-only     update only (same mirror fallback)
 #   bash tools/ci/apt-install.sh --fresh PACKAGE.. the lists were just updated: the first
 #                                                  try skips its update
-#   bash tools/ci/apt-install.sh --archive-mirror  cut azure out of the mirror list and
-#                                                  update, for a script that runs apt itself
+#   bash tools/ci/apt-install.sh --archive-mirror  only cut azure out of the mirror list,
+#                                                  for a script that runs apt itself
 #
 # The first try uses the runner's default mirror with the download capped at 150 s. The
 # two tries after it first cut azure out of the runner's mirror list, so they go to
@@ -45,6 +45,14 @@ if [ "$mode" = install ] && [ $# -eq 0 ]; then
   echo "$usage" >&2
   exit 2
 fi
+for package in "$@"; do
+  case "$package" in
+    -*)
+      echo "$usage" >&2
+      exit 2
+      ;;
+  esac
+done
 
 apt_get() {
   sudo DEBIAN_FRONTEND=noninteractive "$@"
@@ -66,16 +74,16 @@ use_archive_mirror() {
   done
 }
 
-sudo rm -f "$man_db/auto-update"
-first=1
 if [ "$mode" = archive-mirror ]; then
-  # A script that installs with apt itself gets archive.ubuntu.com from the start.
-  first=2
+  # A script that installs with apt itself gets archive.ubuntu.com from the start; it
+  # updates the lists on its own.
+  echo "apt: dropping azure.archive.ubuntu.com, using archive.ubuntu.com"
+  use_archive_mirror
+  exit 0
 fi
+
+sudo rm -f "$man_db/auto-update"
 for try in 1 2 3; do
-  if [ "$try" -lt "$first" ]; then
-    continue
-  fi
   update=true
   if [ "$try" = 1 ]; then
     limit=150

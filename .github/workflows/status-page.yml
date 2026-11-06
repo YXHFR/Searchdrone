@@ -61,7 +61,7 @@ jobs:
             docker build -f simulation/docker/sitl.Dockerfile -t "$image" .
           fi
       - name: Browsers for Playwright and ffmpeg
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: |
           bash tools/ci/playwright-install.sh chromium
           bash tools/ci/apt-install.sh ffmpeg
