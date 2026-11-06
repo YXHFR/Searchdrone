@@ -48,6 +48,7 @@ from test_orders import (  # pyright: ignore[reportMissingImports]
 from sd_ground.api.commander import to_commander
 from sd_ground.services import inspections
 from sd_schemas.base import new_id
+from sd_schemas.executor import ExecutorState
 from sd_schemas.inspect import AWAIT_DECISION_S
 
 if TYPE_CHECKING:
@@ -206,6 +207,15 @@ async def test_the_search_flown_on_after_a_look_is_the_ais_order_to_its_end(r: R
     await r.until(active, 5, "the search flown on as the active order")
     ac = (await d.situation())["active_command"]
     assert ac["status"] == "superseded" and ac["params"]["sector_id"] == "A"
+
+    # Its progress moves sector A, though the snapshot names the resume, not the search.
+    r.onboard.set_state(ExecutorState.SURVEY, progress_pct=40.0)
+
+    async def at_40() -> bool:
+        rows = {s["sector_id"]: s for s in (await d.situation())["sectors"]}
+        return rows["A"]["progress"] == pytest.approx(0.4)
+
+    await r.until(at_40, 5, "sector A at 40 % by the search flown on")
 
     # Coverage: the drone over sector A now counts for it (its row is superseded).
     assert r.fc is not None
