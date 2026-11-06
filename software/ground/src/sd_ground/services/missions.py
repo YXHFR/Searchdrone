@@ -615,9 +615,11 @@ class MissionFlow:
         ``ONB_CONTROL_HELD`` for being early.
 
         Returns at once when no Resume's release is on its way or it was waited for
-        already; when a newer STOP, FLY HOME or system action came (its latch decides); and
-        when the executor did not take the release (refused, no answer, SD-link down): the
-        gate and the executor then refuse as before. STOP and FLY HOME never come here."""
+        already (only the first order after a Resume waits); when any newer action came:
+        STOP, FLY HOME or a system action (its latch decides), a take-over or hand-back
+        (the pilot's hands decide), or a newer number from onboard; and when the executor
+        did not take the release (refused, no answer, SD-link down): the gate and the
+        executor then refuse as before. STOP and FLY HOME never come here."""
         actions = self.actions
         if actions is None:
             return
@@ -628,7 +630,7 @@ class MissionFlow:
             if release is None or self._release_waited.get(vehicle_id) == release.action_seq:
                 return
             seq = release.action_seq
-            if actions.latches.override_seq(vehicle_id) != seq or release.result not in (
+            if actions.latches.latest_seq(vehicle_id) != seq or release.result not in (
                 None,
                 "acked",
             ):
@@ -636,11 +638,11 @@ class MissionFlow:
             watch = self._watch.get(vehicle_id)
             snap = None if watch is None else watch.handled
             if (
-                release.acked_mono_ms is not None
+                release.answered_mono_ms is not None
                 and watch is not None
                 and snap is not None
                 # handled after the ack was (the ack's own snapshot came before it)
-                and watch.handled_mono_ms > release.acked_mono_ms
+                and watch.handled_mono_ms > release.answered_mono_ms
                 and snap.executor_state is not ExecutorState.HELD
                 and not (snap.manual_control or snap.control_suspended or snap.stop_latch)
                 and not watch.resume_pending
@@ -749,6 +751,12 @@ class MissionFlow:
                 await inspections_service.on_event(self, body.type, dict(body.data))
             if body.type == "executor.keepout_hold":
                 self._keepout_hold_alert(vehicle_id, mission, body.data, inbound.envelope.sent_utc)
+            if body.type == "executor.survey_blocked" and mission is not None:
+                from sd_ground.services import candidates as candidates_service
+
+                await candidates_service.on_survey_blocked(
+                    self, str(mission.id), vehicle_id, dict(body.data)
+                )
             if body.type in _PANEL_EVENTS:  # the pilot's log line, after the link is back
                 self.publish(
                     "vehicle",

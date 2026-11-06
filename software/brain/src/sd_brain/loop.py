@@ -181,6 +181,7 @@ SKILL_WAKE = frozenset(
         "rejected_by_gate",
         "rejected_by_operator",
         "approval_expired",
+        "closed",  # a look's end (inspect_detection): what the drone does next
     }
 )
 
@@ -399,7 +400,11 @@ class CommanderLoop:
                 self._start_stop_check(evt)
         elif kind == "event.skill":
             cid = str(body.get("command_id"))
-            if body.get("status") in SKILL_WAKE:
+            if body.get("status") in SKILL_WAKE and not (
+                body.get("skill") == "inspect_detection" and body.get("status") == "done"
+            ):
+                # A look's "done" is not its end: the drone may still wait for the
+                # operator, and its "closed" event (what comes next) is on its way.
                 self._unended.pop(cid, None)
             if body.get("status") == "rejected_by_gate" and cid in self._sync_rejects:
                 return  # already handled by the retry turn

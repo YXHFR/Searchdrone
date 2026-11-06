@@ -761,6 +761,18 @@
             "title": "Best Detector Score",
             "type": "number"
           },
+          "blocks_survey_m": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocks Survey M"
+          },
           "candidate_id": {
             "format": "uuid",
             "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",

@@ -289,33 +289,20 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - *checkout
       - *setup
       - name: GStreamer and ffmpeg for the video processes and checks
-        # A stalled apt mirror used to eat the whole job (25 min, no output). Each try is
-        # capped at 4 min and apt gives up on a dead connection after 30 s, so a hang
-        # retries on a fresh connection instead. The man-db index is not rebuilt.
-        timeout-minutes: 13
-        env:
-          DEBIAN_FRONTEND: noninteractive
+        # tools/ci/apt-install.sh falls back to archive.ubuntu.com when the runner's
+        # default mirror is slow (azure's at 20-60 kB/s used to eat this whole step).
+        timeout-minutes: 20
         run: |
-          sudo rm -f /var/lib/man-db/auto-update
-          apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
-          for try in 1 2 3; do
-            if sudo timeout 240 apt-get "${apt_opts[@]}" update -q && \
-               sudo timeout 240 apt-get "${apt_opts[@]}" install -y -q --no-install-recommends \
-                 gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
-                 gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
-                 gstreamer1.0-rtsp python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
-                 ffmpeg iproute2; then
-              exit 0
-            fi
-            echo "apt try $try failed or timed out, retrying"
-            sleep 15
-          done
-          exit 1
+          bash tools/ci/apt-install.sh \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
+            gstreamer1.0-rtsp python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
+            ffmpeg iproute2
       - *db
       - name: Database schema and MediaMTX
         run: |
@@ -651,8 +638,7 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 30
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y --no-install-recommends gdal-bin
+          bash tools/ci/apt-install.sh gdal-bin
           just trees-fetch site=hellasgarden
       - name: The terrain world built twice from scratch gives the same files
         id: terrain
@@ -778,7 +764,7 @@ jobs:
       - *image
       - *versions
       - name: Browsers for Playwright
-        run: pnpm --filter @searchdrone/panel exec playwright install --with-deps chromium
+        run: bash tools/ci/playwright-install.sh chromium
       - name: Panel against SITL
         timeout-minutes: 30
         env:

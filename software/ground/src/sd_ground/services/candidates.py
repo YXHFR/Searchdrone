@@ -25,6 +25,7 @@ request, and a low priority only puts a candidate further down.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Final
@@ -58,6 +59,7 @@ from sd_schemas.search import (
     SearchTrack,
     fusion_radius_m,
     priority_class,
+    queue_order,
 )
 
 __all__ = [
@@ -74,6 +76,7 @@ __all__ = [
     "feed",
     "gpx",
     "looks_done",
+    "on_survey_blocked",
     "open_view",
     "repo",
     "tracks",
@@ -170,6 +173,8 @@ async def write(
     flow: MissionFlow, mission_id: str, batch: CandidateBatch
 ) -> list[CandidateWritten]:
     mission = await flow.open_mission_of(mission_id)
+    survivors = {str(r.merged_into) for r in batch.revisions if r.merged_into is not None}
+    blocks_before = await repo(flow).survey_blocks(mission_id) if survivors else {}
     try:
         written = await repo(flow).write(mission_id, batch.revisions, flow.now())
     except CandidateWriteError as exc:
@@ -191,12 +196,95 @@ async def write(
                 vehicle_id=mission.vehicle_id,
                 mission_id=mission_id,
             )
+    # A merged candidate that blocked the search hands that to the one it joined
+    # (``CandidateRepo.survey_blocks``): its card goes out again even when this batch left
+    # it alone, so the queue puts it first now; only when the merge changed its blocking,
+    # so a merge that adds nothing wakes nobody.
+    survivors -= touched
+    for card in await card_list(flow, mission_id, only=survivors) if survivors else []:
+        before = blocks_before.get(str(card.candidate_id))
+        if card.blocks_survey_m is not None and card.blocks_survey_m != before:
+            flow.publish(
+                "candidates",
+                "candidate.updated",
+                card.model_dump(mode="json"),
+                vehicle_id=mission.vehicle_id,
+                mission_id=mission_id,
+            )
     return [
         CandidateWritten.model_validate(
             {"candidate_id": w.candidate_id, "rev": w.rev, "seq": w.seq, "state": w.state}
         )
         for w in written
     ]
+
+
+async def on_survey_blocked(
+    flow: MissionFlow, mission_id: str, vehicle_id: str, data: Mapping[str, Any]
+) -> None:
+    """``executor.survey_blocked``: a search had to go around the cylinders of persons
+    nobody has decided yet. Each one's candidate is marked (``candidate.blocks_survey``)
+    and its card goes out again: first in the queue, high, with the metres left out, so
+    the operator and the AI see that a possible person keeps part of the area unsearched.
+    Nothing flies because of it.
+
+    A ``skipped_m`` that is not a finite number of metres >= 0 (or is a bool) is left out
+    (logged). A
+    candidate already marked with as many metres or more gets no new mark and its card
+    does not go out again: the same reroute planned again (each resume, each tick of a
+    pass) must not wake the AI for nothing."""
+    r = repo(flow)
+    stored = await r.survey_blocks(mission_id)
+    touched: set[str] = set()
+    for b in data.get("blocked") or []:
+        try:
+            source, source_id, skipped = (
+                str(b["source"]),
+                str(b["source_id"]),
+                float(b["skipped_m"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            log.warning("candidate.survey_blocked_unreadable", mission_id=mission_id)
+            continue
+        # float(True) is 1.0: a bool is no length either.
+        if isinstance(b["skipped_m"], bool) or not math.isfinite(skipped) or skipped < 0:
+            log.warning(
+                "candidate.survey_blocked_invalid",
+                mission_id=mission_id,
+                source=source,
+                source_id=source_id,
+                skipped_m=repr(skipped),
+            )
+            continue
+        for cid in await r.blocked_candidates(mission_id, source, source_id):
+            if cid in stored and stored[cid] >= skipped:
+                continue  # nothing new: no row, no card
+            stored[cid] = skipped
+            await flow.repo.add_event(
+                "candidate.blocks_survey",
+                now=flow.now(),
+                mission_id=mission_id,
+                vehicle_id=vehicle_id,
+                payload={
+                    "candidate_id": cid,
+                    "skipped_m": skipped,
+                    "keepout_id": b.get("keepout_id"),
+                    "command_id": data.get("command_id"),
+                },
+            )
+            touched.add(cid)
+    if not touched:
+        return
+    for card in await card_list(flow, mission_id, only=touched):
+        if card.blocks_survey_m is None:
+            continue  # decided meanwhile: it blocks nothing
+        flow.publish(
+            "candidates",
+            "candidate.updated",
+            card.model_dump(mode="json"),
+            vehicle_id=vehicle_id,
+            mission_id=mission_id,
+        )
 
 
 def _near(c: dict[str, Any], decided: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -225,6 +313,7 @@ async def card_list(
     approved, _ = await flow.repo.search_profile_rows(mission_id)
     profile = None if approved is None else int(approved["profile_version"])
     decided = [c for c in latest if c["state"] in _DECIDED]
+    blocks = await r.survey_blocks(mission_id)
     out: list[CandidateCard] = []
     for c in shown:
         a = next(
@@ -236,6 +325,10 @@ async def card_list(
             None,
         )
         near = None if c["state"] in _DECIDED else _near(c, decided)
+        # Only an open candidate blocks the search: a decided one's cylinder is gone or a
+        # find's, and a merged one's blocks as the candidate it joined (``survey_blocks``
+        # moves it there).
+        blocked = blocks.get(c["candidate_id"]) if c["state"] in _OPEN else None
         out.append(
             CandidateCard.model_validate(
                 {
@@ -259,7 +352,9 @@ async def card_list(
                             "last_seen_utc",
                         )
                     },
-                    "priority_class": priority_class(c["priority"]),
+                    "priority_class": "high"
+                    if blocked is not None
+                    else priority_class(c["priority"]),
                     "thumb_detection_id": thumbs.get(c["candidate_id"]),
                     "engine": None if a is None else a["engine"],
                     "person": None if a is None else a["person"],
@@ -269,6 +364,7 @@ async def card_list(
                     "current_profile_version": profile,
                     "near_seq": None if near is None else near["seq"],
                     "near_state": None if near is None else near["state"],
+                    "blocks_survey_m": blocked,
                 }
             )
         )
@@ -284,7 +380,8 @@ async def cards(
     before_seq: int | None,
     limit: int,
 ) -> dict[str, Any]:
-    """The queue: by priority (highest first, then display number), merged candidates only
+    """The queue: the candidates that block the search first, then by priority (highest
+    first, then display number; ``sd_schemas.search.queue_order``), merged candidates only
     when asked for. ``before_seq`` is the paging cursor: the ``seq`` of the last card of
     the previous page, and the next page holds the cards after it in the same order (so a
     later page never skips a card with a higher seq and a lower priority). The cursor is
@@ -294,10 +391,8 @@ async def cards(
     every = await card_list(flow, mission_id)
     counts = queue_counts(every)
 
-    def order(c: CandidateCard) -> tuple[float, int]:
-        return (-c.priority, c.seq)
-
-    after: tuple[float, int] | None = None
+    order = queue_order
+    after: tuple[bool, float, int] | None = None
     if before_seq is not None:
         cursor = next((c for c in every if c.seq == before_seq), None)
         if cursor is None:

@@ -148,7 +148,10 @@ def situation_text(s: Situation, now: dt.datetime) -> str:
     ac = s.active_command
     if ac is not None:
         target = ac.params.get("sector_id") or ""
-        lines.append(f"Aktiv: {ac.skill} {target}, status {ac.status}".replace("  ", " "))
+        # A superseded active order is a search the drone flies on after a look (its own
+        # row ended when the look began); its end comes as this order's event.
+        state = "flygs vidare efter en titt" if ac.status == "superseded" else f"status {ac.status}"
+        lines.append(f"Aktiv: {ac.skill} {target}, {state}".replace("  ", " "))
     else:
         lines.append("Aktiv: inget")
     if s.sectors:

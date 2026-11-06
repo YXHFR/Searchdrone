@@ -466,9 +466,41 @@ async def test_resume_keeps_its_release_until_the_executor_answers() -> None:
     assert [type(m) for m in sink.sent] == [OperatorRelease]
     got = actions.release(VID)
     assert got is not None and got.action_seq == reply.action_seq and got.result == "acked"
-    assert got.acked_mono_ms is not None and sent_ms <= got.acked_mono_ms <= sent_ms + 10
+    assert got.answered_mono_ms is not None and sent_ms <= got.answered_mono_ms <= sent_ms + 10
     outcome = actions.outcome(VID, str(reply.action_id))
     assert outcome is not None and outcome.paths["sdlink"] == "sent"
+
+
+async def test_a_resume_without_sd_link_marks_sdlink_unavailable_and_ends_its_release() -> None:
+    """SD-link down at the click: the release cannot go out, which the outcome says as
+    for every other notice (``unavailable``, not ``failed``), and an order's wait for it
+    ends at once (``down``)."""
+    clock = FakeClock()
+    sink = RecordingSink(is_up=False)
+    actions = _actions(clock, mav=StubMav(), notices=sink)
+    reply = actions.resume(VID, client_action_id=str(new_id()), by=PILOT)
+    assert reply.paths["sdlink"] == "unavailable"
+    await _drain_all(actions, StubGround(clock))
+    outcome = actions.outcome(VID, str(reply.action_id))
+    assert outcome is not None and outcome.paths["sdlink"] == "unavailable"
+    got = actions.release(VID)
+    assert got is not None and got.result == "down" and got.answered_mono_ms is not None
+
+
+async def test_a_release_whose_sd_link_goes_down_after_the_click_marks_sdlink_failed() -> None:
+    """SD-link up at the click (``queued``) but down when the release goes out: that is a
+    send that failed, not a link that was never there."""
+    clock = FakeClock()
+    sink = RecordingSink()
+    actions = _actions(clock, mav=StubMav(), notices=sink)
+    reply = actions.resume(VID, client_action_id=str(new_id()), by=PILOT)
+    assert reply.paths["sdlink"] == "queued"
+    sink.is_up = False
+    await _drain_all(actions, StubGround(clock))
+    outcome = actions.outcome(VID, str(reply.action_id))
+    assert outcome is not None and outcome.paths["sdlink"] == "failed"
+    got = actions.release(VID)
+    assert got is not None and got.result == "down"
 
 
 async def test_an_unanswered_release_times_out_and_never_overwrites_a_newer_one() -> None:

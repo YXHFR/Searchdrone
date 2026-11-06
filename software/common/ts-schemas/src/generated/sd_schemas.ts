@@ -603,6 +603,7 @@ export interface CandidateAssessment {
 export interface CandidateCard {
   assessed_profile_version?: number | null;
   best_detector_score: number;
+  blocks_survey_m?: number | null;
   candidate_id: string;
   current_profile_version?: number | null;
   engine?: ("code" | "fast" | "strong" | "oracle") | null;

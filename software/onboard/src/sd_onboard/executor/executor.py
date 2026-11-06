@@ -171,15 +171,21 @@ from sd_schemas.gate import ClearanceState, GateContext, GateDecision, GateReque
 from sd_schemas.inspect import (
     AWAIT_DECISION_S,
     EVENT_ABORTED,
+    EVENT_CLOSED,
     EVENT_DONE,
     EVENT_LASER_LOST,
+    EVENT_RESUME_ENDED,
     InspectAborted,
     InspectAbortReason,
+    InspectCloseCause,
+    InspectClosed,
     InspectDone,
     InspectLaserLost,
+    InspectNext,
     InspectOutcomeKind,
     InspectPhase,
     InspectProgress,
+    InspectResumeEnded,
 )
 from sd_schemas.keepout import INSPECT_SPEED_MS, KEEPOUT_RADIUS_MAX_M
 from sd_schemas.link import (
@@ -307,6 +313,16 @@ _RETURN_SPEED_MS: Final = 10.0  # a look's return to a point (not a search), at 
 _FLOOR_TOL_M: Final = 0.5  # below the map's floor by more than this: climb (laser lost)
 # A look's end after which the AI's silence held back meanwhile applies as usual.
 _INSPECT_AI_AFTER: Final = frozenset({"returned", "return_refused", "confirmed"})
+# A look's end (``_inspect_finish``'s cause) as ``inspect.closed`` reports it, with what the
+# drone does next; a look that left its state ("left:<state>") is told by that state.
+_INSPECT_CLOSE: Final[dict[str, tuple[InspectCloseCause, InspectNext]]] = {
+    "returned": ("returned", "resume"),
+    "return_refused": ("return_refused", "hold"),
+    "confirmed": ("confirmed", "hold"),
+    "superseded": ("superseded", "new_order"),
+    "failed": ("failed", "hold"),
+    "link_loss": ("link_loss", "link_loss"),
+}
 HOME_PARAMS: Final = ReturnHomeParams(reason="limit")
 _ISSUER_KIND: Final = {
     "operator": "operator",
@@ -577,6 +593,10 @@ class Executor:
         self._find_watch: FindWatch | None = None  # the laser over a confirmed find
         # A look's return to a point (not a search): (its order, the resume point before).
         self._restore_resume: tuple[UUID, ResumePoint | None] | None = None
+        # The executor's own ``resume`` after a look, until it ends: (that order, the look,
+        # the search it flies on or None), for ``inspect.resume_ended``. Not saved: after a
+        # restart the order is gone and nothing is reported.
+        self._inspect_resumed: tuple[UUID, UUID, UUID | None] | None = None
         self._gcs_continue = False  # "Continuing Pilot Control" seen since the last tick
         self._gcs_home_busy = False  # L-GCS flies home from an operator hold right now
         self._gcs_home_sending = False  # ... and that one mode change is under way
@@ -841,6 +861,9 @@ class Executor:
         self.active = None
         if active.task is not None and not active.task.done():
             active.task.cancel()
+        if stage is not None:
+            status = "done" if stage == "done" else "failed" if stage == "failed" else "superseded"
+            self._inspect_resume_ended(active.command_id, status, codes)
         if stage is not None and active.ack_done:
             self._ack(active.command_id, stage, codes)
 
@@ -954,6 +977,7 @@ class Executor:
 
     def _skill_done(self, active: _Active) -> None:
         self.active = None
+        self._inspect_resume_ended(active.command_id, "done")
         if self.state == S.RTL:
             return  # return home is done at LANDED
         braked = active.skill == INTERNAL_KEEPOUT_EXIT and self._exit_braking is not None
@@ -992,6 +1016,7 @@ class Executor:
 
     def _skill_failed(self, active: _Active, exc: SkillFailedError) -> None:
         self.active = None
+        self._inspect_resume_ended(active.command_id, "failed", (exc.code,))
         climbing = self._inspect_failed(active, exc)
         rp = active.handler.resume_point(self.vehicle_state())
         if rp is not None:
@@ -1977,6 +2002,7 @@ class Executor:
         self._inspect_tick(now)
         self._inspect_watch()
         self._inspect_abort_later()
+        self._inspect_resume_watch()
         self._find_watch_tick(now)
         if self._gcs_continue and self.state == S.HELD and t.fc_connected:
             self._gcs_home_from_hold()
@@ -3013,9 +3039,63 @@ class Executor:
             "inspect_ended",
             {"command_id": str(s.command_id), "candidate_id": str(s.candidate_id), "cause": cause},
         )
+        self._inspect_closed(s, cause)
         held, self._inspect_ai = self._inspect_ai, None
         if held is not None and cause in _INSPECT_AI_AFTER:
             self._apply_limit(held)  # the AI went quiet during the look: as usual now
+
+    def _inspect_closed(self, s: InspectSession, cause: str) -> None:
+        """``inspect.closed``: how the look ended and what the drone does next. Only a
+        report: it changes nothing onboard."""
+        left: InspectNext = (
+            "home"
+            if self.state in (S.RTL, S.LANDED)
+            else "held"
+            if self.state in (S.HELD, S.FAILSAFE)
+            else "hold"
+        )
+        kind, nxt = _INSPECT_CLOSE.get(cause, ("left", left))
+        resumed = self._inspect_resumed if kind == "returned" else None
+        self.emit_inspect(
+            EVENT_CLOSED,
+            InspectClosed(
+                command_id=s.command_id,
+                candidate_id=s.candidate_id,
+                cause=kind,
+                next=nxt,
+                breakpoint=s.breakpoint.kind if kind == "returned" else None,
+                resume_command_id=None if resumed is None else resumed[0],
+                resumed_command_id=None if resumed is None else resumed[2],
+            ).model_dump(mode="json"),
+        )
+
+    def _inspect_resume_ended(
+        self, command_id: UUID, status: Literal["done", "failed", "superseded"], codes: Any = ()
+    ) -> None:
+        """``inspect.resume_ended`` when the executor's own ``resume`` after a look ends.
+        Only a report: it changes nothing onboard."""
+        link = self._inspect_resumed
+        if link is None or link[0] != command_id:
+            return
+        self._inspect_resumed = None
+        self.emit_inspect(
+            EVENT_RESUME_ENDED,
+            InspectResumeEnded(
+                command_id=link[1],
+                resumed_command_id=link[2],
+                status=status,
+                reason_codes=[str(c) for c in codes][:8],
+            ).model_dump(mode="json"),
+        )
+
+    def _inspect_resume_watch(self) -> None:
+        """The post-look ``resume`` no longer the running order without a done or failed of
+        its own (a takeover, a landing, the way out of a cylinder ...): it was replaced. A
+        replan under the same order keeps it running and reports nothing."""
+        link = self._inspect_resumed
+        a = self.active
+        if link is not None and (a is None or a.command_id != link[0]):
+            self._inspect_resume_ended(link[0], "superseded")
 
     def _inspect_aborted(self, s: InspectSession, reason: InspectAbortReason) -> None:
         self.emit_inspect(
@@ -3369,6 +3449,8 @@ class Executor:
         self._enter(target, cause="inspect_return")
         if s.breakpoint.kind == "goto":
             self._restore_resume = (cmd.command_id, s.saved_resume)
+        flown_on = s.breakpoint.command_id if s.breakpoint.kind == "survey" else None
+        self._inspect_resumed = (cmd.command_id, s.command_id, flown_on)
         self._start_active(
             _Active(
                 cmd.command_id, "resume", handler, plan, SendOrigin.SKILL, ack_done=False, cmd=cmd

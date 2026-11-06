@@ -10,7 +10,7 @@ from uuid import UUID
 
 import numpy as np
 import pytest
-from onboard_helpers import ONBOARD_SKILLS, PLANE, Rig, at, charter, rig
+from onboard_helpers import ONBOARD_SKILLS, PLANE, Rig, at, charter, rig, square
 
 from sd_mav.modes import CopterMode
 from sd_onboard.executor.inspect import INTERNAL_INSPECT_CLIMB, abort_reason
@@ -282,6 +282,21 @@ async def test_without_a_map_it_looks_from_its_height_then_waits_and_flies_back(
         ended = [d["cause"] for d in events(r, "executor.inspect_ended")]
         assert ended == ["returned"]
         assert not events(r, "inspect.aborted")
+        # Back to a point, not a search: no search is flown on, and its end says so.
+        (closed,) = events(r, "inspect.closed")
+        assert closed == {
+            "command_id": str(cmd.command_id),
+            "candidate_id": cmd.params["candidate_id"],
+            "cause": "returned",
+            "next": "resume",
+            "breakpoint": "goto",
+            "resume_command_id": closed["resume_command_id"],
+            "resumed_command_id": None,
+        }
+        assert closed["resume_command_id"] not in (None, str(cmd.command_id))
+        (back,) = events(r, "inspect.resume_ended")
+        assert back["status"] == "done" and back["resumed_command_id"] is None
+        assert back["command_id"] == str(cmd.command_id)
 
 
 async def test_the_candidates_own_cylinder_is_suspended_until_the_return() -> None:
@@ -584,6 +599,10 @@ async def test_confirmed_hovers_over_the_find() -> None:
         assert math.dist(east_north(r), TARGET) < 3
         assert r.ex.snapshot().inspect is None
         assert [d["cause"] for d in events(r, "executor.inspect_ended")] == ["confirmed"]
+        assert [(d["cause"], d["next"]) for d in events(r, "inspect.closed")] == [
+            ("confirmed", "hold")
+        ]
+        assert not events(r, "inspect.resume_ended")
 
 
 async def test_a_decision_while_still_flying_ends_the_steps() -> None:
@@ -616,6 +635,9 @@ async def test_another_order_while_waiting_ends_the_look() -> None:
         assert "running" in r.up.stages(goto.command_id)
         assert [d["reason"] for d in events(r, "inspect.aborted")] == ["override"]
         assert r.ex.snapshot().inspect is None
+        assert [(d["cause"], d["next"]) for d in events(r, "inspect.closed")] == [
+            ("superseded", "new_order")
+        ]
 
 
 async def test_stills_while_waiting_keep_the_wait() -> None:
@@ -626,6 +648,85 @@ async def test_stills_while_waiting_keep_the_wait() -> None:
         stills = await r.send(r.order("capture_stills", {"count": 1}), 2)
         assert "done" in r.up.stages(stills.command_id)
         assert r.ex.hold_reason == "inspect_await" and r.ex.snapshot().inspect is not None
+
+
+async def _looking_from_a_search(r: Rig) -> tuple[Any, Any]:
+    """A search, then a look from it (the breakpoint is the search), waiting for the
+    decision: (the search's order, the look's order)."""
+    await r.install(over())
+    await r.takeoff(40)
+    r.ex.capture_round = Rounds()
+    box = square(50, east=0, north=100)
+    survey = await r.send(
+        r.order("survey_sector", {"polygon": box, "spacing_m": 30, "speed_ms": 8}), 3
+    )
+    assert r.ex.state == S.SURVEY, r.up.codes(survey.command_id)
+    cmd = await r.send(order(r), 0.5)
+    assert r.ex.state == S.INSPECT, r.up.acks[-2:]
+    assert "superseded" in r.up.stages(survey.command_id)
+    await awaiting(r)
+    return survey, cmd
+
+
+async def test_the_search_flown_on_after_a_look_is_reported_to_its_end() -> None:
+    """Only reports: the drone flies the search on by its own ``resume`` as before, and the
+    ground hears that the look is closed, which search goes on, and how that ended."""
+    async with rig() as r:
+        survey, cmd = await _looking_from_a_search(r)
+        r.ex.on_inspect_outcome(
+            InspectOutcome(command_id=cmd.command_id, outcome="rejected"), new_id()
+        )
+        await r.until(lambda: bool(events(r, "inspect.closed")), 60)
+        (closed,) = events(r, "inspect.closed")
+        assert closed["cause"] == "returned" and closed["next"] == "resume"
+        assert closed["breakpoint"] == "survey"
+        assert closed["resumed_command_id"] == str(survey.command_id)
+        a = r.ex.active
+        assert a is not None and closed["resume_command_id"] == str(a.command_id)
+        assert r.ex.state == S.SURVEY and not events(r, "inspect.resume_ended")
+        await r.until(lambda: r.ex.state == S.HOLD, 900)
+        (end,) = events(r, "inspect.resume_ended")
+        assert end == {
+            "command_id": str(cmd.command_id),
+            "resumed_command_id": str(survey.command_id),
+            "status": "done",
+            "reason_codes": [],
+        }
+        # The search's own order stays as it was: superseded by the look, never acked again.
+        assert r.up.stages(survey.command_id).count("superseded") == 1
+        assert "done" not in r.up.stages(survey.command_id)
+
+
+async def test_an_order_during_the_search_flown_on_reports_it_replaced() -> None:
+    async with rig() as r:
+        survey, cmd = await _looking_from_a_search(r)
+        r.ex.on_inspect_outcome(
+            InspectOutcome(command_id=cmd.command_id, outcome="unsure"), new_id()
+        )
+        await r.until(lambda: bool(events(r, "inspect.closed")), 60)
+        lat, lon = at(0, 50)
+        goto = await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40}), 0.5)
+        assert "running" in r.up.stages(goto.command_id)
+        (end,) = events(r, "inspect.resume_ended")
+        assert end["status"] == "superseded"
+        assert end["resumed_command_id"] == str(survey.command_id)
+        await r.run(2)
+        assert len(events(r, "inspect.resume_ended")) == 1  # once
+
+
+async def test_stop_during_the_search_flown_on_reports_it_replaced() -> None:
+    async with rig() as r:
+        survey, cmd = await _looking_from_a_search(r)
+        r.ex.on_inspect_outcome(
+            InspectOutcome(command_id=cmd.command_id, outcome="resume"), new_id()
+        )
+        await r.until(lambda: bool(events(r, "inspect.closed")), 60)
+        r.ex.on_override(r.notice("stop"))
+        await r.run(0.5)
+        assert r.ex.state == S.HELD
+        (end,) = events(r, "inspect.resume_ended")
+        assert end["status"] == "superseded"
+        assert end["resumed_command_id"] == str(survey.command_id)
 
 
 def _camera() -> Any:
@@ -644,6 +745,7 @@ async def test_stop_during_the_look_ends_it_without_the_wait() -> None:
         assert r.ex.state == S.HELD
         assert [d["reason"] for d in events(r, "inspect.aborted")] == ["stop"]
         assert r.ex.snapshot().inspect is None
+        assert [(d["cause"], d["next"]) for d in events(r, "inspect.closed")] == [("left", "held")]
 
 
 def _aborted(r: Rig) -> list[str]:

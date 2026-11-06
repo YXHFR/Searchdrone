@@ -27,6 +27,8 @@ from sd_schemas.search import (
     FieldVerdict,
     PriorityClass,
     SearchProfile,
+    blocks_text,
+    queue_order,
 )
 
 __all__ = [
@@ -109,14 +111,16 @@ def named_seqs(text: str) -> list[int]:
 
 
 def queue_counts(cards: Iterable[CandidateCard]) -> dict[str, int]:
-    """The queue's counts: to review (medium or high), low, confirmed and rejected;
+    """The queue's counts: to review (medium or high, or blocking the search), low,
+    confirmed and rejected;
     merged candidates are not counted."""
     counts = {"review": 0, "low": 0, "confirmed": 0, "rejected": 0}
     for c in cards:
         if c.state in (CandidateState.CONFIRMED, CandidateState.REJECTED):
             counts[c.state.value] += 1
         elif c.state is not CandidateState.MERGED:
-            counts["review" if c.priority >= PRIORITY_MEDIUM else "low"] += 1
+            review = c.priority >= PRIORITY_MEDIUM or c.blocks_survey_m is not None
+            counts["review" if review else "low"] += 1
     return counts
 
 
@@ -169,6 +173,8 @@ def _one(
         if fields:
             items.append(", ".join(fields))
     items.append(f"{card.n_seen}/{card.n_in_view} bilder")
+    if card.blocks_survey_m is not None:
+        items.append(blocks_text(card.blocks_survey_m))
     if card.engine is not None:
         items.append(_ENGINE[card.engine])
     out = f"K{card.seq} {_CLASS[card.priority_class]} ({'; '.join(items)})"
@@ -187,7 +193,7 @@ def candidates_line(
     if not cards:
         return None
     counts = queue_counts(cards)
-    shown = sorted((c for c in cards if c.state in _OPEN), key=lambda c: (-c.priority, c.seq))
+    shown = sorted((c for c in cards if c.state in _OPEN), key=queue_order)
     parts = [_one(c, profiles, drone) for c in shown[:LINE_CANDIDATES_MAX]]
     parts.append(f"att granska {counts['review']}, låg {counts['low']}")
     return "Kandidater: " + " | ".join(parts)

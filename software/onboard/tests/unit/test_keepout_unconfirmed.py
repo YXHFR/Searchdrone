@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from onboard_helpers import PLANE, Rig, charter, rig, square
@@ -26,11 +27,12 @@ from test_inspect import (
 )
 
 from sd_mav.mission import MISSION
+from sd_mav.modes import CopterMode
 from sd_onboard.executor import executor as executor_module
 from sd_onboard.executor.keepout_reflex import remaining
 from sd_onboard.skills import goto as goto_module
 from sd_onboard.skills.goto import GotoHandler
-from sd_onboard.skills.survey_sector import SurveyRun
+from sd_onboard.skills.survey_sector import BLOCKED_MIN_M, SurveyRun
 from sd_safety.constants import (
     GOTO_ALT_STEP_TOL_M,
     KEEPOUT_PAIR_MIN_M,
@@ -38,7 +40,7 @@ from sd_safety.constants import (
     KEEPOUT_PASS_MAX_S,
     KEEPOUT_SCORE_SURE,
 )
-from sd_schemas.base import new_id
+from sd_schemas.base import LatLon, LatLonAlt, new_id
 from sd_schemas.executor import ExecutorState as S
 from sd_schemas.link import KeepoutInstall
 
@@ -182,6 +184,7 @@ async def test_in_sim_a_search_flies_straight_through_an_unconfirmed_cylinder() 
         stays, slowest = await _fly_and_watch(r, centre, radius)
         kinds = r.up.kinds()
         assert "executor.keepout_reroute" not in kinds and "executor.keepout_hold" not in kinds
+        assert "executor.survey_blocked" not in kinds  # searched through: nothing left out
         assert len(stays) == 1, stays  # through once
         assert stays[0] <= KEEPOUT_PASS_MAX_S
         assert slowest > 3.0  # at search speed: no hover, no turn inside
@@ -199,6 +202,16 @@ async def test_live_without_the_permit_or_a_confirmed_find_is_gone_around(
         stays, _ = await _fly_and_watch(r, centre, radius)
         assert "executor.keepout_reroute" in r.up.kinds()
         assert stays == []
+        blocked = [d["blocked"] for t, _, d in r.up.events if t == "executor.survey_blocked"]
+        if source == "confirmed":
+            assert blocked == []  # a find: nobody has to look at it before the search goes on
+        else:
+            # A possible person nobody has looked at: the search left out the leg through
+            # its cylinder (at most its diameter, 20 m), and says whose cylinder it is.
+            assert blocked, r.up.kinds()
+            (b,) = blocked[-1]
+            assert b["source"] == source
+            assert BLOCKED_MIN_M <= b["skipped_m"] <= 20.0, b
 
 
 def test_a_first_leg_that_comes_down_gets_no_passage() -> None:
@@ -213,6 +226,128 @@ def test_a_first_leg_that_comes_down_gets_no_passage() -> None:
     assert SurveyRun(new_id(), [], 40.0, 7.0).passage(ctx(40.0)) is None  # type: ignore[arg-type]
     live = SimpleNamespace(vehicle=SimpleNamespace(alt_rel_home_m=40.0), charter=charter())
     assert run.passage(live) is None  # type: ignore[arg-type]
+
+
+# --- executor.survey_blocked: when it is sent, and when not (review of #215) -------------
+
+
+class _Io:
+    """Just enough of ``ExecutorIO`` for ``SurveyRun.fly`` to upload, switch to AUTO and
+    see the last point passed at once; it keeps the events and the order of the calls."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.events: list[tuple[str, dict[str, Any]]] = []
+        self.clock = SimpleNamespace(monotonic=lambda: 0.0)
+        self.vehicle = SimpleNamespace(mission_seq_current=10_000)
+
+    async def upload_mission(self, items: object) -> str:
+        self.calls.append("upload")
+        return "hash"
+
+    def emit_event(self, type: str, data: dict[str, Any]) -> None:
+        self.calls.append(type)
+        self.events.append((type, data))
+
+    async def set_mission_current(self, seq: int) -> None:
+        self.calls.append("current")
+
+    async def set_mode(self, mode: object) -> bool:
+        self.calls.append(f"mode:{mode}")
+        return True
+
+
+class _IoThatCannotSend(_Io):
+    """An ``ExecutorIO`` whose ``survey_blocked`` send fails (the link's queue is full,
+    a bug in the encoder)."""
+
+    def emit_event(self, type: str, data: dict[str, Any]) -> None:
+        if type == "survey_blocked":
+            raise RuntimeError("the send failed")
+        super().emit_event(type, data)
+
+
+async def _plan_and_fly(
+    skill: str | None,
+    centre: tuple[float, float],
+    radius: float,
+    source: str = "candidate",
+    io: _Io | None = None,
+) -> tuple[SurveyRun, _Io]:
+    """A search route from home along y=0 to (100, 0) and up to (100, 100), live (no
+    passage), with one cylinder; planned around it and flown."""
+    pts = [LatLon(lat=la, lon=lo) for la, lo in (PLANE.latlon(100, 0), PLANE.latlon(100, 100))]
+    run = SurveyRun(new_id(), pts, 40.0, 7.0, skill=skill)
+    lat, lon = PLANE.latlon(0, 0)
+    ctx = SimpleNamespace(
+        vehicle=SimpleNamespace(lat=lat, lon=lon, alt_rel_home_m=40.0),
+        charter=charter(),
+        plane=PLANE,
+        keepouts=(keepout(*centre, radius, source=source),),
+        keepout_inside_s={},
+    )
+    run.around_keepouts(ctx)  # type: ignore[arg-type]
+    assert run.detours()  # it does go around (a point of its own on the way)
+    io = io or _Io()
+    home = LatLonAlt(lat=lat, lon=lon, alt_amsl_m=0.0)
+    await run.fly(SimpleNamespace(expected_duration_s=1.0), io, home)  # type: ignore[arg-type]
+    return run, io
+
+
+def _blocked(io: _Io) -> list[dict[str, Any]]:
+    return [d for t, d in io.events if t == "survey_blocked"]
+
+
+async def test_a_way_around_through_the_middle_of_a_leg_is_sent_after_auto() -> None:
+    """The positive case the others are measured against: the leg crosses the cylinder,
+    the way around leaves out about its diameter, and the event goes out once the route
+    is up and AUTO is set (an observation after the flight action, never before it)."""
+    _, io = await _plan_and_fly("survey_sector", (50.0, 0.0), 10.0)
+    (event,) = _blocked(io)
+    (b,) = event["blocked"]
+    assert b["source"] == "candidate" and BLOCKED_MIN_M <= b["skipped_m"] <= 20.0
+    assert io.calls.index("survey_blocked") > io.calls.index(f"mode:{CopterMode.AUTO}")
+    assert io.calls.index("survey_blocked") > io.calls.index("upload")
+
+
+async def test_a_corner_clip_under_the_minimum_is_not_a_blocked_search() -> None:
+    """The cylinder only clips the corner at (100, 0): 4 m of the route inside it (2 m on
+    each leg). The route goes around, but nothing is left out worth a review first."""
+    run, io = await _plan_and_fly("survey_sector", (106.0, -6.0), 10.0)
+    assert run.blocked == [] and _blocked(io) == []
+
+
+@pytest.mark.parametrize("skill", [None, "goto", "orbit"])
+async def test_a_route_that_is_not_a_search_sends_no_blocked_search(skill: str | None) -> None:
+    run, io = await _plan_and_fly(skill, (50.0, 0.0), 10.0)
+    assert run.blocked == [] and _blocked(io) == []
+
+
+async def test_a_confirmed_find_does_not_block_the_search() -> None:
+    _, io = await _plan_and_fly("survey_sector", (50.0, 0.0), 10.0, source="confirmed")
+    assert _blocked(io) == []
+
+
+async def test_a_failure_working_out_the_blocking_never_stops_the_way_around(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(*_: object) -> list[object]:
+        raise ValueError("broken")
+
+    monkeypatch.setattr(SurveyRun, "_blocked", broken)
+    _, io = await _plan_and_fly("survey_sector", (50.0, 0.0), 10.0)
+    assert _blocked(io) == []
+    assert f"mode:{CopterMode.AUTO}" in io.calls
+
+
+async def test_a_failed_send_of_the_blocking_never_stops_the_way_around() -> None:
+    """The blocking is worked out, but sending it fails: the route still flies on in
+    AUTO to its end, and nothing goes out."""
+    io = _IoThatCannotSend()
+    run, _ = await _plan_and_fly("survey_sector", (50.0, 0.0), 10.0, io=io)
+    assert run.blocked  # there was something to send
+    assert _blocked(io) == []
+    assert io.calls.index(f"mode:{CopterMode.AUTO}") > io.calls.index("upload")
 
 
 # --- the time inside, and the way out (review of #202) -----------------------------------

@@ -93,6 +93,11 @@ export function CandidateCard({
               {t(`inspect.card.${look.phase}`)}
             </span>
           ) : null}
+          {card.blocks_survey_m != null ? (
+            <span className="cand-line warn" data-testid="card-blocks">
+              {t("candidates.blocksSurvey", { m: Math.round(card.blocks_survey_m) })}
+            </span>
+          ) : null}
           {flagged ? (
             <span className="cand-line warn" data-testid="card-flag">
               {t("candidates.flagNote")}

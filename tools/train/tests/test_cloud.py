@@ -11,6 +11,7 @@ import json
 import math
 import os
 import sys
+import time
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -61,12 +62,19 @@ class FakeModal:
     calls in turn: ``done`` writes the results as the export would; ``lost`` breaks
     before the container starts and ``lost_late`` after the training has saved;
     ``failed_early`` fails before the first save (out of memory); ``no_gpu`` never
-    gets a container."""
+    gets a container. A container that ran leaves a mark (``marks``) with 1800 s, ended
+    unless the line was lost; Modal says a call is still running if it is in ``alive``,
+    until it is cancelled (``cancelled``), and also after that if it is in ``stuck``."""
 
     def __init__(self, runs: list[str] | None = None) -> None:
         self.volume: dict[str, bytes] = {}
         self.sent: list[list[str]] = []
         self.removed: list[list[str]] = []
+        self.marks: dict[str, dict[str, Any]] = {}
+        self.alive: set[str] = set()
+        self.stuck: set[str] = set()
+        self.cancelled: list[str] = []
+        self.tokens: list[str] = []
         self.calls: list[tuple[list[str], list[str], float, int]] = []
         self.resumed: list[bytes | None] = []  # per call: the last.pt carried on from
         self.runs = runs or ["done"]
@@ -85,11 +93,37 @@ class FakeModal:
         for p in paths:
             self.volume.pop(p.as_posix(), None)
 
-    def run(self, train: Any, export: Any, budget_s: float, timeout_s: int) -> dict[str, Any]:
+    def call_state(self, token: str, call_id: str) -> dict[str, Any]:
+        assert call_id in (f"fc-{token}", "")
+        mark = self.marks.get(token)
+        seconds = (mark["seconds"] if mark else 0.0) + (0.0 if mark and mark["ended"] else 600.0)
+        running = token in self.alive or not call_id  # no id: Modal cannot say
+        return {"running": running, "seconds": seconds}
+
+    def cancel(self, call_id: str) -> None:
+        self.cancelled.append(call_id)
+        self.alive -= {call_id.removeprefix("fc-")} - self.stuck
+
+    def forget(self, token: str) -> None:
+        self.marks.pop(token, None)
+
+    def run(
+        self,
+        train: Any,
+        export: Any,
+        budget_s: float,
+        timeout_s: int,
+        token: str,
+        spawned: Any,
+    ) -> dict[str, Any]:
         self.calls.append((list(train), list(export), budget_s, timeout_s))
+        self.tokens.append(token)
+        spawned(f"fc-{token}")
         status = self.runs[len(self.calls) - 1]
         if status == "lost":
             raise ConnectionError("secret-looking text\nmore lines")
+        if status != "no_gpu":
+            self.marks[token] = {"seconds": 1800.0, "ended": status != "lost_late"}
         targs = dict(a.split("=", 1) for a in train)
         assert "fresh" not in targs  # fresh=1 is done on the volume, before the calls
         if "out" in targs and status != "no_gpu":  # no_gpu: no container ever ran
@@ -533,12 +567,31 @@ def test_without_the_containers_own_seconds_the_worst_case_stays(tmp_path: Path)
             return {"status": "stopped", "code": None, "seconds": 100.0}  # less than wall
 
     with pytest.raises(ConnectionError):  # the container's time is not known
-        cloud.run_until_done(FakeModal(["lost"]), [], [], 24, ledger, clock=lambda: 0.0)
+        cloud.run_until_done(FakeModal(["lost"]), [], [], 24, ledger)
     assert cloud.hours_used(ledger) * 3600 == pytest.approx(worst)
-    ticks = iter([5000.0, 9000.0])
+    ticks = iter([5000.0, 5000.0, 9000.0])  # opened, sent, back
     with pytest.raises(BenchError, match="max_hours"):
-        cloud.run_until_done(Slow(["stopped"]), [], [], 25, ledger, clock=lambda: next(ticks))
+        cloud.run_until_done(
+            Slow(["stopped"]), [], [], 25, ledger, clock=lambda: 0.0, wall=lambda: next(ticks)
+        )
     assert cloud.hours_used(ledger) * 3600 == pytest.approx(worst + 4000.0)  # the wall's
+
+
+def test_a_computer_that_slept_through_a_call_counts_the_sleep(tmp_path: Path) -> None:
+    """The monotonic clock stops while a laptop sleeps; Modal's GPU does not."""
+    ledger = tmp_path / "hours.json"
+
+    class Slept(FakeModal):
+        def run(self, *a: Any) -> dict[str, Any]:
+            a[-1]("fc-1")  # spawned
+            return {"status": "done", "code": 0, "seconds": 1000.0}  # the container's
+
+    walls = iter([0.0, 0.0, 7000.0])  # opened, sent, then returned after a 6000 s sleep
+    used = cloud.run_until_done(
+        Slept(), [], [], 24, ledger, clock=lambda: 0.0, wall=lambda: next(walls)
+    )
+    assert used * 3600 == pytest.approx(7000.0)
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(7000.0)
 
 
 def test_a_call_budget_is_never_more_than_what_is_left() -> None:
@@ -656,7 +709,6 @@ def test_after_fresh_a_broken_call_carries_on_the_new_run(
     bank: Path, capsys: pytest.CaptureFixture[str], first: str
 ) -> None:
     fake, _ledger, args, _run = _old_run(bank, [first])
-    args.append("max_hours=48")  # the broken call's worst case stays counted
     assert cloud.main([*args, "fresh=1"], backend=lambda gpu: fake) == 1
     assert "samma kommando utan fresh=1" in capsys.readouterr().err
     again = _again(fake, ["done"])
@@ -712,6 +764,230 @@ def test_a_fresh_whose_removal_broke_is_redone_by_the_next_command(
     assert again.resumed == [None] and not cloud.fresh_pending(ledger)
 
 
+@pytest.mark.parametrize("lost", ["lost", "lost_late"])
+def test_after_a_lost_call_the_next_command_puts_the_hours_right(bank: Path, lost: str) -> None:
+    args = [f"data={bank}", "model=yolox_s", "yes=1"]  # max_hours=24, the default
+    fake = FakeModal([lost])
+    assert cloud.main(args, backend=lambda gpu: fake) == 1
+    remote = cloud.places(bank, "yolox_s").remote_run.name
+    ledger = bank / cloud.LEDGER.format(run=remote)
+    assert cloud.hours_used(ledger) > 23  # the worst case, until the call's time is known
+    again = _again(fake, ["done"])
+    again.marks = fake.marks
+    assert cloud.main(args, backend=lambda gpu: again) == 0  # it really carries on
+    ran = 1800.0 if lost == "lost_late" else 0.0  # what the container's mark says
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(ran + 600.0 + 3600.0)
+    assert again.marks == {}  # the marks are cleared once their time is counted
+
+
+def test_a_call_stopped_before_it_was_made_counts_nothing(tmp_path: Path) -> None:
+    ledger = tmp_path / "hours.json"
+
+    class Building(FakeModal):
+        def run(self, *a: Any) -> Any:
+            raise KeyboardInterrupt  # Ctrl+C while the image is built: nothing spawned
+
+    with pytest.raises(KeyboardInterrupt):
+        cloud.run_until_done(Building(), [], [], 24, ledger)
+    assert cloud.hours_used(ledger) == 0.0
+    assert json.loads(ledger.read_text())["open"] == {}
+
+
+def test_nothing_is_removed_while_an_old_call_may_still_run(
+    bank: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake, ledger, args, run = _old_run(bank, ["lost_late"])
+    args.append("max_hours=48")
+    assert cloud.main(args, backend=lambda gpu: fake) == 1  # Ctrl+C, a lost line
+    again = _again(fake, [])
+    again.marks = fake.marks
+    again.alive = set(fake.tokens)  # Modal: still running
+    assert cloud.main([*args, "fresh=1"], backend=lambda gpu: again) == 1
+    assert "kan fortfarande vara igång" in capsys.readouterr().err
+    assert again.removed == [] and again.sent == [] and again.calls == []
+    assert f"{run}/last.pt" in again.volume and cloud.fresh_pending(ledger)
+    again.alive = set()  # it has ended: the removal is done by the next command
+    later = _again(again, ["done"])
+    later.marks = again.marks
+    assert cloud.main(args, backend=lambda gpu: later) == 0  # fresh=1 still pending
+    assert later.removed and later.resumed == [None]
+
+
+def _old_call_past_its_timeout(bank: Path) -> tuple[FakeModal, Path, list[str], str, float]:
+    """A call of an earlier command, longer ago than Modal lets a call run, that Modal
+    still says runs (moved after a preemption while the computer slept, say)."""
+    fake, ledger, args, _run = _old_run(bank, ["lost_late"])
+    args.append("max_hours=48")
+    assert cloud.main(args, backend=lambda gpu: fake) == 1
+    body = json.loads(ledger.read_text())
+    (token,) = body["open"]
+    worst = body["open"][token]["worst"]
+    body["open"][token]["at"] -= worst + 1
+    ledger.write_text(json.dumps(body))
+    again = _again(fake, ["done"])
+    again.marks = fake.marks
+    again.alive = set(fake.tokens)  # Modal: still running
+    return again, ledger, args, token, worst
+
+
+def test_an_old_call_past_its_timeout_is_cancelled(bank: Path) -> None:
+    again, ledger, args, token, _worst = _old_call_past_its_timeout(bank)
+    assert cloud.main(args, backend=lambda gpu: again) == 0
+    assert again.cancelled == [f"fc-{token}"]
+    old = 1800.0 + 600.0  # its mark and what it ran after it
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(old + 3600.0)
+    assert json.loads(ledger.read_text())["open"] == {}
+
+
+def test_an_old_call_modal_still_runs_after_the_cancel_stops_the_command(
+    bank: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Nothing starts until Modal says the old call has ended; the message says how."""
+    again, ledger, args, token, worst = _old_call_past_its_timeout(bank)
+    again.stuck = set(again.alive)  # and so after the cancel too
+    assert cloud.main(args, backend=lambda gpu: again) == 1
+    err = capsys.readouterr().err
+    assert "har stoppats" in err and "modal.com/apps" in err
+    assert again.cancelled == [f"fc-{token}"] and again.calls == [] and again.sent == []
+    assert json.loads(ledger.read_text())["open"][token]["worst"] == worst  # still open
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(worst)
+    again.alive = set()  # the app stopped on modal.com: the next command goes on
+    later = _again(again, ["done"])
+    later.marks = again.marks
+    assert cloud.main(args, backend=lambda gpu: later) == 0
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(1800.0 + 600.0 + 3600.0)
+
+
+def test_an_old_call_modal_never_answers_for_can_be_closed_by_hand(
+    bank: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Modal forgets the call (not found) and never says it has ended: the refusal names
+    ``close_call=``, which keeps the hours already counted (its worst case)."""
+    again, ledger, args, token, worst = _old_call_past_its_timeout(bank)
+    again.stuck = set(again.alive)
+    assert cloud.main(args, backend=lambda gpu: again) == 1
+    assert f"close_call={token}" in capsys.readouterr().err
+    assert cloud.main([*args, "close_call=" + "x" * 32], backend=lambda gpu: again) == 2
+    assert json.loads(ledger.read_text())["open"][token]  # nothing closed by a wrong id
+    later = _again(again, ["done"])
+    later.marks = again.marks
+    later.alive = set(again.alive)
+    later.stuck = set(again.stuck)  # Modal still does not say
+    assert cloud.main([*args, f"close_call={token}"], backend=lambda gpu: later) == 0
+    assert later.cancelled[0] == f"fc-{token}"  # cancelled once more first
+    assert token not in later.marks and later.calls  # closed, then the run went on
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(worst + 3600.0)  # never less
+    assert all("close_call" not in a for a in later.calls[0][0])  # not for the script
+    assert "utan close_call=" in capsys.readouterr().out  # not to be given again
+
+
+def test_close_call_waits_for_the_calls_worst_case(
+    bank: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A call that may still run by its own time is never closed by hand."""
+    fake, ledger, args, _run = _old_run(bank, ["lost_late"])
+    assert cloud.main(args, backend=lambda gpu: fake) == 1
+    (token,) = json.loads(ledger.read_text())["open"]
+    before = ledger.read_text()
+    again = _again(fake, ["done"])
+    again.marks, again.alive, again.stuck = fake.marks, {token}, {token}
+    assert cloud.main([*args, f"close_call={token}"], backend=lambda gpu: again) == 1
+    err = capsys.readouterr().err
+    assert "kan fortfarande köra" in err and "close_call" in err
+    assert ledger.read_text() == before and again.cancelled == [] and again.calls == []
+
+
+def test_close_call_counts_the_marks_seconds_if_they_are_more(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ledger = tmp_path / "hours.json"
+    token = "t" * 32
+    call = {"worst": 100.0, "at": 0.0, "call": f"fc-{token}", "waited": 0.0}
+    cloud._write_ledger(ledger, {"seconds": 100.0, "fresh_pending": False, "open": {token: call}})
+    fake = FakeModal()
+    fake.marks[token] = {"seconds": 1800.0, "ended": False}
+    fake.alive = fake.stuck = {token}
+    cloud.close_lost_call(fake, ledger, token, wall=lambda: 101.0)
+    out, err = capsys.readouterr()
+    assert fake.cancelled == [f"fc-{token}"] and "Avbrott skickat" in out
+    # Modal still says it runs after the cancel (stuck): a warning names it
+    assert "Varning" in err and token in err and f"fc-{token}" in err and "Ctrl+C" in err
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(1800.0 + 600.0)  # the mark's
+    assert json.loads(ledger.read_text())["open"] == {} and token not in fake.marks
+
+
+def test_close_call_says_nothing_more_when_the_cancel_ended_the_call(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ledger = tmp_path / "hours.json"
+    token = "t" * 32
+    call = {"worst": 100.0, "at": 0.0, "call": f"fc-{token}", "waited": 0.0}
+    cloud._write_ledger(ledger, {"seconds": 100.0, "fresh_pending": False, "open": {token: call}})
+    fake = FakeModal()
+    fake.alive = {token}  # not stuck: the cancel ends it
+    cloud.close_lost_call(fake, ledger, token, wall=lambda: 101.0)
+    out, err = capsys.readouterr()
+    assert "Avbrott skickat" in out and "Varning" not in err
+    assert json.loads(ledger.read_text())["open"] == {}
+
+
+def test_a_call_cancelled_by_this_command_that_still_runs_stops_it(tmp_path: Path) -> None:
+    """Past the deadline the client cancels the call; if Modal does not say it has ended,
+    no next call starts over its container's saves."""
+    ledger = tmp_path / "hours.json"
+
+    class Overdue(FakeModal):
+        def run(self, *a: Any) -> dict[str, Any]:
+            token = a[-2]
+            a[-1](f"fc-{token}")
+            self.tokens.append(token)
+            self.alive.add(token)
+            self.stuck.add(token)  # the cancel below does not end it
+            self.cancel(f"fc-{token}")
+            return {"status": "stopped", "code": None}
+
+    fake = Overdue()
+    late = time.time() + 2 * cloud.CALL_LIMIT_S  # the deadline has passed
+
+    walls = iter([late - 2 * cloud.CALL_LIMIT_S, late - 2 * cloud.CALL_LIMIT_S])
+    with pytest.raises(BenchError, match="har stoppats"):
+        cloud.run_until_done(
+            fake, [], [], 48, ledger, clock=lambda: 0.0, wall=lambda: next(walls, late)
+        )
+    assert len(fake.tokens) == 1  # no second call
+    assert len(json.loads(ledger.read_text())["open"]) == 1
+
+
+def test_the_wait_for_a_call_is_measured_from_when_it_was_sent(tmp_path: Path) -> None:
+    """Building the image may take long; the call cannot run before it is sent."""
+    ledger = tmp_path / "hours.json"
+
+    class Built(FakeModal):
+        def run(self, *a: Any) -> dict[str, Any]:
+            a[-1]("")  # being sent, after the image was built
+            a[-1]("fc-1")
+            return {"status": "done", "code": 0, "seconds": 500.0}
+
+    walls = iter([0.0, 3000.0, 4000.0])  # opened, sent, back
+    used = cloud.run_until_done(
+        Built(), [], [], 24, ledger, clock=lambda: 0.0, wall=lambda: next(walls)
+    )
+    assert used * 3600 == pytest.approx(1000.0)  # not the 4000 s since it was opened
+
+    class Lost(FakeModal):
+        def run(self, *a: Any) -> dict[str, Any]:
+            a[-1]("")
+            raise KeyboardInterrupt
+
+    walls = iter([0.0, 3000.0, 3100.0])
+    with pytest.raises(KeyboardInterrupt):
+        cloud.run_until_done(
+            Lost(), [], [], 24, ledger, clock=lambda: 0.0, wall=lambda: next(walls)
+        )
+    (call,) = json.loads(ledger.read_text())["open"].values()
+    assert call["at"] == 3000.0 and call["waited"] == pytest.approx(100.0)
+
+
 def test_a_call_that_never_got_a_gpu_says_so(
     bank: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -727,7 +1003,8 @@ def test_the_worst_case_is_counted_before_each_call(tmp_path: Path) -> None:
     seen: list[float] = []
 
     class Peek(FakeModal):
-        def run(self, train: Any, export: Any, budget_s: float, timeout_s: int) -> Any:
+        def run(self, *a: Any) -> Any:
+            a[-1]("fc-1")  # spawned: the call is out there
             seen.append(cloud.hours_used(ledger) * 3600)
             raise SystemExit("power gone")  # nothing after this runs, as on a hard stop
 
@@ -742,7 +1019,7 @@ def test_the_worst_case_is_counted_before_each_call(tmp_path: Path) -> None:
 def test_the_ledger_is_written_whole(tmp_path: Path) -> None:
     ledger = tmp_path / "train" / "hours.json"
     cloud.start_fresh(ledger)
-    assert json.loads(ledger.read_text()) == {"seconds": 0.0, "fresh_pending": True}
+    assert json.loads(ledger.read_text()) == {"seconds": 0.0, "fresh_pending": True, "open": {}}
     assert [p.name for p in ledger.parent.iterdir()] == [ledger.name]  # no temp file left
 
 
@@ -775,3 +1052,157 @@ def test_the_manifest_must_name_the_onnx_file_itself(bank: Path, named: str) -> 
     fake.manifest_onnx = named
     assert cloud.main([f"data={bank}", "model=yolox_s", "yes=1"], backend=lambda gpu: fake) == 1
     assert not (bank / "models" / named).exists()
+
+
+def test_a_call_is_never_counted_below_the_wait_for_it(tmp_path: Path) -> None:
+    """The client stopped waiting (the deadline) and cancelled the call; its mark says
+    less than the client waited (it lost saves, or the call waited for a GPU): the
+    wait counts."""
+    ledger = tmp_path / "hours.json"
+
+    class Short(FakeModal):
+        def run(self, *a: Any) -> dict[str, Any]:
+            token = a[-2]
+            a[-1](f"fc-{token}")
+            self.tokens.append(token)
+            if len(self.tokens) > 1:  # the next call, at once
+                return {"status": "done", "code": 0, "seconds": 0.0}
+            self.marks[token] = {"seconds": 1000.0, "ended": True}
+            return {"status": "stopped", "code": None}  # no seconds came back
+
+    fake = Short()
+    walls = iter([0.0, 0.0, 5000.0])  # opened, sent, then back after 5000 s
+    used = cloud.run_until_done(
+        fake, [], [], 24, ledger, clock=lambda: 0.0, wall=lambda: next(walls, 5000.0)
+    )
+    assert used * 3600 == pytest.approx(5000.0)  # not the mark's 1000 s
+    assert json.loads(ledger.read_text())["open"] == {}
+
+
+def test_a_lost_call_keeps_the_wait_for_it_when_settled(tmp_path: Path) -> None:
+    ledger = tmp_path / "hours.json"
+
+    class Lost(FakeModal):
+        def run(self, *a: Any) -> dict[str, Any]:
+            token = a[-2]
+            a[-1](f"fc-{token}")
+            self.marks[token] = {"seconds": 100.0, "ended": True}
+            raise KeyboardInterrupt  # Ctrl+C after 4000 s
+
+    fake = Lost()
+    walls = iter([0.0, 0.0, 4000.0])
+    with pytest.raises(KeyboardInterrupt):
+        cloud.run_until_done(fake, [], [], 24, ledger, clock=lambda: 0.0, wall=lambda: next(walls))
+    (call,) = json.loads(ledger.read_text())["open"].values()
+    assert call["waited"] == pytest.approx(4000.0)
+    cloud.settle_calls(fake, ledger)  # Modal: ended; the mark says 100 s
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(4000.0)
+
+
+def test_a_call_stopped_while_it_was_sent_is_waited_for(tmp_path: Path) -> None:
+    ledger = tmp_path / "hours.json"
+
+    class Sending(FakeModal):
+        def run(self, *a: Any) -> Any:
+            a[-1]("")  # being sent
+            raise KeyboardInterrupt  # before Modal gave its id
+
+    now = time.time()
+    walls = iter([now, now, now + 10])
+    with pytest.raises(KeyboardInterrupt):
+        cloud.run_until_done(
+            Sending(), [], [], 24, ledger, clock=lambda: 0.0, wall=lambda: next(walls)
+        )
+    body = json.loads(ledger.read_text())
+    (call,) = body["open"].values()
+    assert call["call"] == "" and body["seconds"] == pytest.approx(call["worst"])
+    with pytest.raises(BenchError, match="avbröts medan det skickades"):
+        cloud.check_no_old_call(FakeModal(), ledger, "samma kommando")
+    assert json.loads(ledger.read_text())["open"]  # still open, at its worst case
+    late = now + cloud.APP_GONE_S + 1
+    assert cloud.settle_calls(FakeModal(), ledger, wall=lambda: late) == []
+    # no mark: no container ran (the fake's 600 s), but at least the 10 s waited
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(600.0)
+    assert json.loads(ledger.read_text())["open"] == {}
+
+
+@pytest.mark.parametrize("text", ["{", '{"open": {}}', '{"seconds": 1, "open": []}'])
+def test_a_ledger_that_cannot_be_read_stops_the_command(tmp_path: Path, text: str) -> None:
+    ledger = tmp_path / "hours.json"
+    ledger.write_text(text)
+    with pytest.raises(BenchError, match="går inte att läsa") as err:
+        cloud.hours_used(ledger)
+    assert err.value.code == 1
+    assert "reset_hours=" in str(err.value) and "ta bort" not in str(err.value)
+    with pytest.raises(BenchError):
+        cloud.check_no_old_call(FakeModal(), ledger, "samma kommando")
+    assert ledger.read_text() == text  # left as it was
+
+
+def test_reset_hours_starts_an_unreadable_ledger_over(
+    bank: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake, ledger, args, _run = _old_run(bank, ["done"])
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text("{")
+    assert cloud.main(args, backend=lambda gpu: fake) == 1
+    assert "reset_hours=" in capsys.readouterr().err and fake.calls == []
+    assert cloud.main([*args, "reset_hours=5"], backend=lambda gpu: fake) == 0
+    assert cloud.hours_used(ledger) == pytest.approx(5 + 1)  # from 5 h, then the call's hour
+    assert json.loads(ledger.read_text())["open"] == {}
+    out = capsys.readouterr().out
+    assert "utan reset_hours=" in out
+    assert "börjar den om på 5 h" in out and "redan använt" not in out  # not as if counted
+    assert all("reset_hours" not in a for a in fake.calls[0][0])  # not for the script
+
+
+@pytest.mark.parametrize("reset", ["0", "2", "7"])
+def test_reset_hours_never_changes_a_ledger_that_can_be_read(
+    bank: Path, capsys: pytest.CaptureFixture[str], reset: str
+) -> None:
+    """A reset from the shell's history, to 0 or an old value, keeps the hours counted."""
+    fake, ledger, args, _run = _old_run(bank, ["done"])
+    assert cloud.main(args, backend=lambda gpu: fake) == 0
+    cloud._write_ledger(ledger, {"seconds": 5 * 3600, "fresh_pending": False, "open": {}})
+    before = ledger.read_text()
+    again = FakeModal()
+    capsys.readouterr()
+    assert cloud.main([*args, f"reset_hours={reset}"], backend=lambda gpu: again) == 2
+    err = capsys.readouterr().err
+    assert "går att läsa (5.0 h använda)" in err and "utan reset_hours=" in err
+    assert ledger.read_text() == before and cloud.hours_used(ledger) >= 5
+    assert again.calls == []
+
+
+def test_reset_hours_keeps_a_call_that_may_still_run(bank: Path) -> None:
+    """A readable ledger with an open call is not reset: the call is not dropped."""
+    fake, ledger, args, _run = _old_run(bank, ["lost_late"])
+    assert cloud.main(args, backend=lambda gpu: fake) == 1
+    before = ledger.read_text()
+    again = _again(fake, ["done"])
+    again.marks, again.alive = fake.marks, set(fake.tokens)
+    assert cloud.main([*args, "reset_hours=0"], backend=lambda gpu: again) == 2
+    assert ledger.read_text() == before and again.calls == []
+
+
+@pytest.mark.parametrize("extra", ["reset_hours=-1", "reset_hours=x", "reset_hours=inf", "fresh=1"])
+def test_reset_hours_is_a_number_of_hours_on_its_own(bank: Path, extra: str) -> None:
+    args = [f"data={bank}", "model=yolox_s", "yes=1", "reset_hours=1", extra]
+    if extra.startswith("reset_hours"):
+        args.remove("reset_hours=1")
+    fake = FakeModal()
+    assert cloud.main(args, backend=lambda gpu: fake) == 2
+    assert fake.calls == []
+
+
+def test_the_trainings_own_error_names_its_kind_not_the_line() -> None:
+    class CallFailedError(Exception):  # as modal_app's, which cloud never imports
+        def __init__(self, kind: str, text: str) -> None:
+            super().__init__(kind, text)
+            self.kind = kind
+
+    err = cloud.remote_error(CallFailedError("MemoryError", "secret text"), "samma kommando")
+    assert "(MemoryError)" in str(err) and "secret" not in str(err)
+    assert "modal token info" not in str(err) and "modal.com/apps" in str(err)
+    odd = cloud.remote_error(CallFailedError("not a name\n", "x"))
+    assert "(okänt fel)" in str(odd)

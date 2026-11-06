@@ -269,8 +269,12 @@ async def submit(
         if str(old.mission_id) != mission_id or old.skill != skill:
             raise FlowError(409, "ID_CONFLICT", "Orderns id används redan.")
         return Submitted(old, await _last_gate(flow, old), created=False)
+    vehicle_id = (await flow.mission(mission_id)).vehicle_id
+    # Before the lock, so a wait holds up no other order or click; again under it (at
+    # once, unless a Resume came in between).
+    await flow.released_onboard(vehicle_id)
     async with flow._lock:  # one order at a time: the gate's picture must not race
-        await flow.released_onboard((await flow.mission(mission_id)).vehicle_id)
+        await flow.released_onboard(vehicle_id)
         mission = await flow.open_mission_of(mission_id)
         if skill == "propose_charter_change":
             return await _propose(
@@ -830,6 +834,7 @@ async def decide(
                     409, "CLEARANCE_REQUIRED", "Bekräfta att det är fritt runt drönaren först."
                 )
             confirmations.append("clear_around_drone")
+    await flow.released_onboard(mission.vehicle_id)  # as in ``submit``: before the lock
     async with flow._lock:
         await flow.released_onboard(mission.vehicle_id)
         now = flow.now()
@@ -1045,11 +1050,21 @@ async def on_expired(flow: MissionFlow, vehicle_id: str, expired: Expired) -> No
     await set_status(flow, command_id, "expired", expired.reason, only_from=("dispatched",))
 
 
+def _flown_on(flow: MissionFlow, mission: Mission, active_id: str) -> str | None:
+    """The search order the drone's own resume after a look flies on, when ``active_id``
+    (the snapshot's active order) is that resume (``inspections.flown_on``)."""
+    found = inspections_service.flown_on(flow, str(mission.id))
+    return next((f.command_id for f in found if f.resume_command_id == active_id), None)
+
+
 async def on_snapshot(flow: MissionFlow, mission: Mission, snap: StateSnapshot) -> None:
-    """A survey's progress moves its sector."""
+    """A survey's progress moves its sector (also a search flown on after a look)."""
     if snap.active_command_id is None or snap.progress_pct is None:
         return
-    row = await flow.repo.command_row(str(snap.active_command_id))
+    active_id = str(snap.active_command_id)
+    row = await flow.repo.command_row(active_id)
+    if row is None and (search := _flown_on(flow, mission, active_id)) is not None:
+        row = await flow.repo.command_row(search)
     if row is None or row["skill"] != "survey_sector":
         return
     sector = row["params"].get("sector_id")
@@ -1060,7 +1075,14 @@ async def on_snapshot(flow: MissionFlow, mission: Mission, snap: StateSnapshot) 
 
 
 async def active_command(flow: MissionFlow, mission: Mission) -> Command | None:
+    """The order the drone flies now. While its own resume after a look flies a search on,
+    that search's order (``superseded`` on the ground: the look replaced it, and a terminal
+    row is never revived; ``inspections`` says how its run ends)."""
     snap, _ = flow.snapshot(mission.vehicle_id)
     if snap is None or snap.active_command_id is None:
         return None
-    return await flow.repo.command(str(snap.active_command_id))
+    active_id = str(snap.active_command_id)
+    cmd = await flow.repo.command(active_id)
+    if cmd is None and (search := _flown_on(flow, mission, active_id)) is not None:
+        return await flow.repo.command(search)
+    return cmd
