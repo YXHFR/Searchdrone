@@ -173,7 +173,10 @@ class Ground:
             except Exception as exc:
                 log.warning("events.flush_failed", error=type(exc).__name__)
                 return
-            for _ in batch:
+            # By id, not by count: a queue that overflowed meanwhile has dropped written
+            # rows from its front, and a count would take newer, unwritten ones with them.
+            written = {r["id"] for r in batch}
+            while self._events and self._events[0]["id"] in written:
                 self._events.popleft()
 
     def queued_events(self) -> list[EventRow]:
