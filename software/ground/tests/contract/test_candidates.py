@@ -21,12 +21,14 @@ import httpx
 import pytest
 from PIL import Image, ImageDraw
 from sqlalchemy import text
+from structlog.testing import capture_logs
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "helpers"))
 
 from flow_rig import BRAIN, SEARCH, VID, H, Rig, rig  # pyright: ignore[reportMissingImports]
 
 from sd_ground.app import commander_asgi, create_commander_app
+from sd_ground.services import candidates as candidates_service
 from sd_schemas.base import LatLon, new_id
 from sd_schemas.candidate_ai import candidate_event_body, candidates_line
 from sd_schemas.link import (
@@ -645,3 +647,102 @@ async def test_a_drones_own_cylinder_blocks_through_its_detections_candidate(r: 
         assert top["blocks_survey_m"] == 33.0 and top["priority_class"] == "high"
     finally:
         await client.aclose()
+
+
+# --- executor.survey_blocked: merges, bad numbers, the same news again (review of #215) --
+
+
+def _blocked(*items: tuple[str, object]) -> dict[str, Any]:
+    """An ``executor.survey_blocked`` body: (candidate_id, skipped_m) per cylinder."""
+    return {
+        "command_id": str(new_id()),
+        "skill": "survey_sector",
+        "blocked": [
+            {"keepout_id": str(new_id()), "source": "candidate", "source_id": c, "skipped_m": m}
+            for c, m in items
+        ],
+    }
+
+
+def _updated(r: Rig) -> list[str]:
+    return [
+        str(e.data["candidate_id"])
+        for e in r.g.bus.replay(r.g.bus.server_epoch, 0) or []
+        if e.topic == "candidates" and e.type == "candidate.updated"
+    ]
+
+
+async def _marks(r: Rig, mid: str) -> list[tuple[str, float]]:
+    async with r.flow.repo.engine.connect() as conn:
+        rows = await conn.execute(
+            text(
+                "SELECT payload->>'candidate_id', (payload->>'skipped_m')::float FROM events "
+                "WHERE mission_id = :m AND type = 'candidate.blocks_survey' ORDER BY id"
+            ),
+            {"m": mid},
+        )
+        return [(str(c), float(m)) for c, m in rows.all()]
+
+
+async def test_a_merge_carries_the_blocking_to_the_candidate_it_joined(r: Rig) -> None:
+    """The search service merges a blocking candidate into another: the survivor now
+    holds the cylinder, so it blocks the search with the larger of the two, and its card
+    goes out again at once though the batch did not touch it."""
+    mid = await r.open_mission()
+    gone = revision(r, priority=0.2, state="ready")
+    survivor = revision(r, priority=0.1, state="ready")
+    top = revision(r, priority=0.9, state="ready")
+    assert (await post(r, mid, gone, survivor, top)).status_code == 200
+    await candidates_service.on_survey_blocked(
+        r.flow, mid, VID, _blocked((gone["candidate_id"], 40.0), (survivor["candidate_id"], 12.0))
+    )
+    before = len(_updated(r))
+    merge = gone | {"base_rev": 1, "state": "merged", "merged_into": survivor["candidate_id"]}
+    assert (await post(r, mid, merge)).status_code == 200
+    first = (await queue(r, mid))["items"][0]
+    assert first["candidate_id"] == survivor["candidate_id"]
+    assert (first["blocks_survey_m"], first["priority_class"]) == (40.0, "high")
+    assert _updated(r)[before:] == [gone["candidate_id"], survivor["candidate_id"]]
+    merged = (await queue(r, mid, state="merged"))["items"]
+    assert [c["blocks_survey_m"] for c in merged] == [None]
+    # The same cylinder reported again under the merged candidate's id: nothing new.
+    await candidates_service.on_survey_blocked(
+        r.flow, mid, VID, _blocked((gone["candidate_id"], 40.0))
+    )
+    assert len(await _marks(r, mid)) == 2
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), -1.0, "NaN"])
+async def test_a_skipped_length_that_is_not_metres_is_left_out(r: Rig, bad: object) -> None:
+    mid = await r.open_mission()
+    low = revision(r, priority=0.1, state="ready")
+    other = revision(r, priority=0.2, state="ready")
+    assert (await post(r, mid, low, other)).status_code == 200
+    with capture_logs() as logs:
+        await candidates_service.on_survey_blocked(
+            r.flow, mid, VID, _blocked((low["candidate_id"], bad), (other["candidate_id"], 8.0))
+        )
+    assert [e["event"] for e in logs if e["log_level"] == "warning"] == [
+        "candidate.survey_blocked_invalid"
+    ]
+    assert await _marks(r, mid) == [(other["candidate_id"], 8.0)]  # the good one counts
+    assert _updated(r) == [other["candidate_id"]]
+    cards = {c["candidate_id"]: c for c in (await queue(r, mid))["items"]}
+    assert cards[low["candidate_id"]]["blocks_survey_m"] is None
+
+
+async def test_the_same_or_less_left_out_again_wakes_nobody(r: Rig) -> None:
+    """Each plan of the same way around reports it again: only more metres left out is
+    news (a new mark, the card out again, the AI woken); the same or less is not."""
+    mid = await r.open_mission()
+    low = revision(r, priority=0.1, state="ready")
+    assert (await post(r, mid, low)).status_code == 200
+    cid = low["candidate_id"]
+    for m in (30.0, 30.0, 12.5, 45.0, 45.0):
+        await candidates_service.on_survey_blocked(r.flow, mid, VID, _blocked((cid, m)))
+    assert await _marks(r, mid) == [(cid, 30.0), (cid, 45.0)]
+    assert _updated(r) == [cid, cid]
+    assert (await queue(r, mid))["items"][0]["blocks_survey_m"] == 45.0
+    # One report naming the same candidate twice: one mark, the larger.
+    await candidates_service.on_survey_blocked(r.flow, mid, VID, _blocked((cid, 50.0), (cid, 48.0)))
+    assert (await _marks(r, mid))[2:] == [(cid, 50.0)] and _updated(r) == [cid] * 3

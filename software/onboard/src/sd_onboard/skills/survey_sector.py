@@ -18,6 +18,7 @@ persons (``sd_safety.keepout.Passage``), never when its first leg goes down.
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Sequence
 from dataclasses import replace
@@ -78,6 +79,8 @@ FIRST_SEARCH_SEQ: Final = 2  # seq 0 = home, seq 1 = speed
 # A way around an unconfirmed person's cylinder that leaves out at least this much of the
 # search inside it blocks the search (``SurveyRun.blocked``): less is a corner cut.
 BLOCKED_MIN_M: Final = 5.0
+
+log = logging.getLogger("sd_onboard.survey")
 
 
 def _inside_m(route: list[Xy], c: Circle) -> float:
@@ -190,7 +193,11 @@ class SurveyRun:
         out = reroute(route, cyl, area=area, soft=scyl, passage=passage, spent_m=spent)
         if out is None or len(out) < 2:
             raise PlanError("KEEPOUT_VIOLATION", "ingen väg runt förbudscylindrarna")
-        self.blocked = self._blocked(ctx.keepouts, plane, route, out)
+        try:  # an observation for the ground only: it never stops the way around
+            self.blocked = self._blocked(ctx.keepouts, plane, route, out)
+        except Exception:
+            log.exception("survey: blocked cylinders not worked out")
+            self.blocked = []
         points = [LatLon(lat=lat, lon=lon) for lat, lon in (plane.latlon(*p) for p in out[1:])]
         lead: list[int | None] = [] if self.interrupted_at is None else [None]
         origins = dict(zip(route[1:], [*lead, *self.origin[self.base_index :]], strict=True))
@@ -266,11 +273,14 @@ class SurveyRun:
             raise RuntimeError("the mission layout does not match the resume arithmetic")
         self.mission_hash = await io.upload_mission(items)
         io.emit_event("mission_uploaded", {"mission_hash": self.mission_hash, "items": len(items)})
-        if self.blocked:
-            io.emit_event("survey_blocked", self.blocked_event())
         await io.set_mission_current(1)  # the speed item, so AUTO flies at speed_ms
         if not await io.set_mode(CopterMode.AUTO):
             raise mode_failed(CopterMode.AUTO)
+        if self.blocked:  # once the route flies; an observation, never a reason to stop
+            try:
+                io.emit_event("survey_blocked", self.blocked_event())
+            except Exception:
+                log.exception("survey: survey_blocked not sent")
         deadline = io.clock.monotonic() + plan.expected_duration_s * 2 + 30
         last = self.last_nav_seq
         while True:
