@@ -289,33 +289,78 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 40
+    env:
+      VIDEO_APT_PACKAGES: >-
+        gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+        gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav
+        gstreamer1.0-rtsp python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0
+        ffmpeg iproute2
     steps:
       - *checkout
       - *setup
+      # Only the downloaded .deb files are cached, never the package lists: apt-get update
+      # fetches the signed lists every run and apt checks each cached .deb against their
+      # hashes before it uses it, so a cache restored from another branch cannot slip in
+      # a changed package. The key follows the runner image and the package list.
+      - name: Cache key for the video packages
+        id: video-apt-key
+        run: |
+          sum=$(printf '%s' "$VIDEO_APT_PACKAGES" | sha256sum | cut -c1-16)
+          echo "prefix=video-apt-$ImageOS-$ImageVersion-" >> "$GITHUB_OUTPUT"
+          echo "key=video-apt-$ImageOS-$ImageVersion-$sum" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/video-apt
+          key: ${{ steps.video-apt-key.outputs.key }}
+          restore-keys: ${{ steps.video-apt-key.outputs.prefix }}
       - name: GStreamer and ffmpeg for the video processes and checks
-        # A stalled apt mirror used to eat the whole job (25 min, no output). Each try is
-        # capped at 4 min and apt gives up on a dead connection after 30 s, so a hang
-        # retries on a fresh connection instead. The man-db index is not rebuilt.
-        timeout-minutes: 13
+        # A slow apt mirror used to eat the whole step (azure's at 20-60 kB/s: 13 min and
+        # no test run). The .debs come from the cache above when it hits. Otherwise the
+        # first try uses the runner's default mirror for at most 4 min, then the runner's
+        # mirror list is cut down to archive.ubuntu.com for two more tries. What a try got
+        # stays in the cache folder, so the next try goes on from there. apt gives up on
+        # a dead connection after 30 s. The man-db index is not rebuilt.
+        timeout-minutes: 17
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo rm -f /var/lib/man-db/auto-update
-          apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          debs="$RUNNER_TEMP/video-apt"
+          mkdir -p "$debs/partial"
+          apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+                    -o "Dir::Cache::archives=$debs")
+          read -ra packages <<< "$VIDEO_APT_PACKAGES"
+          use_archive_mirror() {
+            # The runner's sources read their mirrors from apt-mirrors.txt, azure's first.
+            if [ -f /etc/apt/apt-mirrors.txt ]; then
+              sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
+              grep -q . /etc/apt/apt-mirrors.txt \
+                || echo 'http://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt
+            fi
+            for f in /etc/apt/sources.list.d/*.sources /etc/apt/sources.list; do
+              [ -f "$f" ] && sudo sed -i 's#azure\.archive\.ubuntu\.com#archive.ubuntu.com#g' "$f"
+            done
+          }
+          ok=0
           for try in 1 2 3; do
-            if sudo timeout 240 apt-get "${apt_opts[@]}" update -q && \
-               sudo timeout 240 apt-get "${apt_opts[@]}" install -y -q --no-install-recommends \
-                 gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
-                 gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
-                 gstreamer1.0-rtsp python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
-                 ffmpeg iproute2; then
-              exit 0
+            if [ "$try" = 1 ]; then limit=150; else limit=240; use_archive_mirror; fi
+            if sudo timeout 90 apt-get "${apt_opts[@]}" update -q && \
+               sudo timeout "$limit" apt-get "${apt_opts[@]}" install -y -q \
+                 --no-install-recommends "${packages[@]}"; then
+              ok=1
+              break
             fi
             echo "apt try $try failed or timed out, retrying"
-            sleep 15
+            sleep 10
           done
-          exit 1
+          # Leave only whole .debs that can still be fetched, readable by the cache save.
+          sudo rm -rf "$debs/partial" "$debs/lock"
+          sudo apt-get "${apt_opts[@]}" autoclean -q || true
+          sudo chown -R "$(id -u):$(id -g)" "$debs"
+          [ "$ok" = 1 ]
+      - name: The cached .debs hold no orthophotos
+        run: python3 tools/check_no_orthophotos.py "$RUNNER_TEMP/video-apt"
       - *db
       - name: Database schema and MediaMTX
         run: |
