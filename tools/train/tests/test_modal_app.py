@@ -633,8 +633,11 @@ def test_a_save_that_hangs_stops_the_container(
     app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)
     release.set()
     assert len(gave_up) == 1 and "inte klar" in gave_up[0][0]
-    after = gave_up[0][1] - began[1]  # the commit begins just after its save does
-    assert app.COMMIT_SLOW_S - 0.005 < after <= app.COMMIT_SLOW_S + app.WATCH_S + 0.3
+    # The save begins with the mark's file writes, before its commit: on a busy runner
+    # they take a few hundredths of a second (43 ms seen in CI), counted by the watchdog
+    # but not by ``began``.
+    after = gave_up[0][1] - began[1]
+    assert app.COMMIT_SLOW_S - 0.1 < after <= app.COMMIT_SLOW_S + app.WATCH_S + 0.3
 
 
 def test_a_last_save_that_fails_once_is_tried_again(
