@@ -89,6 +89,12 @@ MOVED_M: Final = 0.5  # the direction from the first sample that moved this far
 # this much faster than braking from its speed when the cylinder came, after the reaction
 # and settling.
 BRAKE_SLACK_MS: Final = 1.0
+# A ground speed counts for the allowance only as far as the track bears it out: at most
+# the path flown over at least ``RATE_SPAN_S`` divided by its time, plus this for the
+# speed's change within that span (the turn's 2.6 m/s² or the braking over 0.6 s: under
+# 0.8 m/s) and the samples' receive times. A reported ground speed is no proof of speed.
+RATE_SPAN_S: Final = 0.6
+RATE_SLACK_MS: Final = 1.0
 # FLYG HEM goes past every cylinder (``sd_safety.policy.KEEPOUT_EXEMPT``): ArduPilot flies
 # straight home and lands, so E8 skips those samples. LAND counts as the way home only
 # after SMART_RTL or RTL: it is also the end of STOP, which is not exempt.
@@ -251,15 +257,38 @@ def _braking_speed_ms(rows: Sequence[tuple[float, float, Sample]], t: float) -> 
     return max(0.0, s0.groundspeed_ms - slowed) + BRAKE_SLACK_MS
 
 
+def _track_ms(rows: Sequence[tuple[float, float, Sample]], i: int, j: int) -> float:
+    """The most the track bears out for the drone's speed between rows ``i`` and ``j``:
+    the path flown over a span of at least ``RATE_SPAN_S`` around them (later rows first,
+    then earlier ones) over its time, plus ``RATE_SLACK_MS``. Never from two samples
+    alone: their times are when the rig received them (``_reaction_closing_ms``). Without
+    such a span in the track, no bound (inf)."""
+    a, b = i, j
+    while b + 1 < len(rows) and rows[b][0] - rows[a][0] < RATE_SPAN_S:
+        b += 1
+    while a > 0 and rows[b][0] - rows[a][0] < RATE_SPAN_S:
+        a -= 1
+    span = rows[b][0] - rows[a][0]
+    if span < RATE_SPAN_S:
+        return math.inf
+    path = sum(
+        distance_m(p.lat, p.lon, q.lat, q.lon)
+        for (_, _, p), (_, _, q) in zip(rows[a:b], rows[a + 1 : b + 1], strict=True)
+    )
+    return path / span + RATE_SLACK_MS
+
+
 def _closing_ms(rows: Sequence[tuple[float, float, Sample]]) -> float:
-    """The drone's speed deeper into the cylinder at the first row: the ground speed times
-    the share of the next movement that heads in (all of it until the drone has moved)."""
+    """The drone's speed deeper into the cylinder at the first row: the ground speed (as
+    far as the track bears it out, ``_track_ms``) times the share of the next movement
+    that heads in (all of it until the drone has moved)."""
     _, d0, s0 = rows[0]
-    v0 = s0.groundspeed_ms
-    for _, d1, s1 in rows[1:]:
+    v0 = min(s0.groundspeed_ms, _track_ms(rows, 0, 0))
+    for j, (_, d1, s1) in enumerate(rows[1:], start=1):
         moved = distance_m(s0.lat, s0.lon, s1.lat, s1.lon)
         if moved >= MOVED_M:
-            return v0 * min(1.0, max(0.0, (d0 - d1) / moved))
+            v = min(s0.groundspeed_ms, _track_ms(rows, 0, j))
+            return v * min(1.0, max(0.0, (d0 - d1) / moved))
     return v0
 
 
@@ -276,7 +305,9 @@ def _reaction_closing_ms(k: SeenKeepout, rows: Sequence[tuple[float, float, Samp
     two samples: the samples' times are when the rig received them, and samples that come
     in a bunch, a few ms apart, would make centimetres look like a fast drone. Of the two
     ground speeds at the ends of a movement the lower counts: the drone cannot gain
-    speed inwards faster than it flies.
+    speed inwards faster than it flies. Nor faster than the track bears out
+    (``_track_ms``): a reported ground speed alone, 9 m/s while the positions move at
+    3 m/s, would allow the stop from 9 m/s.
 
     Speed gained inwards after the cylinder came (a new wrong turn) counts as well, but
     only for a movement that starts and ends within this window of ``STOP_REACT_S +
@@ -288,13 +319,14 @@ def _reaction_closing_ms(k: SeenKeepout, rows: Sequence[tuple[float, float, Samp
     for i, (ta, da, sa) in enumerate(rows):
         if ta > window_end:
             break
-        for tb, db, sb in rows[i + 1 :]:
+        for j, (tb, db, sb) in enumerate(rows[i + 1 :], start=i + 1):
             if tb > window_end:
                 break
             moved = distance_m(sa.lat, sa.lon, sb.lat, sb.lon)
             if moved >= MOVED_M:
                 share = min(1.0, max(0.0, (da - db) / moved))
-                fastest = max(fastest, min(sa.groundspeed_ms, sb.groundspeed_ms) * share)
+                v = min(sa.groundspeed_ms, sb.groundspeed_ms, _track_ms(rows, i, j))
+                fastest = max(fastest, v * share)
                 break
     return fastest
 
@@ -435,7 +467,8 @@ def keepout_never_entered(
     that allows overflight) may also be crossed straight through: every stay inside is a
     passage (:func:`_passage_broken`), except that the stay it came around the drone
     with, or braked it into, may keep the full cylinder's rules instead. Stays with less
-    than ``KEEPOUT_PASS_GAP_S`` outside between them are one pass (:func:`_pass_too_long`)."""
+    than ``KEEPOUT_PASS_GAP_S`` outside between them are one pass (:func:`_pass_too_long`),
+    that first stay's time included."""
     broken: list[str] = []
     for k in keepouts:
         rows = _edge_distances(k, track)
@@ -451,7 +484,10 @@ def keepout_never_entered(
         for n, (a, b) in enumerate(stays):
             why = _passage_broken(k, rows, a, b)
             if n == 0 and _entered(k, rows[: b + 2], tolerance_m) is None:
-                why, stays = None, stays[1:]  # the first stay kept the full rules
+                # The first stay kept the full rules: no passage's shape, but its time
+                # still counts in the pass (the executor counts it from when the drone
+                # was first inside, ``executor._keepout_inside_s``).
+                why = None
             if why is not None:
                 broken.append(why)
                 break

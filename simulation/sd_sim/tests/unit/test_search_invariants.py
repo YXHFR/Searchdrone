@@ -216,6 +216,27 @@ def test_bunched_samples_do_not_make_a_sideways_drone_fast_inwards(bunch: bool) 
     assert broken and broken[0].startswith("E8") and "djupare" in broken[0]
 
 
+@pytest.mark.parametrize("bunch", [False, True], ids=["even", "bunched"])
+def test_a_reported_ground_speed_the_track_does_not_bear_out_allows_no_longer_stop(
+    bunch: bool,
+) -> None:
+    """10 m inside when the cylinder comes, flying straight in at 3 m/s without braking to
+    16.6 m deep, while two samples report 9 m/s: the stop from 9 m/s (20.7 m) would let it
+    pass, the stop from what its positions show (3 m/s) does not."""
+    pts = [(i * 0.2, 80.0 + i * 0.6, 0.0, 9.0 if i < 2 else 3.0) for i in range(12)]
+    pts += [(2.4 + i * 0.2, 86.6, 0.0, 0.0) for i in range(1, 6)]
+    pts += [(3.4 + i * 0.2, 86.6 - i * 2.0, 0.0, 10.0) for i in range(1, 12)]
+    track = _flown(pts)
+    broken = keepout_never_entered([_cyl()], _bunched(track) if bunch else track)
+    assert broken and broken[0].startswith("E8") and "djupare" in broken[0]
+    # The same reports with positions that bear them out: the stop from 9 m/s holds.
+    fast = [(i * 0.2, 80.0 + i * 1.8, 0.0, 9.0) for i in range(4)]
+    fast += [(0.6 + i * 0.2, 85.4 + i * 1.3, 0.0, 6.5 - i * 0.5) for i in range(1, 6)]
+    fast += [(1.6 + i * 0.2, 91.9, 0.0, 0.0) for i in range(1, 6)]
+    fast += [(2.6 + i * 0.2, 91.9 - i * 2.0, 0.0, 10.0) for i in range(1, 15)]
+    assert keepout_never_entered([_cyl()], _flown(fast)) == []
+
+
 def test_a_new_shape_of_a_cylinder_is_no_new_grace() -> None:
     """The ground moved a cylinder (same id) 5 m ahead of a drone at 5 m/s, 10 s after the
     id came: a new cylinder there would allow braking in, a new shape of an old one not."""
@@ -424,3 +445,18 @@ def test_stays_with_a_short_break_outside_are_one_passage() -> None:
     broken = keepout_never_entered([_soft()], there + back(2.0))
     assert broken and "korta avbrott" in broken[0], broken
     assert keepout_never_entered([_soft()], there + back(KEEPOUT_PASS_GAP_S + 2.0)) == []
+
+
+def test_the_way_out_counts_in_the_pass_when_the_drone_comes_back_soon() -> None:
+    """Came around the drone: the way out keeps the full rules, but its time is the pass's
+    first stay (as the executor counts it). Back in less than KEEPOUT_PASS_GAP_S later, the
+    passage straight through adds to it (15 s + 8.6 s); back in later, a new pass."""
+    out = _line(0.0, 100.0, 140.0, 2.0)  # 15 s inside, out at 130 m
+    end = out[-1].t
+
+    def through(after: float) -> list[Sample]:
+        return _line(end + after, 140.0, 0.0, 7.0, n=10.0)
+
+    broken = keepout_never_entered([_soft()], out + through(2.0))
+    assert broken and "korta avbrott" in broken[0], broken
+    assert keepout_never_entered([_soft()], out + through(KEEPOUT_PASS_GAP_S + 2.0)) == []
