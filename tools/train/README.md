@@ -224,7 +224,8 @@ Det här händer:
    direkt. Efter Ctrl+C, tappat nät eller att datorn stängts av rättar nästa körning
    det, när Modal säger att anropet har slutat. Då räknas den tid anropet senast skrev,
    plus högst 36 minuter för start och det som det kan ha kört efter det, men aldrig
-   mindre än den tid kommandot väntade på det. Går en sparning på volymen fel försöker
+   mindre än den tid kommandot väntade på det. Skrev anropet aldrig någon tid räknas 16
+   minuter, för start och en första sparning. Går en sparning på volymen fel försöker
    anropet igen vid nästa; går den också fel stoppar anropet sig självt, och likaså om
    en sparning inte blir klar på tio minuter. Avbröts kommandot medan anropet skickades,
    så att Modal inte hann ge det något id, väntar nästa körning en kvart: då har Modal
@@ -235,10 +236,13 @@ Det här händer:
    anropet står kvar med sin längsta tid tills Modal säger att det har slutat, och
    räknas då med sin egen tid. Visar modal.com/apps att inget kör men Modal svarar ändå
    inte, säger körningen hur du stänger anropet med `close_call=`; det räknas då med sin
-   längsta tid. Ingen körning startar ett nytt anrop medan ett gammalt kanske
-   fortfarande kör, eftersom det annars kunde spara över den nya träningen. Går
-   räkningen inte att läsa stannar den också: titta då på modal.com/apps att inget kör,
-   ta bort filen den nämner och kör igen.
+   längsta tid, eller mer om anropet skrev mer. Anropet avbryts först, och säger Modal
+   att det ändå kör vidare varnar körningen, så att du hinner trycka Ctrl+C. Ingen körning startar ett nytt anrop
+   medan ett gammalt kanske fortfarande kör, eftersom det annars kunde spara över den
+   nya träningen. Går räkningen inte att läsa stannar den också: titta då på
+   modal.com/apps att inget kör, och kör samma kommando med `reset_hours=` och de
+   timmar körningen redan har använt. Går räkningen att läsa vägras `reset_hours=`,
+   så att inga räknade timmar försvinner.
    Får den inget grafikkort från Modal innan tiden är slut, säger den det: då
    tränades inget, och du kan försöka igen senare eller med en annan `gpu=`.
 4. Den gör ONNX-filen och hämtar hem `best.pt`, `person_yolox_s.onnx` och
@@ -300,7 +304,8 @@ Lagringen i volymen kostar lite eller inget; se modal.com/pricing.
 | `max_hours=24` | Högst så många timmar på grafikkortet för körningen, allt sammanräknat. |
 | `name=person_yolox_s` | Namnet på ONNX-filen och manifestet. |
 | `init=<best.pt>` | Som för `just train-detector`. Måste vara en `.pt`-fil på högst 1 GB. |
-| `close_call=<id>` | Bara när körningen ber om det: ett gammalt anrop som modal.com/apps visar inte kör, fast Modal inte säger att det har slutat, räknas med sin längsta tid och stoppar inte längre körningen. |
+| `close_call=<id>` | Bara när körningen ber om det: ett gammalt anrop som modal.com/apps visar inte kör, fast Modal inte säger att det har slutat, räknas med sin längsta tid och stoppar inte längre körningen. Går först efter den tiden. Ge den bara en gång. |
+| `reset_hours=<h>` | Bara när körningen ber om det: timräkningen går inte att läsa. Den börjar om på `h` timmar, utan öppna anrop; ge de timmar körningen redan har använt, hellre för många. En timräkning som går att läsa ändras aldrig: då vägras `reset_hours=`. Går inte ihop med `fresh=1` eller `close_call=`. Ge den bara en gång. |
 
 `device=` och `simfarm=` går inte att använda i molnet.
 

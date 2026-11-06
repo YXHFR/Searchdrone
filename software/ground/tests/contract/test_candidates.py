@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "helpers"))
 from flow_rig import BRAIN, SEARCH, VID, H, Rig, rig  # pyright: ignore[reportMissingImports]
 
 from sd_ground.app import commander_asgi, create_commander_app
+from sd_ground.db.candidates import _survivor  # pyright: ignore[reportPrivateUsage]
 from sd_ground.services import candidates as candidates_service
 from sd_schemas.base import LatLon, new_id
 from sd_schemas.candidate_ai import candidate_event_body, candidates_line
@@ -712,7 +713,9 @@ async def test_a_merge_carries_the_blocking_to_the_candidate_it_joined(r: Rig) -
     assert len(await _marks(r, mid)) == 2
 
 
-@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), -1.0, "NaN"])
+@pytest.mark.parametrize(
+    "bad", [float("nan"), float("inf"), float("-inf"), -1.0, "NaN", True, False]
+)
 async def test_a_skipped_length_that_is_not_metres_is_left_out(r: Rig, bad: object) -> None:
     mid = await r.open_mission()
     low = revision(r, priority=0.1, state="ready")
@@ -746,3 +749,72 @@ async def test_the_same_or_less_left_out_again_wakes_nobody(r: Rig) -> None:
     # One report naming the same candidate twice: one mark, the larger.
     await candidates_service.on_survey_blocked(r.flow, mid, VID, _blocked((cid, 50.0), (cid, 48.0)))
     assert (await _marks(r, mid))[2:] == [(cid, 50.0)] and _updated(r) == [cid] * 3
+
+
+async def test_a_chain_of_merges_carries_the_blocking_to_its_end(r: Rig) -> None:
+    """A merged into B, B into C: a cylinder still named by A blocks as C, and the same
+    news again under A is nothing new (no second mark, no card out again)."""
+    mid = await r.open_mission()
+    a, b, c = (revision(r, priority=p, state="ready") for p in (0.3, 0.2, 0.1))
+    assert (await post(r, mid, a, b, c)).status_code == 200
+    a_into_b = a | {"base_rev": 1, "state": "merged", "merged_into": b["candidate_id"]}
+    assert (await post(r, mid, a_into_b)).status_code == 200
+    b_into_c = b | {"base_rev": 1, "state": "merged", "merged_into": c["candidate_id"]}
+    assert (await post(r, mid, b_into_c)).status_code == 200
+    before = len(_updated(r))
+    by_a = _blocked((a["candidate_id"], 30.0))
+    await candidates_service.on_survey_blocked(r.flow, mid, VID, by_a)
+    assert await _marks(r, mid) == [(c["candidate_id"], 30.0)]
+    assert _updated(r)[before:] == [c["candidate_id"]]
+    first = (await queue(r, mid))["items"][0]
+    assert (first["candidate_id"], first["blocks_survey_m"]) == (c["candidate_id"], 30.0)
+    await candidates_service.on_survey_blocked(r.flow, mid, VID, by_a)
+    assert len(await _marks(r, mid)) == 1 and len(_updated(r)) == before + 1
+
+
+def test_a_cycle_of_merges_ends_where_it_would_come_round() -> None:
+    """The write refuses a cycle; were one stored all the same, following it stops."""
+    assert _survivor("a", {"a": "b", "b": "c"}) == "c"
+    assert _survivor("a", {"a": "b", "b": "a"}) == "b"
+    assert _survivor("a", {"a": "a"}) == "a"
+    assert _survivor("x", {"a": "b"}) == "x"
+
+
+@pytest.mark.parametrize("stored", ["NaN", "Infinity", "-Infinity", -3.0, "abc", None, {}])
+async def test_a_stored_mark_that_is_not_metres_does_not_break_the_cards(
+    r: Rig, stored: object
+) -> None:
+    """Old or damaged ``candidate.blocks_survey`` rows are left out when read; the
+    mission's other marks still count and the queue still lists every card."""
+    mid = await r.open_mission()
+    bad, good = revision(r, priority=0.2, state="ready"), revision(r, priority=0.1, state="ready")
+    assert (await post(r, mid, bad, good)).status_code == 200
+    for cid, m in ((bad["candidate_id"], stored), (good["candidate_id"], 9.5)):
+        await r.flow.repo.add_event(
+            "candidate.blocks_survey",
+            now=r.flow.now(),
+            mission_id=mid,
+            vehicle_id=VID,
+            payload={"candidate_id": cid, "skipped_m": m},
+        )
+    cards = {c["candidate_id"]: c for c in (await queue(r, mid))["items"]}
+    assert cards[bad["candidate_id"]]["blocks_survey_m"] is None
+    assert cards[good["candidate_id"]]["blocks_survey_m"] == 9.5
+
+
+async def test_a_merge_that_changes_nothing_sends_no_card(r: Rig) -> None:
+    """The survivor already blocks with more than the candidate merged into it: its
+    blocking stays the same, so its card does not go out again."""
+    mid = await r.open_mission()
+    gone = revision(r, priority=0.2, state="ready")
+    survivor = revision(r, priority=0.1, state="ready")
+    assert (await post(r, mid, gone, survivor)).status_code == 200
+    await candidates_service.on_survey_blocked(
+        r.flow, mid, VID, _blocked((gone["candidate_id"], 12.0), (survivor["candidate_id"], 40.0))
+    )
+    before = len(_updated(r))
+    merge = gone | {"base_rev": 1, "state": "merged", "merged_into": survivor["candidate_id"]}
+    assert (await post(r, mid, merge)).status_code == 200
+    assert _updated(r)[before:] == [gone["candidate_id"]]  # the merged one only
+    first = (await queue(r, mid))["items"][0]
+    assert (first["candidate_id"], first["blocks_survey_m"]) == (survivor["candidate_id"], 40.0)

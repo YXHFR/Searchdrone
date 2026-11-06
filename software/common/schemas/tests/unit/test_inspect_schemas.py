@@ -119,3 +119,34 @@ def test_the_permit_needs_its_reference() -> None:
     inspect.Permit(specific_category_ref="SE-123", allow_overflight_live=True)
     with pytest.raises(ValidationError):
         inspect.Permit(specific_category_ref=" ", allow_overflight_live=True)
+
+
+def test_the_looks_close_and_the_search_flown_on_after_it() -> None:
+    """``inspect.closed``: how a look ended onboard and what the drone does next;
+    ``inspect.resume_ended``: the end of the search it flew on after the look. Both stay
+    out of the package's exports (and the generated schemas)."""
+    from sd_schemas.base import new_id
+
+    look, search = new_id(), new_id()
+    c = inspect.InspectClosed(
+        command_id=look,
+        candidate_id=OTHER,
+        cause="returned",
+        next="resume",
+        breakpoint="survey",
+        resume_command_id=new_id(),
+        resumed_command_id=search,
+    )
+    assert inspect.InspectClosed.model_validate(c.model_dump(mode="json")) == c
+    assert inspect.EVENT_CLOSED == "inspect.closed"
+    assert link.OnboardEvent(type=inspect.EVENT_CLOSED, severity="info").type == "inspect.closed"
+    with pytest.raises(ValidationError):
+        inspect.InspectClosed(command_id=look, candidate_id=OTHER, cause="returned", next="land")  # type: ignore[arg-type]
+    e = inspect.InspectResumeEnded(command_id=look, resumed_command_id=search, status="done")
+    assert e.reason_codes == []
+    assert inspect.EVENT_RESUME_ENDED == "inspect.resume_ended"
+    with pytest.raises(ValidationError):
+        inspect.InspectResumeEnded(command_id=look, status="running")  # type: ignore[arg-type]
+    import sd_schemas
+
+    assert not {"InspectClosed", "InspectResumeEnded"} & set(sd_schemas.__all__)

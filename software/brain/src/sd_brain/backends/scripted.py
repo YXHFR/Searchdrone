@@ -61,7 +61,9 @@ WHEN_FIELDS: dict[str, frozenset[str]] = {
     "mission_created": frozenset(),
     "operator_message": frozenset(),
     "operator_override": frozenset({"action", "via"}),
-    "skill_event": frozenset({"skill", "status", "reason_code", "issuer_kind"}),
+    "skill_event": frozenset(
+        {"skill", "status", "reason_code", "issuer_kind", "sector_id", "outcome", "next"}
+    ),
     "detection": frozenset({"label", "kind", "source"}),
     "candidate": frozenset({"priority_class", "state", "engine", "multi_frame"}),
     "candidate_decided": frozenset({"decision", "after"}),
@@ -307,13 +309,17 @@ def _event_bodies(turn: TurnInput) -> list[dict[str, Any]]:
 
 
 def _matches_when(when: dict[str, Any], body: dict[str, Any]) -> bool:
+    """Every ``when`` key matches the body's own field, or, when the body has none of that
+    name, the field in its ``details`` (a closed look's ``outcome`` and ``next``)."""
+    raw = body.get("details")
+    details: dict[str, Any] = raw if isinstance(raw, dict) else {}
     for key, want in when.items():
         if key == "reason_code":  # one of the event's reason_codes
             wanted = want if isinstance(want, list) else [want]
             if not set(wanted) & set(body.get("reason_codes") or ()):
                 return False
             continue
-        have = body.get(key)
+        have = body[key] if key in body else details.get(key)
         if isinstance(want, list):
             if have not in want:
                 return False

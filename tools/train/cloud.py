@@ -118,7 +118,7 @@ CALL_LIMIT_S = 24 * 3600
 STOP_MARGIN_S = 30 * 60
 DEFAULT_MAX_HOURS = 24.0
 # Keys of the cloud command itself; all other keys are train-detector's.
-OWN_KEYS = ("gpu", "yes", "hours", "max_hours", "name", "close_call")
+OWN_KEYS = ("gpu", "yes", "hours", "max_hours", "name", "close_call", "reset_hours")
 # train-detector keys that make no sense here: the GPU is the device, the data folder is
 # the volume, and the simulator's pictures stay on this computer.
 LOCAL_ONLY_KEYS = ("device", "simfarm", "simfarm_epochs")
@@ -694,8 +694,9 @@ def _read_ledger(ledger: Path) -> dict[str, Any]:
         raise BenchError(
             f"Timräkningen {ledger} går inte att läsa ({type(exc).__name__}), så det går "
             "inte att veta om ett anrop för körningen fortfarande kör i Modal. Titta efter "
-            "searchdrone-train på modal.com/apps; när inget kör kan du ta bort filen (då "
-            "räknas timmarna från 0) och köra samma kommando igen.",
+            "searchdrone-train på modal.com/apps; när inget kör där, kör samma kommando med "
+            "reset_hours=<h>, där h är de timmar körningen redan har använt (räkna hellre "
+            "för många): timräkningen börjar då om från dem.",
             1,
         ) from exc
 
@@ -881,16 +882,73 @@ def check_no_old_call(
     )
 
 
-def close_lost_call(backend: Backend, ledger: Path, token: str) -> None:
+def close_lost_call(
+    backend: Backend, ledger: Path, token: str, wall: Callable[[], float] = time.time
+) -> None:
     """``close_call=<token>``: the owner has seen on modal.com/apps that the call no
-    longer runs, but Modal does not say so. It is taken out of ``open`` with its worst
-    case, so the hours already counted stay; nothing is ever counted less."""
+    longer runs, but Modal does not say so. Only for a call past its worst case: it is
+    cancelled once more, then taken out of ``open`` with its worst case, or what its
+    mark tells if that is more, so the hours already counted stay; nothing is ever
+    counted less. If Modal still says it runs after the cancel, a warning names it, as
+    a slow container could still save its ``last.pt`` over the next call's.
+    A call with no Modal id (its start was never confirmed) waits out its whole worst
+    case here, up to Modal's 24 hours, where ``settle_calls`` gives up on it after
+    ``APP_GONE_S``: slower, but it is never closed while it may run."""
     call = _read_ledger(ledger)["open"].get(token)
     if call is None:
         raise BenchError(f"close_call={token}: det finns inget öppet anrop med det id:t.", 2)
-    _close_call(ledger, token, float(call["worst"]))
+    until = call["at"] + call["worst"]
+    if wall() < until:
+        raise BenchError(
+            f"close_call={token}: anropet kan fortfarande köra, till klockan "
+            f"{time.strftime('%H:%M', time.localtime(until))} (dess längsta tid). Vänta till "
+            "dess, eller stoppa searchdrone-train på modal.com/apps, och kör sedan samma "
+            "kommando utan close_call=.",
+            1,
+        )
+    if call["call"]:
+        backend.cancel(call["call"])
+    state = backend.call_state(token, call["call"])
+    if call["call"] and state["running"]:
+        warn(
+            f"Varning: avbrottet skickades till anropet {token} (Modal-id {call['call']}), "
+            "men Modal säger ännu inte att det har slutat. Visar searchdrone-train på "
+            "modal.com/apps att det fortfarande kör, tryck Ctrl+C nu: annars kan det spara "
+            "sin last.pt över nästa anrop."
+        )
+    seconds = max(call["worst"], float(state["seconds"]))
+    _close_call(ledger, token, seconds)
     backend.forget(token)
-    say(f"Anropet {token} räknas med sin längsta tid, {call['worst'] / 3600:.1f} h.")
+    sent = "Avbrott skickat; anropet" if call["call"] else "Anropet (utan Modal-id)"
+    say(
+        f"{sent} {token} räknas med {seconds / 3600:.1f} h. Kör framöver samma kommando "
+        "utan close_call=."
+    )
+
+
+def refuse_needless_reset(ledger: Path) -> None:
+    """``reset_hours=`` is only for a ``LEDGER`` that cannot be read. One that can be
+    read keeps what it has counted: a reset from the shell's history (``reset_hours=0``
+    or an old value) would otherwise drop hours, and ``max_hours`` could be passed."""
+    try:
+        counted = hours_used(ledger)
+    except BenchError:
+        return
+    raise BenchError(
+        f"Timräkningen {ledger} går att läsa ({counted:.1f} h använda), så reset_hours= "
+        "behövs inte: den är bara till för en timräkning som inte går att läsa. Kör samma "
+        "kommando utan reset_hours=.",
+        2,
+    )
+
+
+def reset_hours(ledger: Path, hours: float) -> None:
+    """``reset_hours=<h>``: start a ``LEDGER`` that cannot be read over at ``hours``, with
+    no open calls. It says nothing of its calls: the owner has looked at modal.com/apps.
+    One that can be read is never reset (``refuse_needless_reset``)."""
+    refuse_needless_reset(ledger)
+    _write_ledger(ledger, {"seconds": hours * 3600, "fresh_pending": False, "open": {}})
+    say(f"Timräkningen börjar om på {hours:g} h. Kör framöver samma kommando utan reset_hours=.")
 
 
 def remove_old_run(backend: Backend, where: Places, ledger: Path) -> None:
@@ -902,12 +960,14 @@ def remove_old_run(backend: Backend, where: Places, ledger: Path) -> None:
     _change_ledger(ledger, lambda body: body.update(fresh_pending=False))
 
 
-def again_text(fresh_given: bool, ledger: Path) -> str:
+def again_text(fresh_given: bool, ledger: Path, done: Sequence[str] = ()) -> str:
     """What to run to carry on: without ``fresh=1`` once the old run is removed (or it
-    would be removed again, with what the new run has saved), as given before that."""
+    would be removed again, with what the new run has saved), as given before that;
+    without the keys in ``done`` (``close_call=``, ``reset_hours=``, once they are done)."""
+    drop = [f"{key}=" for key in done]
     if fresh_given and not fresh_pending(ledger):
-        return "samma kommando utan fresh=1"
-    return "samma kommando"
+        drop.insert(0, "fresh=1")
+    return f"samma kommando utan {' och '.join(drop)}" if drop else "samma kommando"
 
 
 def call_budget(left_s: float) -> float:
@@ -1075,10 +1135,22 @@ def check_local_model(where: Places) -> None:
 
 def remote_error(exc: BaseException, again: str = "samma kommando") -> BenchError:
     """A short Swedish message for an error from Modal or the network, instead of a
-    traceback: only the kind of error, never its text (which may hold anything)."""
+    traceback: only the kind of error, never its text (which may hold anything). The
+    training's own error (``modal_app.CallFailedError``) names its own kind."""
     if isinstance(exc, ImportError):
         return BenchError(
             "Modal är inte installerat här. Kör via: just train-detector-cloud ...", 2
+        )
+    # By name: cloud.py never imports modal_app, which needs the optional cloud group
+    # (Modal); without it, this module and its tests still run.
+    if type(exc).__name__ == "CallFailedError":
+        kind = str(getattr(exc, "kind", ""))
+        kind = kind if kind.isidentifier() and len(kind) <= 60 else "okänt fel"
+        return BenchError(
+            f"Träningen i Modal slutade med ett fel ({kind}); se hela felet i anropets "
+            f"logg på modal.com/apps. Kör sedan {again} för att fortsätta från senaste "
+            "sparningen.",
+            1,
         )
     return BenchError(
         f"Modal eller nätet svarade inte som väntat ({type(exc).__name__}). Kontrollera "
@@ -1155,10 +1227,14 @@ def main(
             guessed = "hours" not in args
             hours = float(args["hours"]) if not guessed else 0.0
             max_hours = float(args.get("max_hours", str(DEFAULT_MAX_HOURS)))
+            reset = float(args["reset_hours"]) if "reset_hours" in args else None
         except ValueError:
             raise BenchError(
-                "epochs=, limit=, upscale=, hours= och max_hours= ska vara tal.", 2
+                "epochs=, limit=, upscale=, hours=, max_hours= och reset_hours= ska vara tal.",
+                2,
             ) from None
+        if reset is not None and not 0 <= reset < math.inf:
+            raise BenchError("reset_hours= ska vara 0 eller fler timmar.", 2)
         if guessed:
             n_scales = len([s for s in args.get("scales", "native").split(",") if s])
             hours = guess_hours(model, gpu, epochs, n_scales, upscale)
@@ -1171,13 +1247,23 @@ def main(
         check_local_run(where)
         check_local_model(where)
         fresh = flag(args, "fresh")
+        if reset is not None and (fresh or args.get("close_call")):
+            raise BenchError("reset_hours= går inte ihop med fresh=1 eller close_call=.", 2)
         ledger = data / LEDGER.format(run=where.remote_run.name)
-        before = 0.0 if fresh else hours_used(ledger)
+        if reset is not None:
+            refuse_needless_reset(ledger)
+        before = 0.0 if fresh or reset is not None else hours_used(ledger)
         uploads = plan(data, sets, model, limit, init_local, init_sha)
         say(f"Tränar {model} på {', '.join(sets)} i Modal ({len(uploads)} filer behövs).")
         for line in price.lines(guessed):
             say(line)
-        if before:
+        if reset is not None:
+            say(
+                f"Timräkningen går inte att läsa. Med reset_hours= börjar den om på "
+                f"{reset:g} h av max_hours={max_hours:g} (ungefär {reset * price.price:.0f} $). "
+                "Det är bara så mycket du har gett: ge hellre för många timmar."
+            )
+        elif before:
             say(
                 f"Körningen har redan använt {before:.1f} h av max_hours={max_hours:g} "
                 f"(ungefär {before * price.price:.0f} $)."
@@ -1188,7 +1274,7 @@ def main(
                 "bort först, och körningen börjar om från noll; dess timmar räknas från 0. "
                 "Fortsätt sedan med samma kommando utan fresh=1."
             )
-        elif fresh_pending(ledger):
+        elif reset is None and fresh_pending(ledger):
             say(
                 "Ett tidigare fresh=1 hann inte ta bort den gamla träningen i Modal; det "
                 "görs nu, och körningen börjar om från noll."
@@ -1200,11 +1286,16 @@ def main(
         if fresh:
             start_fresh(ledger)
         started = time.monotonic()
+        done: list[str] = []  # close_call= and reset_hours=, once done: not to be given again
         try:
             client = backend(gpu)
             if args.get("close_call"):
                 close_lost_call(client, ledger, args["close_call"])
-            check_no_old_call(client, ledger, again_text(fresh, ledger))
+                done.append("close_call")
+            if reset is not None:
+                reset_hours(ledger, reset)
+                done.append("reset_hours")
+            check_no_old_call(client, ledger, again_text(fresh, ledger, done))
             if fresh_pending(ledger):
                 remove_old_run(client, where, ledger)
             upload(client, uploads, register, data / RECORD.format(volume=VOLUME))
@@ -1214,19 +1305,19 @@ def main(
                 export_argv(model, where),
                 max_hours,
                 ledger,
-                again_text(fresh, ledger),
+                again_text(fresh, ledger, done),
             )
             fetch_results(client, where)
         except KeyboardInterrupt:
             warn(
-                f"Avbruten. Kör {again_text(fresh, ledger)} för att fortsätta där det "
+                f"Avbruten. Kör {again_text(fresh, ledger, done)} för att fortsätta där det "
                 "sparades senast."
             )
             return 130
         except BenchError:
             raise
         except Exception as exc:  # Modal's and the network's errors, in plain words
-            raise remote_error(exc, again_text(fresh, ledger)) from exc
+            raise remote_error(exc, again_text(fresh, ledger, done)) from exc
         say(
             f"Klart på {used:.1f} timmar i Modal (ungefär {used * price.price:.0f} $), "
             f"{(time.monotonic() - started) / 3600:.1f} h i allt."
