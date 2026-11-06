@@ -66,9 +66,11 @@ DECOY_KINDS = ("rock", "backpack", "log", "tarp")
 # (``ATT_SIGMA_DEG``, 0.7 deg per axis). The attitude's share is largest at the picture's
 # corner (about 37 deg off nadir with the 66 deg stills camera): there a tilt moves the
 # point by h / cos^2 and a turn by h tan, about 0.95 m and 0.45 m at 50 m, the highest any
-# SK script flies. That is about 1.6 m per axis in all, and 7 m is more than four times
-# it (test_oracle_detector pins it to the scripts' altitudes and the camera). A card's
-# position is a weighted mean of its sightings, so it lies within this of its thing too.
+# SK script flies. That is about 1.6 m per axis in all (test_oracle_detector pins it to
+# the scripts' altitudes and the camera). The distance from the thing combines both axes:
+# with 1.6 m per axis it exceeds 7 m with a chance of exp(-7^2 / (2 * 1.6^2)), under
+# 1 in 10 000 per sighting. A card's position is a weighted mean of its sightings, so it
+# lies within this of its thing too.
 CARD_ERR_MAX_M = 7.0
 # A thing this far from every person is never the nearest thing to a person's card: a
 # card lies at most CARD_ERR_MAX_M from its person, so at least as far from the thing. A

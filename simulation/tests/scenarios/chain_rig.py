@@ -193,9 +193,10 @@ class SearchRun:
     keepouts: dict[str, SeenKeepout] = field(default_factory=dict[str, SeenKeepout])
     candidates: CandidateWatch = field(default_factory=CandidateWatch)
     # Cards judged by what their picture was drawn from, and those whose picture's thing
-    # lies farther than CARD_ERR_MAX_M from the card (so not a find of that thing).
+    # lies farther than CARD_ERR_MAX_M from the card (so not a find of that thing), with
+    # that thing.
     by_picture: set[str] = field(default_factory=set[str])
-    misplaced: set[str] = field(default_factory=set[str])
+    misplaced: dict[str, str] = field(default_factory=dict[str, str])
 
     def thing_at(self, lat: float, lon: float) -> tuple[str | None, bool]:
         """The simulator's truth at a point: the nearest thing within ``TRUTH_M`` and
@@ -221,7 +222,7 @@ class SearchRun:
         east, north = self.plane.xy(card["lat"], card["lon"])
         truth = self.world.picture_truth(drawn.thing_id, east, north)
         if drawn.thing_id is not None and truth[0] is None:
-            self.misplaced.add(cid)
+            self.misplaced[cid] = drawn.thing_id
         return truth
 
     def card_thing(self, card: Mapping[str, Any]) -> tuple[str | None, bool]:
@@ -457,8 +458,15 @@ async def _metrics(run: SearchRun, broken: list[str]) -> RunMetrics:
         top = (c.get("fields") or {}).get("garment:0")
         if thing is not None and top is not None and c["state"] != "merged":
             m.upper_by_thing.setdefault(thing, []).append(str(top))
-        if c["state"] == "confirmed" and target is not None and thing == target.thing_id:
-            m.geo_error_m = round(distance_m(c["lat"], c["lon"], *world.where(target)), 2)
+    if confirmed is not None and confirmed.target and target is not None:
+        # The person's card the operator confirmed, where it lies at the end, from them.
+        card = next(c for c in queue if c["candidate_id"] == confirmed.candidate_id)
+        m.geo_error_m = round(distance_m(card["lat"], card["lon"], *world.where(target)), 2)
+    m.cards_by_picture = len(run.by_picture)
+    for thing in run.misplaced.values():
+        m.misplaced_by_thing[thing] = m.misplaced_by_thing.get(thing, 0) + 1
+    det = run.onboard.detector
+    m.sources_dropped = 0 if det is None else det.sources_dropped
     flight = [s for s in sc.track if s.armed]
     m.flight_s = round(flight[-1].t - flight[0].t, 1) if len(flight) > 1 else None
     hours = (m.flight_s or 0.0) / 3600.0
@@ -693,9 +701,16 @@ async def search_run(
         measure(f"{world.scenario} take-off -> confirmed", metrics.time_to_confirmed_s, limit)
     assert not broken, broken
     assert metrics.false_confirms == 0, metrics.decisions
-    if metrics.confirmed_thing is not None and metrics.geo_error_m is not None:
-        # The confirmed find lies where the person is, within a card's error.
-        assert metrics.geo_error_m <= CARD_ERR_MAX_M, (metrics.geo_error_m, metrics.decisions)
+    if world.target is not None and metrics.confirmed_thing == world.target.thing_id:
+        # The confirmed card lies where the person is, within a card's error, to the end.
+        err = metrics.geo_error_m
+        assert err is not None and err <= CARD_ERR_MAX_M, (err, metrics.decisions)
+    if world.target is not None:
+        # No card with the person's picture lay away from the person.
+        assert world.target.thing_id not in metrics.misplaced_by_thing, (
+            metrics.misplaced_by_thing,
+            metrics.queue_end,
+        )
     if (
         require_found
         and world.target is not None
