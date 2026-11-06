@@ -6,10 +6,11 @@ lets a CLI token decide on the test rig): it approves the search profile as the 
 would send it, then works the candidate queue the way the panel shows it, highest
 priority first. For each open card it waits 5-20 s (looking at the pictures), opens the
 card's picture in large size, and confirms the card if the simulator's truth says it is
-the missing person, otherwise rejects it. It never decides on a card that is not open
-(new, merged, confirmed, rejected). The AI only proposes a closer look
-(``inspect_detection`` is an approval card); the operator approves each such card it
-finds waiting, before it turns to the queue.
+the missing person, otherwise rejects it. The truth is what the picture shows (the thing
+its detection came from) where the rig knows it, otherwise the thing at the card. It
+never decides on a card that is not open (new, merged, confirmed, rejected). The AI only
+proposes a closer look (``inspect_detection`` is an approval card); the operator
+approves each such card it finds waiting, before it turns to the queue.
 
 It refuses to start outside the simulator (``SD_SIM=1``) and is never part of the
 product: the AI has no way to call it, and it uses the same routes a person's panel
@@ -36,6 +37,7 @@ OPEN_STATES = frozenset({"ready", "assessing", "inspecting"})
 APPROVED_LOOKS = frozenset({"inspect_detection"})
 DELAY_S = (5.0, 20.0)
 POLL_S = 1.0
+Judged = Literal["picture", "position"]
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,9 @@ class Decision:
     rank: int  # the card's place in the queue when the operator came to it (1 = top)
     priority_class: str
     fields: Mapping[str, Any]
+    # How the truth was found: from the card's picture (what its detection was drawn
+    # from) or from the thing at the card's position.
+    by: Judged = "position"
 
 
 @dataclass
@@ -61,6 +66,10 @@ class ScriptedOperator:
     # it is the missing person.
     truth: Callable[[float, float], tuple[str | None, bool]]
     headers: Mapping[str, str]
+    # The truth for a card from what its picture shows (the thing its thumbnail's
+    # detection came from), ``None`` where that is unknown: then ``truth`` at the card's
+    # position decides.
+    card_truth: Callable[[Mapping[str, Any]], tuple[str | None, bool] | None] | None = None
     seed: int = 0
     delay_s: tuple[float, float] = DELAY_S
     stop_after_confirm: bool = True
@@ -132,13 +141,28 @@ class ScriptedOperator:
         self.looks_approved += approved
         return approved
 
+    def judge(self, card: Mapping[str, Any]) -> tuple[str | None, bool, Judged]:
+        """The thing a card shows, whether it is the missing person, and how that was
+        found: what its picture came from when known, otherwise the thing at its
+        position."""
+        known = None if self.card_truth is None else self.card_truth(card)
+        if known is not None:
+            return known[0], known[1], "picture"
+        thing, target = self.truth(card["lat"], card["lon"])
+        return thing, target, "position"
+
+    def truth_of(self, card: Mapping[str, Any]) -> tuple[str | None, bool]:
+        """The thing a card shows and whether it is the missing person (:meth:`judge`)."""
+        thing, target, _ = self.judge(card)
+        return thing, target
+
     async def queue(self) -> list[dict[str, Any]]:
         data = await self._json("GET", f"/missions/{self.mission_id}/candidates")
         return list(data["items"])
 
     def _note_target(self, items: list[dict[str, Any]]) -> None:
         for rank, c in enumerate(items, 1):
-            if c["state"] != "ready" or not self.truth(c["lat"], c["lon"])[1]:
+            if c["state"] != "ready" or not self.truth_of(c)[1]:
                 continue
             if c["priority_class"] == "low":
                 self.target_ever_low = True
@@ -168,7 +192,7 @@ class ScriptedOperator:
             now = detail["card"]
             if now["state"] not in OPEN_STATES:
                 return None
-            thing, target = self.truth(now["lat"], now["lon"])
+            thing, target, by = self.judge(now)
             if now.get("thumb_detection_id"):
                 await self._json("POST", f"/detections/{now['thumb_detection_id']}/view")
             decision: Literal["confirm", "reject"] = "confirm" if target else "reject"
@@ -189,6 +213,7 @@ class ScriptedOperator:
                 rank=rank,
                 priority_class=str(now.get("priority_class")),
                 fields=dict(now.get("fields") or {}),
+                by=by,
             )
             self.decisions.append(d)
             return d

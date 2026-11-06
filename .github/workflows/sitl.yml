@@ -213,8 +213,8 @@ jobs:
           retention-days: 14
 
   sitl-search:
-    # The search chain's pull request set (SK01, SK03, SK04, SK08, SK09, SK11 and SK12, three
-    # fixed seeds each) in shards of its own, so the sitl shards' budget is unchanged.
+    # The search chain's pull request set (SK01, SK03, SK04, SK08, SK09, SK10, SK11 and SK12,
+    # three fixed seeds each) in shards of its own, so the sitl shards' budget is unchanged.
     needs: changes
     if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-24.04

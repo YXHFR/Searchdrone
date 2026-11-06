@@ -1,0 +1,56 @@
+# SK10: open field, a lying person in a red jacket with a blue backpack about 300 m
+# north-east of home, and a grey backpack placed 4 m from the person (at_enu, nearer than
+# a decoy drawn in an area may lie). The tracker may fuse or split the two, and a card
+# made from the person may lie nearer the backpack: the scripted operator judges each
+# card by what its picture was drawn from, so the person is confirmed and the backpack
+# rejected. PR chain scenario (test_sk_chain). Also the scripted commander's fixture
+# (scripts/SK10.yaml).
+# Public place: ArduPilot's standard SITL site CMAC. Synthetic world, no real person.
+scenario: SK10
+title: "Lockbete några meter från personen"
+home: { lat: -35.363261, lon: 149.165230, alt_amsl_m: 584.0, heading_deg: 353 }
+pilot: { east_m: 0.0, north_m: 0.0 }
+pins: []
+areas:
+  sector_a: { area_enu: [[150,150],[270,150],[270,270],[150,270]] }   # 120 x 120 m, centre 297 m NE
+  sector_b: { area_enu: [[30,150],[150,150],[150,270],[30,270]] }
+charters:
+  charter_sk10:
+    area_enu: [[-60,-60],[300,-60],[300,300],[-60,300]]               # farthest corner 424 m
+    geofence_buffer_m: 20
+    alt_min_agl_m: 20
+    alt_max_agl_m: 120
+    default_alt_agl_m: 40
+    max_speed_ms: 12
+    max_range_from_pilot_m: 500
+    battery_rtl_pct: 15
+    allowed_skills: [takeoff, goto, survey_sector, hold, resume, return_home, mark_location,
+                     report, inspect_detection, orbit, capture_stills]
+    sectors:
+      - { sector_id: "A", name: "Sektor A", from: sector_a }
+      - { sector_id: "B", name: "Sektor B", from: sector_b }
+search:
+  limit_s: 900                     # nightly: found within 15 min
+  survey: { alt_m: 50, spacing_m: 45, speed_ms: 7 }
+  last_seen_enu: [0, 0]
+  # The profile as the operator approves it (the pants corrected to black).
+  profile:
+    subject_category: hiker
+    garments:
+      - { part: upper, colors: [red], certainty: certain }
+      - { part: lower, colors: [black], certainty: likely }
+    items:
+      - { kind: backpack, colors: [blue], certainty: certain }
+    likely_state: [lying, sitting]
+  people:
+    # Fixed (no jitter): the backpack below stays 4 m from the person in every seed.
+    - { id: target, target: true, at_enu: [210, 210], jitter_m: 0, pose: lying,
+        upper: red, lower: black, backpack: blue }
+  decoys:
+    # The hard case for the tracker and the truth: a grey backpack 4 m east of the
+    # person, nearer than DECOY_CLEAR_M, that the detector often takes for a person. A
+    # card made from the person can lie nearer the backpack; the rig judges it by what
+    # its picture was drawn from.
+    - { kind: backpack, color: gray, at_enu: [214, 210], lure: 0.3 }
+    - { kind: rock, count: 8, area: sector_a, lure: 0.02 }
+    - { kind: rock, count: 4, area: sector_b, lure: 0.02 }

@@ -40,7 +40,7 @@ import statistics
 import sys
 import time
 import zlib
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -80,7 +80,7 @@ from sd_sim.detector_choice import ORACLE, DetectorChoice
 from sd_sim.eval_search import RunMetrics, write_run
 from sd_sim.onboard_watch import EXECUTOR_LOG, EXECUTOR_STATE, guarded
 from sd_sim.operator import ScriptedOperator
-from sd_sim.oracle_detector import OracleDetector, OraclePerception, SyntheticStillSource
+from sd_sim.oracle_detector import Drawn, OracleDetector, OraclePerception, SyntheticStillSource
 from sd_sim.perf.stats import percentile
 from sd_sim.report import measure
 from sd_sim.search_invariants import (
@@ -90,14 +90,17 @@ from sd_sim.search_invariants import (
     keepout_never_entered,
     no_confirm_without_human,
 )
-from sd_sim.search_world import World
+from sd_sim.search_world import CARD_ERR_MAX_M, DECOY_CLEAR_M, World
 from sd_sim.vlm_oracle import OracleMatcher, Truth
 
 __all__ = ["ChainOnboard", "SearchRun", "search_run", "search_service"]
 
 SIM_ENV = {"SD_SIM": "1"}
 PERIOD_S = 0.2  # how often perception asks for a still (the source gives one a second)
-TRUTH_M = 12.0  # a card or a detection this near a thing is that thing
+# A card or a detection this near a thing is that thing, where the rig does not know what
+# it was drawn from (a card lies at most CARD_ERR_MAX_M from its thing, and a decoy drawn
+# in an area at least twice that from every person).
+TRUTH_M = DECOY_CLEAR_M
 LANDED_LIMIT_S = 480.0  # SmartRTL retraces the flown path at 5 m/s
 HOLD_LIMIT_S = 60.0  # the AI's hold after a confirmation
 GATE_RATE_S = RATE_ACTION_MIN_GAP_MS / 1000 + 0.1  # the gate's rate limit, and a margin
@@ -128,6 +131,7 @@ class ChainOnboard(SitlOnboard):
             return self.vehicle.telemetry
 
         self.positions: dict[str, tuple[float, float]] = {}  # detection id -> where
+        self.sources: dict[str, Drawn] = {}  # detection id -> what the oracle drew it from
         self.detector: OracleDetector | None = None
         self.perception: PerceptionLoop
         if detector.manifest is None:
@@ -164,6 +168,9 @@ class ChainOnboard(SitlOnboard):
     def _send(self, out: Perception) -> None:
         for d in out.report.detections:
             self.positions[str(d.detection_id)] = (d.lat, d.lon)
+            drawn = None if self.detector is None else self.detector.source_of(d.bbox, d.score)
+            if drawn is not None:
+                self.sources[str(d.detection_id)] = drawn
         self.link.perception(out)
 
     async def start(self, home: tuple[float, float]) -> None:
@@ -185,6 +192,11 @@ class SearchRun:
     battery_start: float | None = None
     keepouts: dict[str, SeenKeepout] = field(default_factory=dict[str, SeenKeepout])
     candidates: CandidateWatch = field(default_factory=CandidateWatch)
+    # Cards judged by what their picture was drawn from, and those whose picture's thing
+    # lies farther than CARD_ERR_MAX_M from the card (so not a find of that thing), with
+    # that thing.
+    by_picture: set[str] = field(default_factory=set[str])
+    misplaced: dict[str, str] = field(default_factory=dict[str, str])
 
     def thing_at(self, lat: float, lon: float) -> tuple[str | None, bool]:
         """The simulator's truth at a point: the nearest thing within ``TRUTH_M`` and
@@ -195,8 +207,35 @@ class SearchRun:
             return None, False
         return t.thing_id, t.target
 
+    def card_truth(self, card: Mapping[str, Any]) -> tuple[str | None, bool] | None:
+        """What a card's picture shows: the thing its thumbnail's detection was drawn from
+        and whether it is the missing person, or nothing (plain ground, or a card lying
+        farther than CARD_ERR_MAX_M from that thing: a find at the wrong place is no find
+        of it); ``None`` when the rig does not know (the operator then goes by
+        :meth:`thing_at`)."""
+        thumb = card.get("thumb_detection_id")
+        drawn = None if thumb is None else self.onboard.sources.get(str(thumb))
+        if drawn is None:
+            return None
+        cid = str(card["candidate_id"])
+        self.by_picture.add(cid)
+        east, north = self.plane.xy(card["lat"], card["lon"])
+        truth = self.world.picture_truth(drawn.thing_id, east, north)
+        if drawn.thing_id is not None and truth[0] is None:
+            self.misplaced[cid] = drawn.thing_id
+        return truth
+
+    def card_thing(self, card: Mapping[str, Any]) -> tuple[str | None, bool]:
+        """The thing a card is (its picture's source, else the thing at its position)."""
+        return self.card_truth(card) or self.thing_at(card["lat"], card["lon"])
+
     def vlm_truth(self, req: Any) -> Truth:
-        """The image model's truth for a request: the thing under its crops."""
+        """The image model's truth for a request: what its crops were drawn from, else the
+        thing under them."""
+        for c in list(req.crops):
+            drawn = self.onboard.sources.get(str(c.detection_id))
+            if drawn is not None:
+                return Truth(person=drawn.person, target=drawn.target, thing=drawn.thing_id)
         for c in list(req.crops):
             where = self.onboard.positions.get(str(c.detection_id))
             if where is None:
@@ -393,6 +432,7 @@ async def _metrics(run: SearchRun, broken: list[str]) -> RunMetrics:
             "seq": d.seq,
             "decision": d.decision,
             "truth": d.thing or "inget",
+            "by": d.by,
             "rank": d.rank,
             "priority_class": d.priority_class,
         }
@@ -407,26 +447,33 @@ async def _metrics(run: SearchRun, broken: list[str]) -> RunMetrics:
             "priority": c["priority"],
             "priority_class": c["priority_class"],
             "engine": c.get("engine"),
-            "truth": run.thing_at(c["lat"], c["lon"])[0],
+            "truth": run.card_thing(c)[0],
         }
         for c in queue
     ]
     for c in queue:
-        thing = run.thing_at(c["lat"], c["lon"])[0]
+        thing = run.card_thing(c)[0]
         if thing is not None and thing not in m.fields_by_thing and c.get("fields"):
             m.fields_by_thing[thing] = dict(c["fields"])
         top = (c.get("fields") or {}).get("garment:0")
         if thing is not None and top is not None and c["state"] != "merged":
             m.upper_by_thing.setdefault(thing, []).append(str(top))
-        if c["state"] == "confirmed" and target is not None and thing == target.thing_id:
-            m.geo_error_m = round(distance_m(c["lat"], c["lon"], *world.where(target)), 2)
+    if confirmed is not None and confirmed.target and target is not None:
+        # The person's card the operator confirmed, where it lies at the end, from them.
+        card = next(c for c in queue if c["candidate_id"] == confirmed.candidate_id)
+        m.geo_error_m = round(distance_m(card["lat"], card["lon"], *world.where(target)), 2)
+    m.cards_by_picture = len(run.by_picture)
+    for thing in run.misplaced.values():
+        m.misplaced_by_thing[thing] = m.misplaced_by_thing.get(thing, 0) + 1
+    det = run.onboard.detector
+    m.sources_dropped = 0 if det is None else det.sources_dropped
     flight = [s for s in sc.track if s.armed]
     m.flight_s = round(flight[-1].t - flight[0].t, 1) if len(flight) > 1 else None
     hours = (m.flight_s or 0.0) / 3600.0
     if hours > 0:
         by_class: dict[str, int] = {}
         for c in queue:
-            if c["state"] != "merged" and not run.thing_at(c["lat"], c["lon"])[1]:
+            if c["state"] != "merged" and not run.card_thing(c)[1]:
                 by_class[c["priority_class"]] = by_class.get(c["priority_class"], 0) + 1
         m.false_candidates_per_hour = {k: round(v / hours, 1) for k, v in by_class.items()}
     lags = await rows(
@@ -463,7 +510,7 @@ def _others_judged(run: SearchRun, queue: list[dict[str, Any]]) -> bool:
     cards ``_metrics`` counts: not merged)."""
     others = {t.thing_id for t in run.world.people if not t.target}
     judged = {
-        run.thing_at(c["lat"], c["lon"])[0]
+        run.card_thing(c)[0]
         for c in queue
         if c["state"] != "merged"
         and (c.get("fields") or {}).get("garment:0") in ("conflict", "match")
@@ -577,6 +624,7 @@ async def search_run(
             sc.r.panel,
             sc.mid,
             truth=lambda lat, lon: holder[0].thing_at(lat, lon),
+            card_truth=lambda card: holder[0].card_truth(card),
             headers=H,
             seed=world.seed,
             env=SIM_ENV,
@@ -653,6 +701,16 @@ async def search_run(
         measure(f"{world.scenario} take-off -> confirmed", metrics.time_to_confirmed_s, limit)
     assert not broken, broken
     assert metrics.false_confirms == 0, metrics.decisions
+    if world.target is not None and metrics.confirmed_thing == world.target.thing_id:
+        # The confirmed card lies where the person is, within a card's error, to the end.
+        err = metrics.geo_error_m
+        assert err is not None and err <= CARD_ERR_MAX_M, (err, metrics.decisions)
+    if world.target is not None:
+        # No card with the person's picture lay away from the person.
+        assert world.target.thing_id not in metrics.misplaced_by_thing, (
+            metrics.misplaced_by_thing,
+            metrics.queue_end,
+        )
     if (
         require_found
         and world.target is not None

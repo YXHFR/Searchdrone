@@ -27,6 +27,7 @@ not measured). Both refuse to start outside the simulator (``SD_SIM=1``).
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import random
@@ -54,6 +55,8 @@ from sd_schemas.geo import local_xy
 from sd_sim import paths
 from sd_sim.search_world import Thing, World
 
+_log = logging.getLogger(__name__)
+
 __all__ = [
     "DEFAULT_PROFILE",
     "NOT_IN_SIMULATOR",
@@ -74,6 +77,7 @@ GRASS = (128, 124, 84)  # a dry meadow: a green jacket stands out from it
 SKIN = (196, 150, 120)
 MIN_AGL_M = 2.0
 VIEWS_KEPT = 16  # stills whose truth waits for the detector
+SOURCES_KEPT = 4096  # detections whose source the rig may still ask for
 FP_SIZE_M = (0.4, 1.4)
 POS_SIGMA_M = 1.2  # the receiver's horizontal error, per axis
 ATT_SIGMA_DEG = 0.7  # the attitude estimate's error, per axis
@@ -361,6 +365,14 @@ class OracleDetector:
         self.sleep = sleep
         self.drawn: list[Drawn] = []
         self.in_view: dict[str, int] = {}  # thing id -> stills it was in
+        # A detection's box and score -> what it was drawn from (the perception task copies
+        # both unchanged into the report, where the detection gets its id). Two detections
+        # share a key only with the same four box edges (each with its own jitter, or a
+        # random place for a false positive) and the same four-digit score; the later one
+        # then wins, which at worst answers for a sighting of another thing.
+        self._sources: OrderedDict[tuple[float, float, float, float, float], Drawn] = OrderedDict()
+        self._sources_lock = threading.Lock()
+        self.sources_dropped = 0  # sources pushed out by SOURCES_KEPT, for the run's record
 
     def _latency_s(self) -> float:
         p50, p95 = self.profile.latency_ms
@@ -381,6 +393,31 @@ class OracleDetector:
                 return n
             n += 1
 
+    @staticmethod
+    def _key(bbox: BBox, score: float) -> tuple[float, float, float, float, float]:
+        return (bbox.x, bbox.y, bbox.w, bbox.h, score)
+
+    def _drew(self, det: Detection, drawn: Drawn) -> None:
+        self.drawn.append(drawn)
+        with self._sources_lock:
+            self._sources[self._key(det.bbox, det.score)] = drawn
+            while len(self._sources) > SOURCES_KEPT:
+                self._sources.popitem(last=False)
+                if self.sources_dropped == 0:
+                    _log.warning(
+                        "oracle: more than %d detections, the oldest sources are forgotten "
+                        "(their cards are judged by position)",
+                        SOURCES_KEPT,
+                    )
+                self.sources_dropped += 1
+
+    def source_of(self, bbox: BBox, score: float) -> Drawn | None:
+        """What a detection with this box and score was drawn from (a thing, or plain
+        ground for a false positive); ``None`` when the oracle did not make it or has
+        forgotten it."""
+        with self._sources_lock:
+            return self._sources.get(self._key(bbox, score))
+
     def detect_still(self, still: Still) -> list[Detection]:
         views = self.stills.take(still)
         f = still.frame
@@ -394,10 +431,9 @@ class OracleDetector:
                 continue
             a, b = prof.score_hit if t.person else prof.score_fp
             score = round(self.rng.betavariate(a, b), 4)
-            out.append(
-                Detection(label="person", score=score, bbox=self._box(v.bbox, f.width, f.height))
-            )
-            self.drawn.append(Drawn(t.thing_id, t.person, t.target, score, v.px))
+            det = Detection(label="person", score=score, bbox=self._box(v.bbox, f.width, f.height))
+            out.append(det)
+            self._drew(det, Drawn(t.thing_id, t.person, t.target, score, v.px))
         # False positives on plain ground, as large as a person would be here.
         cam = self.stills.camera
         h = max(MIN_AGL_M, self.stills.telemetry().alt_rel_home_m)
@@ -406,8 +442,9 @@ class OracleDetector:
             side = self.rng.uniform(*FP_SIZE_M) * ppm
             x, y = self.rng.uniform(0, f.width - side), self.rng.uniform(0, f.height - side)
             score = round(self.rng.betavariate(*prof.score_fp), 4)
-            out.append(Detection(label="person", score=score, bbox=BBox(x=x, y=y, w=side, h=side)))
-            self.drawn.append(Drawn(None, False, False, score, side))
+            det = Detection(label="person", score=score, bbox=BBox(x=x, y=y, w=side, h=side))
+            out.append(det)
+            self._drew(det, Drawn(None, False, False, score, side))
         if self.sleep:
             time.sleep(self._latency_s())  # in the perception task's worker thread
         return out

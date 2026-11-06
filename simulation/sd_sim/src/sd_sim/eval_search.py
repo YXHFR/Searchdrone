@@ -65,7 +65,7 @@ class RunMetrics:
     time_to_confirmed_s: float | None = None  # take-off -> the target's confirmation
     found: bool = False  # confirmed within limit_s
     false_confirms: int = 0
-    geo_error_m: float | None = None
+    geo_error_m: float | None = None  # the confirmed card -> the person (with a target)
     queue_rank_target: int | None = None  # its place when it was first ready (1 = top)
     target_ever_low: bool = False
     pos_end: float | None = None  # sum of POA x mean POD over the sectors at the end
@@ -89,6 +89,12 @@ class RunMetrics:
     queue_end: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     flight_s: float | None = None
     invariants_broken: list[str] = field(default_factory=list[str])
+    # Cards judged by what their picture was drawn from, and per thing those of its
+    # picture lying farther than a card's error from it (no find of it). The rest were
+    # judged by position, among them those whose source the oracle forgot (dropped).
+    cards_by_picture: int = 0
+    misplaced_by_thing: dict[str, int] = field(default_factory=dict[str, int])
+    sources_dropped: int = 0
 
     def finish(self) -> RunMetrics:
         """The derived measures (``found``, POS per battery percent)."""
