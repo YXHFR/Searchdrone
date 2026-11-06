@@ -600,7 +600,10 @@ jobs:
       - *db
       - name: Install ArduPilot SITL and Gazebo Harmonic (same script as on the owner's computer)
         timeout-minutes: 60
-        run: bash tools/setup/wsl-setup.sh sim
+        # The script runs apt itself; archive.ubuntu.com instead of the runner's slow mirror.
+        run: |
+          bash tools/ci/apt-install.sh --archive-mirror
+          bash tools/setup/wsl-setup.sh sim
       - name: Smoke flight with Gazebo as a server (gz sim -s -r --headless-rendering)
         timeout-minutes: 15
         run: |

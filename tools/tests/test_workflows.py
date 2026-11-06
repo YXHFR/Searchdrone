@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -695,15 +697,21 @@ def test_release_workflow_writes_only_from_a_job_that_runs_no_repo_code() -> Non
 # Playwright's system packages through tools/ci/playwright-install.sh, which hands them
 # to the same script. A step that calls apt or `--with-deps` itself fails this test.
 DIRECT_APT_RE = re.compile(
-    r"\bapt(-get)?\s+(\S+\s+)*?(update|install|upgrade|dist-upgrade)\b|--with-deps|\binstall-deps\b"
+    r"\b(apt|apt-get|aptitude|apt-fast|nala)\s+([^\s;&|#]+\s+)*?"
+    r"(update|install|upgrade|dist-upgrade|full-upgrade)\b"
+    r"|\bdpkg\s+([^\s;&|#]+\s+)*?(-i|--install)\b|--with-deps|\binstall-deps\b"
 )
+
+
+def _run_lines(run: str) -> list[str]:
+    """A step's shell lines, with backslash continuations joined into one line."""
+    return re.sub(r"\\\n\s*", " ", run).splitlines()
 
 
 @pytest.mark.parametrize("path", ALL_FILES, ids=ids(ALL_FILES))
 def test_apt_goes_through_the_mirror_fallback(path: Path) -> None:
     for step in steps(load(path)):
-        run = str(step.get("run", ""))
-        for line in run.splitlines():
+        for line in _run_lines(str(step.get("run", ""))):
             where = f"{path.name}: {step.get('name', '')}: {line.strip()!r}"
             assert not DIRECT_APT_RE.search(line), f"{where}; use the scripts in tools/ci/"
 
@@ -716,21 +724,155 @@ def test_the_direct_apt_rule_sees_a_gap() -> None:
         "sudo apt-get -o Acquire::Retries=3 install -y x",
         "pnpm --filter @searchdrone/panel exec playwright install --with-deps chromium",
         "npx playwright install-deps chromium",
+        "sudo aptitude install -y x",
+        "sudo apt-fast install x",
+        "sudo nala install x",
+        "sudo dpkg -i x.deb",
+        "sudo dpkg --install x.deb",
     ):
         assert DIRECT_APT_RE.search(bad), bad
+    (split,) = _run_lines("sudo apt-get \\\n  install -y x\n")
+    assert DIRECT_APT_RE.search(split), split
     for ok in (
         "bash tools/ci/apt-install.sh gdal-bin",
         "bash tools/ci/playwright-install.sh chromium",
+        "bash tools/ci/apt-install.sh --archive-mirror",
+        "dpkg --print-architecture",
+        "echo apt is slow; just update",
+        "dpkg -l x && pip install -i https://example.org/simple y",
     ):
         assert not DIRECT_APT_RE.search(ok), ok
 
 
 def test_the_apt_script_falls_back_and_never_times_out_dpkg() -> None:
     script = (ROOT / "tools" / "ci" / "apt-install.sh").read_text(encoding="utf-8")
-    assert "/etc/apt/apt-mirrors.txt" in script
+    assert '"${APT_INSTALL_ETC_APT:-/etc/apt}"' in script and "/apt-mirrors.txt" in script
     assert "http://archive.ubuntu.com/ubuntu/" in script, "no fallback mirror"
     assert "--download-only" in script
     installs = [ln for ln in script.splitlines() if " install -y" in ln and "apt-get" in ln]
     assert installs and all("--download-only" in ln or "timeout" not in ln for ln in installs), (
         installs
     )
+
+
+# The two scripts run for real, with sudo, timeout, sleep, apt-get and pnpm replaced by
+# fakes on PATH and the apt folders in a scratch dir. FAKE_FAIL_DOWNLOADS fails that many
+# download tries (as a timeout would), FAKE_INSTALL_RC is the final install's exit code and
+# FAKE_PW_REPORT is what `playwright install-deps --dry-run` prints.
+FAKES = {
+    "sudo": 'exec env "$@"\n',
+    "timeout": 'shift\nexec "$@"\n',
+    "sleep": "exit 0\n",
+    "apt-get": """echo "apt-get $*" >> "$FAKE_LOG"
+case " $* " in
+  *" update "*) exit 0 ;;
+  *" --download-only "*)
+    n=$(( $(cat "$FAKE_DIR/downloads" 2>/dev/null || echo 0) + 1 ))
+    echo "$n" > "$FAKE_DIR/downloads"
+    if [ "$n" -le "${FAKE_FAIL_DOWNLOADS:-0}" ]; then exit 124; fi
+    exit 0 ;;
+  *) exit "${FAKE_INSTALL_RC:-0}" ;;
+esac
+""",
+    "pnpm": """echo "pnpm $*" >> "$FAKE_LOG"
+case " $* " in
+  *" --dry-run "*) printf '%s\\n' "$FAKE_PW_REPORT"; exit 1 ;;
+esac
+""",
+}
+AZURE = "http://azure.archive.ubuntu.com/ubuntu/\tpriority:1"
+MISSING = "Missing system dependencies (2):\n  libnss3\n  libxss1"
+
+
+def _run_script(tmp_path: Path, script: str, *args: str, **env: str) -> tuple[int, list[str], str]:
+    """Exit code, the faked commands it ran, and the mirror list afterwards."""
+    bin_dir, etc = tmp_path / "bin", tmp_path / "etc-apt"
+    bin_dir.mkdir()
+    (etc / "sources.list.d").mkdir(parents=True)
+    (etc / "apt-mirrors.txt").write_text(
+        AZURE + "\nhttp://archive.ubuntu.com/ubuntu/\tpriority:2\n", encoding="utf-8"
+    )
+    for name, body in FAKES.items():
+        (bin_dir / name).write_text("#!/usr/bin/env bash\n" + body, encoding="utf-8")
+        (bin_dir / name).chmod(0o755)
+    log = tmp_path / "log"
+    log.touch()
+    full_env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "APT_INSTALL_ETC_APT": str(etc),
+        "APT_INSTALL_MAN_DB": str(tmp_path / "man-db"),
+        "FAKE_DIR": str(tmp_path),
+        "FAKE_LOG": str(log),
+        **env,
+    }
+    path = ROOT / "tools" / "ci" / script
+    done = subprocess.run(
+        ["bash", str(path), *args], env=full_env, capture_output=True, text=True, check=False
+    )
+    mirrors = (etc / "apt-mirrors.txt").read_text(encoding="utf-8")
+    return done.returncode, log.read_text(encoding="utf-8").splitlines(), mirrors
+
+
+def _apt(ran: list[str], kind: str) -> list[str]:
+    """The apt-get calls of one kind: update, download or install."""
+    calls = [c for c in ran if c.startswith("apt-get ")]
+    if kind == "update":
+        return [c for c in calls if c.endswith(" update -q")]
+    if kind == "download":
+        return [c for c in calls if "--download-only" in c]
+    return [c for c in calls if " install " in c and "--download-only" not in c]
+
+
+@pytest.mark.parametrize(
+    ("args", "env", "rc", "counts", "azure_left"),
+    [
+        (("x",), {}, 0, (1, 1, 1), True),
+        (("x",), {"FAKE_FAIL_DOWNLOADS": "1"}, 0, (2, 2, 1), False),
+        (("x",), {"FAKE_FAIL_DOWNLOADS": "3"}, 1, (3, 3, 0), False),
+        (("x",), {"FAKE_INSTALL_RC": "100"}, 100, (1, 1, 1), True),
+        (("--fresh", "x"), {}, 0, (0, 1, 1), True),
+        (("--update-only",), {}, 0, (1, 0, 0), True),
+        (("--archive-mirror",), {}, 0, (0, 0, 0), False),
+        ((), {}, 2, (0, 0, 0), True),
+        (("--update-only", "x"), {}, 2, (0, 0, 0), True),
+        (("--fresh", "--update-only"), {}, 2, (0, 0, 0), True),
+    ],
+)
+def test_the_apt_script_runs(
+    tmp_path: Path,
+    args: tuple[str, ...],
+    env: dict[str, str],
+    rc: int,
+    counts: tuple[int, int, int],
+    azure_left: bool,
+) -> None:
+    code, ran, mirrors = _run_script(tmp_path, "apt-install.sh", *args, **env)
+    assert code == rc, ran
+    got = tuple(len(_apt(ran, k)) for k in ("update", "download", "install"))
+    assert got == counts, ran
+    assert ("azure" in mirrors) == azure_left, mirrors
+
+
+@pytest.mark.parametrize(
+    ("report", "rc", "packages"),
+    [
+        (MISSING, 0, ["libnss3", "libxss1"]),
+        ("All system dependencies are installed.", 0, []),
+        ("Missing system dependencies (3):\n  libnss3\n  libxss1", 1, None),
+        ("Failed to install browser dependencies", 1, None),
+    ],
+)
+def test_the_playwright_script_runs(
+    tmp_path: Path, report: str, rc: int, packages: list[str] | None
+) -> None:
+    code, ran, _ = _run_script(tmp_path, "playwright-install.sh", "chromium", FAKE_PW_REPORT=report)
+    assert code == rc, ran
+    installs = _apt(ran, "install")
+    browsers = [c for c in ran if c.startswith("pnpm ") and c.endswith(" install chromium")]
+    if packages is None:
+        assert not installs and not browsers, ran
+        return
+    assert len(_apt(ran, "update")) == 1, ran  # the lists are updated once, not twice
+    assert [c.split()[-len(packages) :] for c in installs] == ([packages] if packages else [])
+    assert len(browsers) == 1, ran
