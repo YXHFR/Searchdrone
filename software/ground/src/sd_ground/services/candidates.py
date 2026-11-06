@@ -173,6 +173,8 @@ async def write(
     flow: MissionFlow, mission_id: str, batch: CandidateBatch
 ) -> list[CandidateWritten]:
     mission = await flow.open_mission_of(mission_id)
+    survivors = {str(r.merged_into) for r in batch.revisions if r.merged_into is not None}
+    blocks_before = await repo(flow).survey_blocks(mission_id) if survivors else {}
     try:
         written = await repo(flow).write(mission_id, batch.revisions, flow.now())
     except CandidateWriteError as exc:
@@ -196,11 +198,12 @@ async def write(
             )
     # A merged candidate that blocked the search hands that to the one it joined
     # (``CandidateRepo.survey_blocks``): its card goes out again even when this batch left
-    # it alone, so the queue puts it first now.
-    survivors = {str(r.merged_into) for r in batch.revisions if r.merged_into is not None}
+    # it alone, so the queue puts it first now; only when the merge changed its blocking,
+    # so a merge that adds nothing wakes nobody.
     survivors -= touched
     for card in await card_list(flow, mission_id, only=survivors) if survivors else []:
-        if card.blocks_survey_m is not None:
+        before = blocks_before.get(str(card.candidate_id))
+        if card.blocks_survey_m is not None and card.blocks_survey_m != before:
             flow.publish(
                 "candidates",
                 "candidate.updated",
@@ -225,7 +228,8 @@ async def on_survey_blocked(
     the operator and the AI see that a possible person keeps part of the area unsearched.
     Nothing flies because of it.
 
-    A ``skipped_m`` that is not a finite number of metres >= 0 is left out (logged). A
+    A ``skipped_m`` that is not a finite number of metres >= 0 (or is a bool) is left out
+    (logged). A
     candidate already marked with as many metres or more gets no new mark and its card
     does not go out again: the same reroute planned again (each resume, each tick of a
     pass) must not wake the AI for nothing."""
@@ -242,7 +246,8 @@ async def on_survey_blocked(
         except (KeyError, TypeError, ValueError):
             log.warning("candidate.survey_blocked_unreadable", mission_id=mission_id)
             continue
-        if not math.isfinite(skipped) or skipped < 0:
+        # float(True) is 1.0: a bool is no length either.
+        if isinstance(b["skipped_m"], bool) or not math.isfinite(skipped) or skipped < 0:
             log.warning(
                 "candidate.survey_blocked_invalid",
                 mission_id=mission_id,
