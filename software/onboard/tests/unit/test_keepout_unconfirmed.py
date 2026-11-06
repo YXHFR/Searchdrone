@@ -674,3 +674,68 @@ async def test_a_short_break_outside_a_cylinder_is_the_same_pass() -> None:
         install(r, person)
         await r.run(1.0)
         assert _inside_s(r)[person.keepout_id] == pytest.approx(1.0, abs=0.3)
+
+
+async def test_a_cylinder_that_replaces_one_the_drone_just_left_takes_its_pass_over() -> None:
+    """A pass the drone left less than KEEPOUT_PASS_GAP_S ago goes on in a cylinder that
+    replaces that one under a new id (grown, merged, handed over: the same person). Back
+    in within the gap, the pass goes on, no fresh budget. A new cylinder that overlaps no
+    cylinder the drone was on a pass through starts nothing."""
+    async with rig() as r:
+        await r.install(_sim_charter())  # type: ignore[arg-type]
+        await r.takeoff()
+        here = xy(r)
+        person = keepout(here[0] + 20.0, here[1], 40.0, source="candidate")
+        away_at = (here[0] + 200.0, here[1])
+        away = person.model_copy(update=dict(zip(("lat", "lon"), at(*away_at), strict=True)))
+        install(r, person)
+        await r.run(3.0)
+        install(r, away)  # the drone is outside it now
+        await r.run(2.0)
+        grown = keepout(away_at[0] + 2.0, away_at[1], 45.0, source="detection")  # a new id
+        far = keepout(here[0] - 300.0, here[1], 40.0, source="candidate")
+        install(r, grown, far)
+        await r.run(1.0)
+        inside = _inside_s(r)
+        assert set(inside) == {grown.keepout_id}  # nothing for one it was never in
+        assert inside[grown.keepout_id] == pytest.approx(6.0, abs=0.3)
+        back = grown.model_copy(
+            update=dict(zip(("lat", "lon"), at(here[0] + 20.0, here[1]), strict=True))
+        )
+        install(r, back, far)  # back in within the gap: the same pass goes on
+        await r.run(1.0)
+        assert _inside_s(r)[grown.keepout_id] == pytest.approx(7.0, abs=0.3)
+
+
+async def test_after_a_restart_a_cylinder_the_drone_flies_into_is_unknown_time_too(
+    tmp_path: Path,
+) -> None:
+    """On purpose (KEEPOUT_RESTART_CAUTION_S): for the minute after a restart in the air
+    a cylinder the drone comes into from outside is unknown time too, though that time is
+    measured: the drone may have been in the same cylinder before the restart and left it
+    less than the gap ago. After the minute it counts from when the drone came in."""
+    async with _restarted_in_the_air(tmp_path) as r:
+        here = xy(r)
+        person = keepout(here[0] + 200.0, here[1], 40.0, source="candidate")
+        install(r, person)
+        await r.run(1.0)
+        assert _inside_s(r) == {}  # in force, the drone outside it
+        over = person.model_copy(
+            update=dict(zip(("lat", "lon"), at(here[0] + 20.0, here[1]), strict=True))
+        )
+        install(r, over)  # the drone is in it now
+        await r.run(0.5)
+        assert _inside_s(r) == {person.keepout_id: UNKNOWN}
+    async with _restarted_in_the_air(tmp_path) as r:
+        started = r.ex._restarted_at  # pyright: ignore[reportPrivateUsage]
+        assert started is not None
+        here = xy(r)
+        person = keepout(here[0] + 200.0, here[1], 40.0, source="candidate")
+        install(r, person)
+        await r.run(KEEPOUT_RESTART_CAUTION_S + 1.0 - (r.clock.monotonic() - started))
+        over = person.model_copy(
+            update=dict(zip(("lat", "lon"), at(here[0] + 20.0, here[1]), strict=True))
+        )
+        install(r, over)
+        await r.run(0.5)
+        assert _inside_s(r)[person.keepout_id] == pytest.approx(0.5, abs=0.2)
