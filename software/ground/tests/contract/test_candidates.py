@@ -598,12 +598,20 @@ async def test_a_candidate_whose_cylinder_the_search_goes_around_is_first(r: Rig
     assert [c["blocks_survey_m"] for c in body["items"][1:]] == [None, None]
     assert body["counts"]["review"] == 3 and body["counts"]["low"] == 0
     assert candidate_event_body(top) is not None  # the AI hears of it
-    updated = [
-        e.data
-        for e in r.g.bus.replay(r.g.bus.server_epoch, 0) or []
-        if e.topic == "candidates" and e.type == "candidate.updated"
-    ]
-    assert [u["candidate_id"] for u in updated] == [low["candidate_id"]]
+
+    def updated() -> list[str]:
+        return [
+            e.data["candidate_id"]
+            for e in r.g.bus.replay(r.g.bus.server_epoch, 0) or []
+            if e.topic == "candidates" and e.type == "candidate.updated"
+        ]
+
+    # The mark's row is in the queue before the card goes out: the handler reads the
+    # cards (``card_list``) between the two, so the bus may not have it yet.
+    while not updated():
+        assert asyncio.get_running_loop().time() < end, "the blocking card never went out"
+        await asyncio.sleep(0.05)
+    assert updated() == [low["candidate_id"]]
     assert candidates_line([CandidateCard.model_validate(top)], {}, None) == (
         "Kandidater: K2 HÖG (1/1 bilder; blockerar sökningen, 71 m bana hoppad) | "
         "att granska 1, låg 0"
