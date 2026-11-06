@@ -14,7 +14,9 @@ own and never leaves it:
   them up to that far, and turns them).
 * ``decoys``: things that are not persons (rocks, backpacks); ``count`` of them at
   random in ``area`` (an area name) or one ``at_enu``. ``lure`` is the chance that the
-  detector takes one for a person in a still it is in.
+  detector takes one for a person in a still it is in. A decoy drawn in an area lies at
+  least ``DECOY_CLEAR_M`` from every person, so the truth at a card (the nearest thing)
+  is the thing the card was made from.
 * ``limit_s``: the time the nightly requirement allows to the confirmed find.
 * ``trail``: a path through the area (``[[east, north], ...]``), the map's terrain; a
   person with ``near_trail_m: [lo, hi]`` lies that far from a random point of it.
@@ -56,6 +58,10 @@ MAX_SEEDS = 200
 Pose = Literal["lying", "sitting", "standing"]
 POSES: tuple[Pose, ...] = ("lying", "sitting", "standing")
 DECOY_KINDS = ("rock", "backpack", "log", "tarp")
+# A card's position errs by a few metres (the receiver and the attitude). A rock closer
+# to a person than twice that can be the nearest thing to a card made from the person,
+# and the scripted operator would reject the person as the rock.
+DECOY_CLEAR_M = 12.0
 _TOP = {"scenario", "title", "home", "pilot", "pins", "areas", "charters", "search"}
 _SEARCH = {"limit_s", "survey", "profile", "last_seen_enu", "people", "decoys", "trail",
            "sector_order"}  # fmt: skip
@@ -229,6 +235,16 @@ def _inside(poly: Polygon, rng: random.Random) -> tuple[float, float]:
     raise WorldError("hittar ingen punkt i ytan")
 
 
+def _clear_of(poly: Polygon, people: Sequence[Thing], rng: random.Random) -> tuple[float, float]:
+    """A point in ``poly`` at least ``DECOY_CLEAR_M`` from every person (the first draw
+    when that one is clear, so a world without a decoy near a person stays the same)."""
+    for _ in range(1000):
+        p = _inside(poly, rng)
+        if all(math.hypot(p[0] - q.east, p[1] - q.north) >= DECOY_CLEAR_M for q in people):
+            return p
+    raise WorldError(f"ingen punkt i ytan {DECOY_CLEAR_M:.0f} m från alla personer")
+
+
 def _jittered(
     at: Sequence[float], jitter_m: float, keep: Polygon, rng: random.Random
 ) -> tuple[float, float]:
@@ -323,6 +339,7 @@ def load(scenario: str | Path, seed: int) -> World:
                 occlusion_pct=float(p.get("occlusion_pct", 0.0)),
             )
         )
+    people = list(things)
     for i, d in enumerate(search.get("decoys") or []):
         what = f"{path.name}: decoys[{i}]"
         _keys(d, _DECOY, what)
@@ -331,7 +348,7 @@ def load(scenario: str | Path, seed: int) -> World:
             raise WorldError(f"{what}: kind ska vara en av {DECOY_KINDS}")
         for j in range(int(d.get("count", 1))):
             if "area" in d:
-                east, north = _inside(area(d["area"]), rng)
+                east, north = _clear_of(area(d["area"]), people, rng)
             else:
                 east, north = (float(x) for x in d["at_enu"])
             things.append(
