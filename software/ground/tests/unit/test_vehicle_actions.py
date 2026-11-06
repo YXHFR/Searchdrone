@@ -487,6 +487,22 @@ async def test_a_resume_without_sd_link_marks_sdlink_unavailable_and_ends_its_re
     assert got is not None and got.result == "down" and got.answered_mono_ms is not None
 
 
+async def test_a_release_whose_sd_link_goes_down_after_the_click_marks_sdlink_failed() -> None:
+    """SD-link up at the click (``queued``) but down when the release goes out: that is a
+    send that failed, not a link that was never there."""
+    clock = FakeClock()
+    sink = RecordingSink()
+    actions = _actions(clock, mav=StubMav(), notices=sink)
+    reply = actions.resume(VID, client_action_id=str(new_id()), by=PILOT)
+    assert reply.paths["sdlink"] == "queued"
+    sink.is_up = False
+    await _drain_all(actions, StubGround(clock))
+    outcome = actions.outcome(VID, str(reply.action_id))
+    assert outcome is not None and outcome.paths["sdlink"] == "failed"
+    got = actions.release(VID)
+    assert got is not None and got.result == "down"
+
+
 async def test_an_unanswered_release_times_out_and_never_overwrites_a_newer_one() -> None:
     clock = FakeClock()
     sink = RecordingSink(acks=False, clock=clock)
