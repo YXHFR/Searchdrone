@@ -10,6 +10,11 @@ Every number of the step-wise approach lives here, so the executor, the gate and
 simulator use the same values. They are a first guess, to be tuned in the simulator.
 The events and the progress below are the onboard computer's reports of a look; the
 ground's answers are ``sd_schemas.link.InspectOutcome`` and ``InspectLower``.
+
+``InspectClosed`` and ``InspectResumeEnded`` (how a look ended onboard and what the drone
+does next; the end of the search it flies on afterwards) pass between the drone and the
+ground only: the AI hears them as skill events, so they stay out of the package's exports
+and the generated JSON Schema and TypeScript.
 """
 
 from __future__ import annotations
@@ -31,10 +36,12 @@ __all__ = [
     "DESCENT_MAX_MS",
     "DESCENT_SLOW_MS",
     "EVENT_ABORTED",
+    "EVENT_CLOSED",
     "EVENT_DONE",
     "EVENT_LASER_LOST",
     "EVENT_LOWER_OFFER",
     "EVENT_PERMIT_CHANGED",
+    "EVENT_RESUME_ENDED",
     "INSPECT_MAX_S",
     "INSPECT_SPEED_MS",
     "LOWER_OFFER_S",
@@ -48,13 +55,17 @@ __all__ = [
     "FloorReason",
     "InspectAbortReason",
     "InspectAborted",
+    "InspectCloseCause",
+    "InspectClosed",
     "InspectDone",
     "InspectEnd",
     "InspectLaserLost",
     "InspectLowerOffer",
+    "InspectNext",
     "InspectOutcomeKind",
     "InspectPhase",
     "InspectProgress",
+    "InspectResumeEnded",
     "Inspection",
     "InspectionOutcome",
     "InspectionPhase",
@@ -119,6 +130,8 @@ EVENT_LOWER_OFFER: Final = "inspect.lower_offer"
 EVENT_DONE: Final = "inspect.done"
 EVENT_ABORTED: Final = "inspect.aborted"
 EVENT_LASER_LOST: Final = "inspect.laser_lost"
+EVENT_CLOSED: Final = "inspect.closed"
+EVENT_RESUME_ENDED: Final = "inspect.resume_ended"
 EVENT_PERMIT_CHANGED: Final = "permit.changed"
 
 _AboveGround = Field(ge=0, le=1000)  # metres above the ground under the drone
@@ -178,6 +191,50 @@ class InspectLaserLost(SdModel):
 
     command_id: Id
     above_ground_m: float | None = _AboveGroundOrNone
+
+
+# How the look ended onboard (``InspectClosed.cause``): flown back to the breakpoint
+# (``resume`` issued), the way back refused, hovering over a confirmed find, another
+# order took the drone, the look's own order failed, the link lost, or the executor left
+# the look's state (STOP, FLY HOME, a takeover, a limit ...).
+InspectCloseCause = Literal[
+    "returned", "return_refused", "confirmed", "superseded", "failed", "link_loss", "left"
+]
+
+# What the drone does once the look is over (``InspectClosed.next``): flies back to where
+# the search broke off (and, from a search, flies it on), hovers waiting for an order,
+# flies home, is held by a person or the emergency path, flies another order, or follows
+# the link-loss rule.
+InspectNext = Literal["resume", "hold", "home", "held", "new_order", "link_loss"]
+
+
+class InspectClosed(SdModel):
+    """``inspect.closed``: the look is over onboard, once per look, whatever ended it.
+
+    With ``next`` "resume" the executor flies back by its own ``resume`` order
+    (``resume_command_id``, issued onboard: the ground has no row for it); from a search
+    (``breakpoint`` "survey") that order flies the interrupted search on, whose command id
+    is ``resumed_command_id``. From anywhere else (``breakpoint`` "goto") it only flies
+    back to where the look began and hovers there."""
+
+    command_id: Id  # the look's order
+    candidate_id: Id
+    cause: InspectCloseCause
+    next: InspectNext
+    breakpoint: Literal["survey", "goto"] | None = None  # with next "resume"
+    resume_command_id: Id | None = None  # the executor's own resume (next "resume")
+    resumed_command_id: Id | None = None  # the search flown on (breakpoint "survey")
+
+
+class InspectResumeEnded(SdModel):
+    """``inspect.resume_ended``: the executor's own ``resume`` after a look ended (done,
+    failed, or replaced by anything else: another order, STOP, FLY HOME, a limit ...).
+    For a search flown on, ``resumed_command_id`` is that search's order."""
+
+    command_id: Id  # the look's order
+    resumed_command_id: Id | None = None
+    status: Literal["done", "failed", "superseded"]
+    reason_codes: list[str] = Field(default_factory=list[str], max_length=8)
 
 
 class PermitChanged(SdModel):

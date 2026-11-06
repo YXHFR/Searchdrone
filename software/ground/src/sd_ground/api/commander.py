@@ -528,6 +528,22 @@ def to_commander(event: BusEvent) -> dict[str, Any] | None:
             for k in ("command_id", "skill", "status", "reason_codes", "message_sv", "details")
         }
         body["command_id"] = d.get("id")
+        sector_id = (d.get("params") or {}).get("sector_id")
+        if sector_id is not None:
+            body["sector_id"] = sector_id  # which sector's search ended
+    elif event.type == "inspection.closed" or (
+        event.type == "inspection.resume_ended" and d.get("issuer_kind") == "brain"
+    ):
+        # A look's end ("closed"; every look, the pilot's too: the AI's moves were refused
+        # with INSPECT_BUSY until it) and the end of the AI's search flown on after a look
+        # (that search's own order), as skill events (``services.inspections``).
+        kind = "event.skill"
+        body = {
+            k: d.get(k)
+            for k in ("command_id", "skill", "status", "reason_codes", "message_sv", "details")
+        }
+        if d.get("sector_id") is not None:
+            body["sector_id"] = d["sector_id"]
     elif event.type == "charter.updated":
         kind = "event.charter"
         body = {

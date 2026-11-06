@@ -1113,3 +1113,26 @@ async def test_an_onboard_refusal_for_another_reason_wakes_the_model() -> None:
     await loop.settle()
     assert len(fg.commands) == 1
     assert [t.trigger for t in backend.turns] == ["operator_message", "skill_event"]
+
+
+async def test_a_looks_done_is_not_its_end_its_closed_event_is() -> None:
+    """The drone waits over the candidate after a look's "done": the AI's order is still
+    unended (no idle turn acts in between) until the look's "closed" event, which wakes
+    the AI with what the drone does next."""
+    backend = Steps(say("Väntar på beslutet."), say("Söker vidare."))
+    loop, fg, _ = make_loop(backend)
+    loop._unended["look-1"] = None  # pyright: ignore[reportPrivateUsage]
+    body: dict[str, Any] = {
+        "command_id": "look-1",
+        "skill": "inspect_detection",
+        "status": "done",
+    }
+    for status in ("done", "closed"):
+        evt = {"type": "event.skill", "body": body | {"status": status}}
+        fg.apply_event(evt)
+        loop.handle_event(evt)
+        await loop.settle()
+        if status == "done":
+            assert "look-1" in loop._unended  # pyright: ignore[reportPrivateUsage]
+    assert not loop._unended  # pyright: ignore[reportPrivateUsage]
+    assert [t.trigger for t in backend.turns] == ["skill_event", "skill_event"]
