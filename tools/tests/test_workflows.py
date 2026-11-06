@@ -727,7 +727,8 @@ def test_the_direct_apt_rule_sees_a_gap() -> None:
 
 def test_the_apt_script_falls_back_and_never_times_out_dpkg() -> None:
     script = (ROOT / "tools" / "ci" / "apt-install.sh").read_text(encoding="utf-8")
-    assert "/etc/apt/apt-mirrors.txt" in script and "archive.ubuntu.com" in script
+    assert "/etc/apt/apt-mirrors.txt" in script
+    assert "http://archive.ubuntu.com/ubuntu/" in script, "no fallback mirror"
     assert "--download-only" in script
     installs = [ln for ln in script.splitlines() if " install -y" in ln and "apt-get" in ln]
     assert installs and all("--download-only" in ln or "timeout" not in ln for ln in installs), (
