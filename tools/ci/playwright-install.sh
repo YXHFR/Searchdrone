@@ -25,10 +25,14 @@ if ! grep -qE '^(Missing system dependencies|All system dependencies are install
 fi
 mapfile -t packages < <(sed -n 's/^  \([^ ]\+\)$/\1/p' <<<"$report")
 # Playwright counts the packages it lists; a format change must not drop some silently.
-want="$(sed -n 's/^Missing system dependencies (\([0-9]\+\)):$/\1/p' <<<"$report")"
-if [ "${want:-0}" != "${#packages[@]}" ]; then
+# A "Missing" header without its count is such a change too, not zero packages.
+want=0
+if grep -q '^Missing system dependencies' <<<"$report"; then
+  want="$(sed -n 's/^Missing system dependencies (\([0-9]\+\)):$/\1/p' <<<"$report")"
+fi
+if [ "$want" != "${#packages[@]}" ]; then
   echo "$report" >&2
-  echo "playwright listed ${want:-0} missing packages, read ${#packages[@]}" >&2
+  echo "playwright listed ${want:-no count of} missing packages, read ${#packages[@]}" >&2
   exit 1
 fi
 if [ "${#packages[@]}" -gt 0 ]; then
