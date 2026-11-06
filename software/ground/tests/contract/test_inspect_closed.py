@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
+from structlog.testing import capture_logs
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "helpers"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -514,6 +515,78 @@ async def test_after_a_ground_restart_the_end_of_the_search_broken_off_is_told_o
     await _resume_ended(r, sent, sid)  # a resend
     (e,) = bus(r, "inspection.resume_ended")
     assert e.data["command_id"] == sid
+
+
+@pytest.mark.parametrize("status", ["running", "done"])
+async def test_after_a_ground_restart_the_end_of_a_search_not_broken_off_is_only_logged(
+    r: Rig, monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    """After a restart only a superseded search can be the one the look broke off: an older
+    search of the same mission that is still running, or done, is not. Its end is only
+    logged; the AI is told nothing and the sector stays as it is."""
+    _mid, sid, sent, d, _ = await _flown_on_a(r)
+    r.flow.looks.clear()  # as after a restart
+    other = str(new_id())
+    _command_as(r, monkeypatch, other, sid, status=status)  # same mission, before the look
+    with capture_logs() as logs:
+        await _resume_ended(r, sent, other)
+    assert not bus(r, "inspection.resume_ended")
+    assert str(sent.command_id) not in r.flow.resume_told
+    assert any(
+        e["event"] == "inspect.resume_ended_unmatched" and e["resumed_command_id"] == other
+        for e in logs
+    ), logs
+    rows = {s["sector_id"]: s for s in (await d.situation())["sectors"]}
+    assert rows["A"]["status"] != "done"
+
+
+async def test_after_a_ground_restart_the_end_of_an_unknown_search_is_only_logged(
+    r: Rig,
+) -> None:
+    """The run's end names a search the ground has no row for: logged, nothing told."""
+    _mid, _sid, sent, _d, _ = await _flown_on_a(r)
+    r.flow.looks.clear()  # as after a restart
+    unknown = str(new_id())
+    with capture_logs() as logs:
+        await _resume_ended(r, sent, unknown)
+    assert not bus(r, "inspection.resume_ended")
+    assert any(
+        e["event"] == "inspect.resume_ended_unmatched" and e["resumed_command_id"] == unknown
+        for e in logs
+    ), logs
+
+
+async def test_the_end_of_a_run_after_an_unknown_look_is_only_logged(r: Rig) -> None:
+    """A run's end for a look the ground has neither in memory nor in its database:
+    logged, nothing told."""
+    _mid, sid, _sent, _d, _ = await _flown_on_a(r)
+    look_id = str(new_id())
+    with capture_logs() as logs:
+        await event(
+            r, "inspect.resume_ended", command_id=look_id, resumed_command_id=sid, status="done"
+        )
+    assert not bus(r, "inspection.resume_ended")
+    assert any(
+        e["event"] == "inspect.resume_ended_unmatched" and e["command_id"] == look_id for e in logs
+    ), logs
+
+
+async def test_a_resume_ordered_from_the_ground_ends_the_link_to_the_looks_resume(
+    r: Rig,
+) -> None:
+    """The drone flies the search on with the look's own resume, then runs a resume the
+    ground ordered and the drone acked (e.g. the pilot's after a STOP): its state names
+    that order by its id. That is not the look's resume, though its skill is "resume":
+    the link to the search flown on ends."""
+    mid, _sid, sent, _d, resume_id = await _flown_on_a(r)
+    ordered = new_id()  # an order id like the ground's own
+    assert ordered != resume_id
+    r.onboard.active_command_id, r.onboard.active_skill = ordered, "resume"
+    await _snapshots_after(r)
+    look = r.flow.looks[str(sent.command_id)]
+    assert look.resume_left_at is not None
+    assert inspections.flown_on(r.flow, mid) == []
+    assert inspections.search_flown_on(r.flow, mid, str(ordered), "resume") is None
 
 
 async def test_while_the_ground_ends_a_look_the_ais_moves_stay_refused(
