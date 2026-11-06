@@ -699,7 +699,7 @@ def test_release_workflow_writes_only_from_a_job_that_runs_no_repo_code() -> Non
 DIRECT_APT_RE = re.compile(
     r"\b(apt|apt-get|aptitude|apt-fast|nala)\s+([^\s;&|#]+\s+)*?"
     r"(update|install|upgrade|dist-upgrade|full-upgrade)\b"
-    r"|\bdpkg\s+([^\s;&|#]+\s+)*?(-i|--install)\b|--with-deps|\binstall-deps\b"
+    r"|\bdpkg\s+([^\s;&|#]+\s+)*?(-[a-zA-Z]*i[a-zA-Z]*|--install)\b|--with-deps|\binstall-deps\b"
 )
 
 
@@ -729,6 +729,8 @@ def test_the_direct_apt_rule_sees_a_gap() -> None:
         "sudo nala install x",
         "sudo dpkg -i x.deb",
         "sudo dpkg --install x.deb",
+        "sudo dpkg -Ei x.deb",
+        "sudo dpkg -iG x.deb",
     ):
         assert DIRECT_APT_RE.search(bad), bad
     (split,) = _run_lines("sudo apt-get \\\n  install -y x\n")
@@ -756,8 +758,9 @@ def test_the_apt_script_falls_back_and_never_times_out_dpkg() -> None:
 
 
 # The two scripts run for real, with sudo, timeout, sleep, apt-get and pnpm replaced by
-# fakes on PATH and the apt folders in a scratch dir. FAKE_FAIL_DOWNLOADS fails that many
-# download tries (as a timeout would), FAKE_INSTALL_RC is the final install's exit code and
+# fakes on PATH and the apt folders in a scratch dir. FAKE_FAIL_UPDATES and
+# FAKE_FAIL_DOWNLOADS fail that many update and download tries (as a timeout would),
+# FAKE_INSTALL_RC is the final install's exit code and
 # FAKE_PW_REPORT is what `playwright install-deps --dry-run` prints.
 FAKES = {
     "sudo": 'exec env "$@"\n',
@@ -765,7 +768,11 @@ FAKES = {
     "sleep": "exit 0\n",
     "apt-get": """echo "apt-get $*" >> "$FAKE_LOG"
 case " $* " in
-  *" update "*) exit 0 ;;
+  *" update "*)
+    n=$(( $(cat "$FAKE_DIR/updates" 2>/dev/null || echo 0) + 1 ))
+    echo "$n" > "$FAKE_DIR/updates"
+    if [ "$n" -le "${FAKE_FAIL_UPDATES:-0}" ]; then exit 124; fi
+    exit 0 ;;
   *" --download-only "*)
     n=$(( $(cat "$FAKE_DIR/downloads" 2>/dev/null || echo 0) + 1 ))
     echo "$n" > "$FAKE_DIR/downloads"
@@ -831,12 +838,16 @@ def _apt(ran: list[str], kind: str) -> list[str]:
         (("x",), {"FAKE_FAIL_DOWNLOADS": "1"}, 0, (2, 2, 1), False),
         (("x",), {"FAKE_FAIL_DOWNLOADS": "3"}, 1, (3, 3, 0), False),
         (("x",), {"FAKE_INSTALL_RC": "100"}, 100, (1, 1, 1), True),
+        (("x",), {"FAKE_FAIL_UPDATES": "3"}, 1, (3, 0, 0), False),
         (("--fresh", "x"), {}, 0, (0, 1, 1), True),
+        (("--fresh", "x"), {"FAKE_FAIL_DOWNLOADS": "1"}, 0, (1, 2, 1), False),
         (("--update-only",), {}, 0, (1, 0, 0), True),
         (("--archive-mirror",), {}, 0, (0, 0, 0), False),
         ((), {}, 2, (0, 0, 0), True),
         (("--update-only", "x"), {}, 2, (0, 0, 0), True),
         (("--fresh", "--update-only"), {}, 2, (0, 0, 0), True),
+        (("x", "-oFoo"), {}, 2, (0, 0, 0), True),
+        (("--fresh", "x", "-o", "Foo"), {}, 2, (0, 0, 0), True),
     ],
 )
 def test_the_apt_script_runs(
@@ -860,6 +871,8 @@ def test_the_apt_script_runs(
         (MISSING, 0, ["libnss3", "libxss1"]),
         ("All system dependencies are installed.", 0, []),
         ("Missing system dependencies (3):\n  libnss3\n  libxss1", 1, None),
+        ("Missing system dependencies:", 1, None),
+        ("Missing system dependencies:\n  libnss3", 1, None),
         ("Failed to install browser dependencies", 1, None),
     ],
 )
