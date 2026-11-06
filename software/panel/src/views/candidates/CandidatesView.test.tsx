@@ -103,6 +103,21 @@ describe("CandidatesView", () => {
     expect(seqs()).toEqual(["2", "1", "3"]);
   });
 
+  it("shows first, and why, a low candidate whose cylinder the search had to go around", () => {
+    useCandidateStore
+      .getState()
+      .setCards([
+        card({ seq: 1, priority: 0.9 }),
+        card({ seq: 2, priority: 0.1, priority_class: "high", blocks_survey_m: 71.4 }),
+      ]);
+    view();
+    const seqs = screen.getAllByTestId("candidate-card").map((li) => li.getAttribute("data-seq"));
+    expect(seqs).toEqual(["2", "1"]);
+    expect(screen.getByTestId("card-blocks").textContent).toBe(
+      "Blockerar sökningen, 71 m bana hoppad",
+    );
+  });
+
   it("moves with J and K and opens with Enter", () => {
     useCandidateStore.getState().setCards([card({ seq: 1 }), card({ seq: 2, priority: 0.5 })]);
     view();

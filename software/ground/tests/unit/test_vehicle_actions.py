@@ -21,17 +21,19 @@ from sd_ground.services.latches import Latches
 from sd_ground.services.vehicle_actions import (
     MANUAL_MIN_INTERVAL_S,
     OUTCOMES_MAX,
+    RELEASE_ACK_WAIT_S,
     ActionRefusedError,
     NoNoticeSink,
     NoticeResult,
     OperatorPresence,
+    Release,
     VehicleActions,
 )
 from sd_ground.sources import EmergencyUnavailableError
 from sd_mav.vehicle import FcTelemetry
 from sd_schemas.api import ManualControlInput
 from sd_schemas.base import SdModel, new_id
-from sd_schemas.link import CommanderStatus, OperatorOverrideNotice, StickAxes
+from sd_schemas.link import CommanderStatus, OperatorOverrideNotice, OperatorRelease, StickAxes
 from sd_testing import FakeClock
 
 OTHER = "sim-02"
@@ -447,6 +449,77 @@ async def test_resume_without_a_latch_publishes_a_bare_release() -> None:
     await actions.drain(g)
     released = [p for t, _s, p in g.events if t == "latch.released"]
     assert released == [{"action_seq": reply.action_seq}]  # nothing was latched
+
+
+async def test_resume_keeps_its_release_until_the_executor_answers() -> None:
+    """The release is there before the 202 (an order right after it sees it), goes out
+    acknowledged, and keeps the executor's answer and when it came."""
+    clock = FakeClock()
+    sink = RecordingSink()
+    actions = _actions(clock, mav=StubMav(), notices=sink)
+    reply = actions.resume(VID, client_action_id=str(new_id()), by=PILOT)
+    assert actions.release(VID) == Release(reply.action_seq)  # on its way
+    clock.advance(1.5)
+    sent_ms = clock.monotonic_ms()
+    await actions.drain(StubGround(clock))
+    await clock.run_for(0.1)
+    assert [type(m) for m in sink.sent] == [OperatorRelease]
+    got = actions.release(VID)
+    assert got is not None and got.action_seq == reply.action_seq and got.result == "acked"
+    assert got.answered_mono_ms is not None and sent_ms <= got.answered_mono_ms <= sent_ms + 10
+    outcome = actions.outcome(VID, str(reply.action_id))
+    assert outcome is not None and outcome.paths["sdlink"] == "sent"
+
+
+async def test_a_resume_without_sd_link_marks_sdlink_unavailable_and_ends_its_release() -> None:
+    """SD-link down at the click: the release cannot go out, which the outcome says as
+    for every other notice (``unavailable``, not ``failed``), and an order's wait for it
+    ends at once (``down``)."""
+    clock = FakeClock()
+    sink = RecordingSink(is_up=False)
+    actions = _actions(clock, mav=StubMav(), notices=sink)
+    reply = actions.resume(VID, client_action_id=str(new_id()), by=PILOT)
+    assert reply.paths["sdlink"] == "unavailable"
+    await _drain_all(actions, StubGround(clock))
+    outcome = actions.outcome(VID, str(reply.action_id))
+    assert outcome is not None and outcome.paths["sdlink"] == "unavailable"
+    got = actions.release(VID)
+    assert got is not None and got.result == "down" and got.answered_mono_ms is not None
+
+
+async def test_a_release_whose_sd_link_goes_down_after_the_click_marks_sdlink_failed() -> None:
+    """SD-link up at the click (``queued``) but down when the release goes out: that is a
+    send that failed, not a link that was never there."""
+    clock = FakeClock()
+    sink = RecordingSink()
+    actions = _actions(clock, mav=StubMav(), notices=sink)
+    reply = actions.resume(VID, client_action_id=str(new_id()), by=PILOT)
+    assert reply.paths["sdlink"] == "queued"
+    sink.is_up = False
+    await _drain_all(actions, StubGround(clock))
+    outcome = actions.outcome(VID, str(reply.action_id))
+    assert outcome is not None and outcome.paths["sdlink"] == "failed"
+    got = actions.release(VID)
+    assert got is not None and got.result == "down"
+
+
+async def test_an_unanswered_release_times_out_and_never_overwrites_a_newer_one() -> None:
+    clock = FakeClock()
+    sink = RecordingSink(acks=False, clock=clock)
+    actions = _actions(clock, mav=StubMav(), notices=sink)
+    g = StubGround(clock)
+    first = actions.resume(VID, client_action_id=str(new_id()), by=PILOT)
+    await actions.drain(g)
+    await clock.run_for(0.5)
+    second = actions.resume(VID, client_action_id=str(new_id()), by=PILOT)
+    await actions.drain(g)
+    await clock.run_for(0.6)  # the first one's wait ends: the second one stays
+    assert sink.waits == [RELEASE_ACK_WAIT_S, RELEASE_ACK_WAIT_S]
+    assert actions.release(VID) == Release(second.action_seq)
+    await clock.run_for(0.5)
+    got = actions.release(VID)
+    assert got is not None and got.action_seq == second.action_seq and got.result == "timeout"
+    assert first.action_seq < second.action_seq
 
 
 async def test_pump_keeps_going_after_a_failing_round() -> None:

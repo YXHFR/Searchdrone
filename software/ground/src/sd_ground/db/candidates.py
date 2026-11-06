@@ -196,6 +196,60 @@ class CandidateRepo:
         )
         return [dict(_json(r["payload"])) for r in rows]
 
+    async def blocked_candidates(self, mission_id: str, source: str, source_id: str) -> list[str]:
+        """The mission's candidate a cylinder was made of: a ``candidate`` cylinder's own,
+        a ``detection`` cylinder's (the drone's own, of one detection) the candidate that
+        detection joined; a merged one's the candidate it was merged into."""
+        if source == "candidate":
+            sql = (
+                "SELECT DISTINCT ON (candidate_id) candidate_id::text AS c, "
+                "merged_into::text AS m FROM candidates WHERE mission_id = :m "
+                "AND candidate_id = CAST(:s AS uuid) ORDER BY candidate_id, rev DESC"
+            )
+        elif source == "detection":
+            sql = (
+                "SELECT DISTINCT ON (c.candidate_id) c.candidate_id::text AS c, "
+                "c.merged_into::text AS m FROM candidate_observations o "
+                "JOIN candidates c ON c.candidate_id = o.candidate_id "
+                "WHERE c.mission_id = :m AND o.detection_id = CAST(:s AS uuid) "
+                "ORDER BY c.candidate_id, c.rev DESC"
+            )
+        else:
+            return []
+        rows = await self._all(sql, m=mission_id, s=source_id)
+        return [str(r["m"] or r["c"]) for r in rows]
+
+    async def survey_blocks(self, mission_id: str) -> dict[str, float]:
+        """The candidates whose cylinder a search went around (``candidate.blocks_survey``
+        events), with the most metres of search it left out there. A merged candidate's
+        blocking moves to the candidate it was merged into (down a chain of merges), where
+        the larger of the two counts: its cylinder is now the survivor's."""
+        rows = await self._all(
+            "SELECT payload->>'candidate_id' AS c, max((payload->>'skipped_m')::float) AS m "
+            "FROM events WHERE mission_id = :m AND type = 'candidate.blocks_survey' "
+            "GROUP BY 1",
+            m=mission_id,
+        )
+        raw = {str(r["c"]): float(r["m"]) for r in rows}
+        if not raw:
+            return {}
+        merged = await self._all(
+            "SELECT candidate_id, merged_into FROM (SELECT DISTINCT ON (candidate_id) "
+            "candidate_id::text AS candidate_id, merged_into::text AS merged_into "
+            "FROM candidates WHERE mission_id = :m ORDER BY candidate_id, rev DESC) newest "
+            "WHERE merged_into IS NOT NULL",
+            m=mission_id,
+        )
+        into = {str(r["candidate_id"]): str(r["merged_into"]) for r in merged}
+        out: dict[str, float] = {}
+        for cid, m in raw.items():
+            seen = {cid}
+            while cid in into and into[cid] not in seen:  # the write refuses cycles; guard
+                cid = into[cid]
+                seen.add(cid)
+            out[cid] = max(m, out.get(cid, m))
+        return out
+
     # --- the search service's writes -------------------------------------------------
 
     async def write(

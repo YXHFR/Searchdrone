@@ -193,6 +193,8 @@ class Scenario:
     mid: str = ""
     observer_token: str = ""
     sticks_seq: int = 0
+    # the snapshot's (state_epoch = boot_id, state_seq) when Resume was last pressed
+    resume_at: tuple[int, int] = (0, 0)
     harness_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     bus_log: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
@@ -379,6 +381,9 @@ class Scenario:
         headers = dict(H)
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
+        if action == "resume":  # a snapshot from after the release comes later
+            snap = await self.onboard_state()
+            self.resume_at = (int(snap["state_epoch"]), int(snap["state_seq"]))
         return await self.r.panel.post(
             f"/api/v1/vehicles/{VID}/actions/{action}",
             json={"client_action_id": str(new_id())},
@@ -515,6 +520,25 @@ class Scenario:
         live = (await self.r.panel.get(f"/api/v1/vehicles/{VID}/state")).json()
         assert live["snapshot"] is not None, live
         return dict(live["snapshot"])
+
+    async def released_onboard(self) -> bool:
+        """Resume has reached the onboard executor: it hovers because the pilot let go.
+
+        Not just "no longer HELD": the snapshot comes at 2 Hz and the ground sends Resume
+        a moment after its 202, so right after a take-over the latest snapshot can still
+        show the state from before it (an order sent then finds the executor HELD and is
+        refused with ONB_CONTROL_HELD). And from a snapshot sent after the Resume
+        (``state_seq`` past the one when it was pressed, or a later start of sd-onboard:
+        ``state_epoch``, its ``boot_id``, whose ``state_seq`` counts from 1 again): a HOLD
+        from before it, by the same name, is no proof."""
+        snap = await self.onboard_state()
+        return (
+            (int(snap["state_epoch"]), int(snap["state_seq"])) > self.resume_at
+            and snap["executor_state"] == "HOLD"
+            and snap["hold_reason"] == "operator_released"
+            and not snap["manual_control"]
+            and not snap["control_suspended"]
+        )
 
     async def gate(self, command_id: str) -> list[dict[str, Any]]:
         res = await self.r.panel.get(

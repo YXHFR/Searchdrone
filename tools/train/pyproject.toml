@@ -17,6 +17,9 @@ cu126 = ["torch==2.14.1"]
 
 [dependency-groups]
 dev = ["pytest>=8.3", "pytest-socket>=0.7"]
+# `just train-detector-cloud` only: the Modal client (Apache-2.0). Not a default group, so
+# `just train-detector` and CI never install it.
+cloud = ["modal>=1.6.1,<2"]
 
 [tool.pytest.ini_options]
 # As the workspace: tests never reach the internet.

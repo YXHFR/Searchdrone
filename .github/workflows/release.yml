@@ -34,6 +34,8 @@ jobs:
   # pinned by hash for Python 3.12. A release.yml without
   # this job, or a deleted release, is the owner's to stop: a ruleset on v* tags and
   # immutable releases (see the checker).
+  # The job's name is part of the check: release_anchor wants a successful "gates" job
+  # in the anchor's run, so renaming it stops every later release.
   gates:
     runs-on: ubuntu-24.04
     timeout-minutes: 300
@@ -53,6 +55,7 @@ jobs:
           git fetch -q --no-tags origin +refs/heads/main:refs/remotes/origin/main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - name: Every commit on main came from a pull request with green gates
+        shell: bash # -eo pipefail, as tools/tests run the anchor loop
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -67,8 +70,9 @@ jobs:
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
             --jq '.[] | select(.draft | not) | [.tag_name, .author.login] | @tsv' \
             > "$gate/releases.txt"
-          # The newest release on the line (ties: the larger tag name, as release_anchor);
-          # one that is not on it is only allowed while another one is.
+          # The newest release on the line (ties: the larger tag name, as release_anchor,
+          # e.g. vX.Y.Z-rc.N over vX.Y.Z on the same commit); one that is not on it is
+          # only allowed while another one is.
           export LC_ALL=C # tag names compare as bytes, like Python
           since="" best=-1 tag="" by="" off=""
           while IFS=$'\t' read -r name author; do
@@ -98,9 +102,10 @@ jobs:
             # whose release failed or was deleted.
             # Its own assignment, so a git error stops the step; only grep may find nothing.
             tags=$(git tag --merged "$GITHUB_SHA" --list 'v*')
+            # grep's 1 (no line) is fine; its 2 (an error) stops the step.
             tags=$(printf '%s\n' "$tags" \
-              | grep -Ex 'v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?' \
-              | grep -vxF "$GITHUB_REF_NAME" || true)
+              | { grep -Ex 'v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?' || [ $? -eq 1 ]; } \
+              | { grep -vxF "$GITHUB_REF_NAME" || [ $? -eq 1 ]; })
             if [ -n "$off$tags" ]; then
               echo "ingen release på taggens linje, men releaser:$off; taggar: ${tags//$'\n'/ }" >&2
               exit 1

@@ -38,6 +38,20 @@ def test_every_scenario_loads_inside_its_charter(scenario: str) -> None:
         assert sum(t.target for t in w.things) == (0 if scenario == "SK03" else 1)
 
 
+@pytest.mark.parametrize("scenario", SCENARIO_IDS)
+def test_a_decoy_drawn_in_an_area_lies_clear_of_every_person(scenario: str) -> None:
+    # SK09 seed 2 had a rock 2 m from the target: a card on the target could then be
+    # nearer the rock, and the scripted operator rejected the target as the rock.
+    for seed in range(1, 51):
+        w = load(scenario, seed)
+        for d in w.things:
+            if d.person:
+                continue
+            for p in w.people:
+                gap = math.hypot(d.east - p.east, d.north - p.north)
+                assert gap >= search_world.DECOY_CLEAR_M, (seed, d.thing_id, p.thing_id, gap)
+
+
 def test_the_same_seed_gives_the_same_world_and_another_seed_moves_it() -> None:
     a, b, c = load("SK01", 1), load("SK01", 1), load("SK01", 2)
     assert a.things == b.things

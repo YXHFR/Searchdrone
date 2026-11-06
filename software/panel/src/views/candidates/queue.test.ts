@@ -20,6 +20,15 @@ describe("candidate queue", () => {
     expect(q.rejected.map((c) => c.seq)).toEqual([6, 5]);
   });
 
+  it("puts a candidate that blocks the search first, whatever its priority", () => {
+    const q = groupQueue([
+      card({ seq: 1, priority: 0.9 }),
+      card({ seq: 2, priority: 0.1, priority_class: "high", blocks_survey_m: 71.4 }),
+      card({ seq: 3, priority: 0.5, priority_class: "medium" }),
+    ]);
+    expect(q.review.map((c) => c.seq)).toEqual([2, 1, 3]);
+  });
+
   it("numbers confirmed finds in candidate order", () => {
     const f = findNumbers([
       card({ seq: 9, state: "confirmed" }),

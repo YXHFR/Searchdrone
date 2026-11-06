@@ -269,7 +269,12 @@ async def submit(
         if str(old.mission_id) != mission_id or old.skill != skill:
             raise FlowError(409, "ID_CONFLICT", "Orderns id används redan.")
         return Submitted(old, await _last_gate(flow, old), created=False)
+    vehicle_id = (await flow.mission(mission_id)).vehicle_id
+    # Before the lock, so a wait holds up no other order or click; again under it (at
+    # once, unless a Resume came in between).
+    await flow.released_onboard(vehicle_id)
     async with flow._lock:  # one order at a time: the gate's picture must not race
+        await flow.released_onboard(vehicle_id)
         mission = await flow.open_mission_of(mission_id)
         if skill == "propose_charter_change":
             return await _propose(
@@ -652,6 +657,7 @@ async def estimate(
     charter_version: int | None,
 ) -> EstimateResult:
     """The gate in phase ``estimate`` (no order is created) plus a rough time and battery."""
+    await flow.released_onboard((await flow.mission(mission_id)).vehicle_id)
     mission = await flow.open_mission_of(mission_id)
     ctx = await flow.gate_context(mission)
     if skill == _INSPECT:
@@ -828,7 +834,9 @@ async def decide(
                     409, "CLEARANCE_REQUIRED", "Bekräfta att det är fritt runt drönaren först."
                 )
             confirmations.append("clear_around_drone")
+    await flow.released_onboard(mission.vehicle_id)  # as in ``submit``: before the lock
     async with flow._lock:
+        await flow.released_onboard(mission.vehicle_id)
         now = flow.now()
         fresh = await flow.repo.approval(str(card.id))
         if fresh is None or str(fresh.status) != "pending":

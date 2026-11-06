@@ -535,6 +535,20 @@ train-detector *args:
 export-detector *args:
     @just _train export_onnx.py "$@"
 
+# Train and export the person detector on a rented Modal GPU, billed per second: uploads
+# only the train and val pictures of sets that may be trained on, shows the cost and asks
+# first (keys: gpu, yes, hours, max_hours, name and train-detector's; see tools/train/README.md)
+train-detector-cloud *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    data=$(PYTHONPATH=tools uv run --no-sync python -m bench.datadir "$@")
+    rest=()
+    for arg in "$@"; do [[ "$arg" == data=* ]] || rest+=("$arg"); done
+    cd tools/train
+    # the Modal client only; --inexact keeps a PyTorch already installed for train-detector
+    uv sync --frozen --quiet --inexact --group cloud
+    PYTHONPATH="$PWD/..:$PWD" uv run --no-sync python cloud.py "data=$data" ${rest[@]+"${rest[@]}"}
+
 # The detector training's tests, on the CPU with a small synthetic bank (no data, no weights)
 test-train:
     cd tools/train && uv sync --frozen --quiet --extra cpu
