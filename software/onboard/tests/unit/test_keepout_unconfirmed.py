@@ -8,12 +8,19 @@ without the permit it goes around.
 
 from __future__ import annotations
 
+import asyncio
+import datetime as dt
+import json
 import math
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 import pytest
-from onboard_helpers import PLANE, Rig, charter, rig, square
+from onboard_helpers import PLANE, Rig, at, charter, rig, square
 from test_inspect import (
     SKILLS,
     _exiting,  # pyright: ignore[reportPrivateUsage]
@@ -30,19 +37,26 @@ from sd_mav.mission import MISSION
 from sd_mav.modes import CopterMode
 from sd_onboard.executor import executor as executor_module
 from sd_onboard.executor.keepout_reflex import remaining
+from sd_onboard.io.persistence import StateStore
 from sd_onboard.skills import goto as goto_module
 from sd_onboard.skills.goto import GotoHandler
+from sd_onboard.skills.resume import ResumeHandler
 from sd_onboard.skills.survey_sector import BLOCKED_MIN_M, SurveyRun
 from sd_safety.constants import (
     GOTO_ALT_STEP_TOL_M,
     KEEPOUT_PAIR_MIN_M,
     KEEPOUT_PAIR_WINDOW_S,
+    KEEPOUT_PASS_GAP_S,
     KEEPOUT_PASS_MAX_S,
+    KEEPOUT_RESTART_CAUTION_S,
     KEEPOUT_SCORE_SURE,
 )
 from sd_schemas.base import LatLon, LatLonAlt, new_id
 from sd_schemas.executor import ExecutorState as S
+from sd_schemas.executor import SurveyResumePoint
+from sd_schemas.keepout import Keepout, leg_enters
 from sd_schemas.link import KeepoutInstall
+from sd_schemas.skills import ResumeParams
 
 # --- a second look before a cylinder ----------------------------------------------------
 
@@ -466,3 +480,197 @@ async def test_an_unconfirmed_cylinder_that_is_confirmed_on_the_way_out_is_not_c
         await r.until(lambda: r.ex.state == S.HOLD, 120)
         assert all(math.dist(p, centre) >= other.radius_m - 0.5 for p in track_xy(r, mark))
         assert _outside_all(r)
+
+
+# --- after a restart: the time inside is unknown ----------------------------------------
+
+
+def _saved_mid_search(path: Path, *keepouts: Keepout) -> None:
+    """What a search interrupted at home saved: its rest (east through the cylinder
+    around home, then north) and the cylinders it had taken (none: no install)."""
+    here = LatLon(lat=PLANE.latlon(0, 0)[0], lon=PLANE.latlon(0, 0)[1])
+    rp = SurveyResumePoint(
+        command_id=new_id(),
+        waypoints=[LatLon(lat=la, lon=lo) for la, lo in (at(-150, 0), at(150, 0), at(150, 80))],
+        alt_m=40,
+        speed_ms=7,
+        base_index=0,
+        seq_offset=0,
+        next_index=1,
+        interrupted_at=here,
+    )
+    taken = KeepoutInstall(install_seq=5, keepouts=list(keepouts)) if keepouts else None
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "executor_state.json").write_text(
+        json.dumps(
+            {
+                "schema": 2,
+                "vehicle_id": "sim-01",
+                "mission_id": None,
+                "boot_id": 7,
+                "state": "SURVEY",
+                "hold_reason": None,
+                "held_by": None,
+                "expected_mode": "AUTO",
+                "charter_id": None,
+                "charter_version": None,
+                "active_command_id": None,
+                "resume_point": rp.model_dump(mode="json"),
+                "keepouts": taken.model_dump(mode="json") if taken else None,
+                "saved_mono_ms": 1,
+                "saved_utc": "2026-11-04T10:00:00Z",
+            }
+        )
+    )
+
+
+@asynccontextmanager
+async def _restarted_in_the_air(tmp_path: Path, *keepouts: Keepout) -> AsyncIterator[Rig]:
+    """sd-onboard started again over home at 40 m mid-search, ``keepouts`` saved; then
+    the ground's charter (sim, overflight allowed)."""
+    _saved_mid_search(tmp_path, *keepouts)
+    async with rig(start=False) as r:
+        r.ex.store = StateStore(tmp_path, r.clock)
+        r.fc.armed, r.fc.alt_rel, r.fc.mode = True, 40.0, CopterMode.AUTO
+        r.fc.target = (r.fc.lat, r.fc.lon, 40.0)
+        r.background.append(asyncio.ensure_future(r.ex.run(r.stop)))
+        await r.until(lambda: r.ex._started, 10)  # pyright: ignore[reportPrivateUsage]
+        assert r.ex.state == S.HELD and r.ex.held_by == "onboard_restart"
+        await r.install(_sim_charter())  # type: ignore[arg-type]
+        yield r
+
+
+def _inside_s(r: Rig) -> dict[UUID, float]:
+    return dict(r.ex._keepout_inside_s())  # pyright: ignore[reportPrivateUsage]
+
+
+def _resume_path(r: Rig) -> list[tuple[float, float]]:
+    """The search resumed from where the drone is, as the executor plans it."""
+    ctx = r.ex._plan_context(new_id())  # pyright: ignore[reportPrivateUsage]
+    plan = ResumeHandler().plan(ResumeParams(), ctx)
+    return [PLANE.xy(p.lat, p.lon) for p in plan.path]
+
+
+UNKNOWN = KEEPOUT_PASS_MAX_S  # unknown time counts as the whole budget used
+
+
+async def test_after_a_restart_inside_a_cylinder_a_resume_may_only_leave_it(
+    tmp_path: Path,
+) -> None:
+    """An onboard restart mid-passage forgets when the drone came in: its time inside is
+    unknown (no fresh 12 s; the whole budget counts as used), and the search resumed from
+    there may only leave the cylinder first, never go deeper. The same cylinder coming
+    around the drone in a flight without a restart counts from 0."""
+    c, radius = (20.0, 0.0), 40.0  # home is 20 m from its centre
+    person = keepout(*c, radius, source="candidate")
+    async with _restarted_in_the_air(tmp_path, person) as r:
+        assert math.dist(xy(r), c) < radius
+        await r.run(1.0)
+        assert _inside_s(r) == {person.keepout_id: UNKNOWN}
+        ctx = r.ex._plan_context(new_id())  # pyright: ignore[reportPrivateUsage]
+        assert dict(ctx.keepout_inside_s) == {person.keepout_id: UNKNOWN}
+        gate = r.ex._gate_context(r.ex.vehicle_state())  # pyright: ignore[reportPrivateUsage]
+        assert dict(gate.keepout_inside_s) == {person.keepout_id: UNKNOWN}
+        path = _resume_path(r)
+        assert not leg_enters(path[0], path[1], c, radius)  # out first, no deeper
+    async with rig() as r:
+        await r.install(_sim_charter())  # type: ignore[arg-type]
+        await r.takeoff()
+        here = xy(r)
+        came = keepout(here[0] + 20.0, here[1], radius, source="candidate")
+        install(r, came)
+        await r.run(0.5)
+        assert _inside_s(r)[came.keepout_id] == pytest.approx(0.5, abs=0.2)
+
+
+async def test_unknown_time_survives_a_cylinder_that_replaces_it(tmp_path: Path) -> None:
+    """A cylinder that replaces one of unknown time (grown, merged, handed over to the
+    ground's) is the same person: unknown too, never inherited as 0. So is one that comes
+    around the drone while it is in one of unknown time. Once the caution after the
+    restart is over and the drone has been outside every cylinder, one that comes around
+    it counts from then."""
+    person = keepout(20.0, 0.0, 40.0, source="candidate")
+    async with _restarted_in_the_air(tmp_path, person) as r:
+        install(r, person)  # the ground sends it again
+        await r.run(0.5)
+        assert _inside_s(r) == {person.keepout_id: UNKNOWN}
+        grown = keepout(22.0, 0.0, 45.0, source="detection")
+        install(r, grown)
+        await r.run(2.0)
+        assert _inside_s(r) == {grown.keepout_id: UNKNOWN}
+        path = _resume_path(r)
+        assert not leg_enters(path[0], path[1], (22.0, 0.0), 45.0)
+        await r.run(KEEPOUT_RESTART_CAUTION_S)  # caution over: inherited all the same
+        other = keepout(-10.0, 5.0, 30.0, source="candidate")
+        install(r, grown, other)
+        await r.run(0.5)
+        assert _inside_s(r) == {grown.keepout_id: UNKNOWN, other.keepout_id: UNKNOWN}
+        install(r)  # all lifted: the drone is outside every cylinder
+        await r.run(0.5)
+        again = keepout(20.0, 0.0, 40.0, source="candidate")
+        install(r, again)
+        await r.run(1.0)
+        inside = _inside_s(r)
+        assert set(inside) == {again.keepout_id}
+        assert inside[again.keepout_id] == pytest.approx(1.0, abs=0.3)
+
+
+async def test_for_a_minute_after_a_restart_a_new_cylinder_is_unknown_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Owner decision 2026-11-04: for KEEPOUT_RESTART_CAUTION_S after a restart in the
+    air every new unconfirmed cylinder counts as unknown time, the drone's own fresh
+    detections and the ground's first install too: it may only fly out of it. The window
+    runs on the monotonic clock: a jump of the wall clock neither ends nor stretches it."""
+    async with _restarted_in_the_air(tmp_path) as r:
+        started = r.ex._restarted_at  # pyright: ignore[reportPrivateUsage]
+        assert started is not None and started <= r.clock.monotonic()
+        # The wall clock jumps an hour: still within the minute.
+        monkeypatch.setattr(r.clock, "_utc0", r.clock.utc_now() + dt.timedelta(hours=1))
+        r.ex.on_detections([detection(5.0, 0.0, KEEPOUT_SCORE_SURE)])  # its own, at once
+        ((own, _),) = r.ex.local_keepouts.values()
+        assert math.dist(xy(r), PLANE.xy(own.lat, own.lon)) < own.radius_m
+        await r.run(0.5)
+        assert _inside_s(r) == {own.keepout_id: UNKNOWN}
+        path = _resume_path(r)
+        assert not leg_enters(path[0], path[1], PLANE.xy(own.lat, own.lon), own.radius_m)
+        ground = keepout(-5.0, 0.0, 40.0, source="candidate")  # the ground's first install
+        install(r, ground)
+        await r.run(0.5)
+        assert _inside_s(r)[ground.keepout_id] == UNKNOWN
+    async with _restarted_in_the_air(tmp_path) as r:
+        started = r.ex._restarted_at  # pyright: ignore[reportPrivateUsage]
+        assert started is not None
+        await r.run(KEEPOUT_RESTART_CAUTION_S + 1.0 - (r.clock.monotonic() - started))
+        r.ex.on_detections([detection(5.0, 0.0, KEEPOUT_SCORE_SURE)])  # at 61 s: as usual
+        ((own, _),) = r.ex.local_keepouts.values()
+        await r.run(0.5)
+        assert _inside_s(r)[own.keepout_id] == pytest.approx(0.5, abs=0.2)
+
+
+async def test_a_short_break_outside_a_cylinder_is_the_same_pass() -> None:
+    """Owner decision 2026-11-04: out of an unconfirmed cylinder for less than
+    KEEPOUT_PASS_GAP_S and back in, the pass goes on: its time counts from when the drone
+    first came in (and is there while it is out). Out for longer: a new pass from 0."""
+    async with rig() as r:
+        await r.install(_sim_charter())  # type: ignore[arg-type]
+        await r.takeoff()
+        here = xy(r)
+        person = keepout(here[0] + 20.0, here[1], 40.0, source="candidate")
+        away = person.model_copy(
+            update=dict(zip(("lat", "lon"), at(here[0] + 200.0, 0.0), strict=True))
+        )
+        install(r, person)
+        await r.run(3.0)
+        install(r, away)  # the ground moves it (same id): the drone is outside it now
+        await r.run(KEEPOUT_PASS_GAP_S - 2.0)
+        assert _inside_s(r)[person.keepout_id] == pytest.approx(KEEPOUT_PASS_GAP_S + 1.0, abs=0.3)
+        install(r, person)  # back in: the same pass, its time not started again
+        await r.run(1.0)
+        assert _inside_s(r)[person.keepout_id] == pytest.approx(KEEPOUT_PASS_GAP_S + 2.0, abs=0.3)
+        install(r, away)
+        await r.run(KEEPOUT_PASS_GAP_S + 0.5)
+        assert _inside_s(r) == {}  # the pass is over
+        install(r, person)
+        await r.run(1.0)
+        assert _inside_s(r)[person.keepout_id] == pytest.approx(1.0, abs=0.3)

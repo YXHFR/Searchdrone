@@ -131,6 +131,21 @@ KEEPOUT_PAIR_WINDOW_S: Final = 60.0
 # past the edge (sd_safety.keepout.passes), so a pass that ends near a turn can take
 # 2-4 s longer than this; that time is not in the bound.
 KEEPOUT_PASS_MAX_S: Final = 12.0
+# Two stretches inside the same unconfirmed cylinder with less than this outside between
+# them are one pass and share KEEPOUT_PASS_MAX_S (owner decision 2026-11-04). Without it a
+# lawnmower turn pushed 5 m past the edge splits into two passes of 12 s each, about 22 s
+# over the person within some 27 s; a short loop outside is no break for the person
+# below. The planner counts the leg outside at the route's planned speed; on board the
+# pass's clock (sd_onboard ``_keepout_inside_s``) runs on until the drone has been out
+# this long; E8 adds up stays this close in simulation.
+KEEPOUT_PASS_GAP_S: Final = 10.0
+# For this long after sd-onboard (re)starts in the air (monotonic clock), every NEW
+# unconfirmed cylinder around the drone counts as unknown time: it may only leave it,
+# never go deeper (owner decision 2026-11-04). A restart forgets the drone's own
+# cylinders and when it came into any cylinder; a cylinder made again in the first
+# minute (its own fresh detections, the ground's first install) may be the same person
+# it was already passing, and must not give a fresh KEEPOUT_PASS_MAX_S.
+KEEPOUT_RESTART_CAUTION_S: Final = 60.0
 
 # --- the height floor of a closer look (sd_safety.floor) -----------------------------------
 # The owner's margins (decisions 14-17). The floor under the drone counts the highest tree

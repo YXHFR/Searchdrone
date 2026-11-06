@@ -17,7 +17,7 @@ from gate_fixtures import CHARTER, IMPLEMENTED, PLANE, goto, onboard_ctx, point,
 from test_keepout import cylinder
 
 from sd_safety import evaluate, keepout
-from sd_safety.constants import KEEPOUT_PASS_MAX_S
+from sd_safety.constants import KEEPOUT_PASS_GAP_S, KEEPOUT_PASS_MAX_S
 from sd_safety.keepout import (
     KEEPOUT_ARC_MARGIN_M,
     UNCONFIRMED_SOURCES,
@@ -121,10 +121,64 @@ def test_a_lawnmower_turn_just_outside_the_edge_is_no_passage() -> None:
     assert all(x <= PASS.max_chord_m for x in chords)  # the old per-leg check let it pass
     assert not passes(route, c, r, PASS)
     assert xy_route_violation(route, [], [(c, r)], PASS) == 0
-    # Planned again it goes around the cylinder like a confirmed one, never into it.
+    # The two turns moved out to the margin keep the leg between them outside, but only
+    # for 33 m (under 5 s at 7 m/s, less than KEEPOUT_PASS_GAP_S): the two rows are still
+    # one pass, 155 m over the person, and planned again the route goes around it (owner
+    # decision 2026-11-04).
+    pushed: list[Xy] = [(-200, 0), (4.01, -1.5), (4.01, 31.5), (-200, 30)]
+    assert all(math.dist(p, c) >= r + KEEPOUT_ARC_MARGIN_M for p in pushed[1:3])
+    assert chord_m(pushed[1], pushed[2], c, r) == 0.0
+    assert not passes(pushed, c, r, PASS)
     out = reroute(route, [], area=BOX, soft=[(c, r)], passage=PASS)
     assert out is not None and xy_route_violation(out, [], [(c, r)], PASS) is None
     assert all(not leg_enters(a, b, c, r) for a, b in pairwise(out))
+
+
+def _two_rows(r: float, gap_m: float) -> list[Xy]:
+    """East along y=0 through the circle of radius ``r`` at the origin, north 10 m at
+    x=e, back west along y=10: ``gap_m`` of route outside between the two stretches in."""
+    x_in = math.sqrt(r * r - 100.0)  # where the row y=10 comes in
+    e = (gap_m - 10.0 + r + x_in) / 2.0
+    route: list[Xy] = [(-150, 0), (e, 0), (e, 10), (-150, 10)]
+    assert math.dist(route[1], (0.0, 0.0)) >= r + KEEPOUT_ARC_MARGIN_M
+    return route
+
+
+def test_a_short_break_outside_is_the_same_pass() -> None:
+    """Owner decision 2026-11-04: out of an unconfirmed cylinder for less than
+    KEEPOUT_PASS_GAP_S (at the route's speed) between two stretches in it, both are one
+    pass and share the budget. Just under the gap they add up; just over, two passes."""
+    gap = PASS.gap_m()
+    assert gap == pytest.approx(7.0 * KEEPOUT_PASS_GAP_S)
+    c, r = (0.0, 0.0), 30.0  # 60 m + 56.6 m inside: too long for one pass
+    under, over = _two_rows(r, gap - 1.0), _two_rows(r, gap + 1.0)
+    assert not passes(under, c, r, PASS)
+    assert passes(over, c, r, PASS)
+    # Under the gap but in time together: one pass, let through.
+    small = 20.0  # 40 m + 34.6 m
+    assert passes(_two_rows(small, gap - 1.0), c, small, PASS)
+    # Planned again, the one that runs long goes around; the one with a break flies on.
+    out = reroute(under, [], area=BOX, soft=[(c, r)], passage=PASS)
+    assert out is not None and all(not leg_enters(a, b, c, r) for a, b in pairwise(out))
+    assert reroute(over, [], area=BOX, soft=[(c, r)], passage=PASS) == over
+    # Without a known speed (no budget) every stretch in is one pass.
+    assert Passage(max_chord_m=0.0, max_s=0.0).gap_m() == math.inf
+
+
+def test_a_pass_the_drone_left_just_now_goes_on() -> None:
+    """On board the pass the drone left less than the gap ago is still in
+    ``keepout_inside_s``: a route back in within the gap adds up with it, one in after
+    the gap is a new pass. With its time unknown, nothing back in within the gap."""
+    c, r = (0.0, 0.0), 30.0
+    back: list[Xy] = [(40, 0), (40, 20), (-100, 20)]  # 44.7 m inside, 20 m + 17.6 m out
+    assert passes(back, c, r, PASS, spent_m=30.0)
+    assert not passes(back, c, r, PASS, spent_m=PASS.max_chord_m - 40.0)
+    later: list[Xy] = [(40, 0), (40, 100), (-100, 20)]  # out for more than the gap
+    assert passes(later, c, r, PASS, spent_m=PASS.max_chord_m)
+    # Straight out with the time inside unknown, then back in at once: no.
+    out_back: list[Xy] = [(10, 0), (40, 0), (40, 20), (-100, 20)]
+    assert not passes(out_back, c, r, PASS)
+    assert passes(out_back, c, r, PASS, spent_m=0.0)
 
 
 def test_legs_one_after_another_inside_one_cylinder_are_one_pass() -> None:
@@ -292,6 +346,85 @@ def test_reroute_passes_an_unconfirmed_cylinder_straight_and_goes_around_a_long_
     # Without a passage the unconfirmed cylinder is a full one.
     out = reroute(route, [], area=BOX, soft=soft)
     assert out is not None and all(not leg_enters(a, b, *soft[0]) for a, b in pairwise(out))
+
+
+# --- corners in the margin band (follow-up to #202) -------------------------------------
+
+EDGE = 30.0 + KEEPOUT_ARC_MARGIN_M  # the margin of the cylinder of radius 30 at the origin
+
+
+def _around(out: list[Xy] | None, c: Xy, r: float) -> bool:
+    """A way around (c, r): planned, and no leg comes into it."""
+    return out is not None and all(not leg_enters(a, b, c, r) for a, b in pairwise(out))
+
+
+def test_a_corner_two_metres_outside_the_edge_moves_out_and_the_route_passes() -> None:
+    """SK09 went from about 225 s to 265-284 s: a corner at r+2 m next to a leg through an
+    unconfirmed cylinder made the route go all the way around. Now that corner moves
+    straight out to the margin and the leg passes, in time, its corners all at least the
+    margin out. The first point (the drone) never moves; the last one may."""
+    c, r = (0.0, 0.0), 30.0
+    soft = [(c, r)]
+    route: list[Xy] = [(-150, 0), (r + 2.0, 0), (r + 2.0, 150)]
+    assert not passes(route, c, r, PASS)  # the corner is in the margin band
+    out = reroute(route, [], area=BOX, soft=soft, passage=PASS)
+    assert out is not None and len(out) == 3  # no way around
+    assert out[0] == route[0] and out[2] == route[2]
+    assert out[1] == pytest.approx((EDGE, 0.0))
+    assert passes(out, c, r, PASS) and xy_route_violation(out, [], soft, PASS) is None
+    assert sum(chord_m(a, b, c, r) for a, b in pairwise(out)) <= PASS.max_chord_m
+    # The route's last point, in the band: moved out too.
+    end = reroute([(-150, 0), (r + 2.0, 0)], [], area=BOX, soft=soft, passage=PASS)
+    assert end is not None and end[1] == pytest.approx((EDGE, 0.0))
+    # A corner whose leg in stays outside but whose leg out comes inside.
+    out = reroute([(-150, -100), (-r - 2.0, 0), (150, 0)], [], area=BOX, soft=soft, passage=PASS)
+    assert out is not None and out[1] == pytest.approx((-EDGE, 0.0)) and passes(out, c, r, PASS)
+    # One in the band that no leg next to it comes into is no turn over it: kept as it is.
+    near: list[Xy] = [(-100, 100), (0, r + 2.0), (100, 100)]
+    other = [*soft, ((0.0, -200.0), 10.0)]  # a reroute for another cylinder
+    assert reroute(near, [], area=BOX, soft=other, passage=PASS) == near
+    last: list[Xy] = [(-100, 100), (0, r + 2.0)]
+    assert reroute(last, [], area=BOX, soft=other, passage=PASS) == last
+
+
+def test_a_corner_moved_out_still_keeps_the_budget_and_adds_up_passes() -> None:
+    """Moving a corner out never lets a pass run long: a cylinder too wide to cross in
+    time, or two legs one after another both inside it (one pass, added up), is still
+    gone around."""
+    wide = 44.0  # 88 m through the centre, more than 84
+    route: list[Xy] = [(-150, 0), (wide + 2.0, 0), (wide + 2.0, 150)]
+    out = reroute(route, [], area=BOX, soft=[((0.0, 0.0), wide)], passage=PASS)
+    assert _around(out, (0.0, 0.0), wide)
+    vee: list[Xy] = [(-100, -10), (32, 0), (-100, 10)]  # 2 x 59 m inside, one pass
+    out = reroute(vee, [], area=BOX, soft=[((0.0, 0.0), 30.0)], passage=PASS)
+    assert _around(out, (0.0, 0.0), 30.0)
+    # Mid-passage with the time inside unknown, the first leg still only leaves it.
+    here: list[Xy] = [(-10, 0), (32, 0), (32, 150)]
+    out = reroute(here, [], area=BOX, soft=[((0.0, 0.0), 30.0)], passage=PASS)
+    assert out is not None and not leg_enters(out[0], out[1], (0.0, 0.0), 30.0)
+    assert xy_route_violation(out, [], [((0.0, 0.0), 30.0)], PASS) is None
+
+
+def test_a_corner_that_cannot_move_out_stays_and_the_cylinder_is_gone_around() -> None:
+    """A corner stays where it is when its place at the margin would lie within the
+    margin of another unconfirmed cylinder or of a confirmed one, or its legs would leave
+    the charter; the route then goes around that cylinder as before, never into a
+    confirmed one."""
+    c, r = (0.0, 0.0), 30.0
+    route: list[Xy] = [(-150, 0), (r + 2.0, 0), (r + 2.0, 150)]
+    beside = ((70.0, 0.0), 30.0)  # its margin starts 35 m east of the origin
+    out = reroute(route, [], area=BOX, soft=[(c, r), beside], passage=PASS)
+    assert _around(out, c, r) and out is not None and (r + 2.0, 0) in out
+    out = reroute(route, [beside], area=BOX, soft=[(c, r)], passage=PASS)
+    assert _around(out, c, r) and _around(out, *beside)
+    tight = Polygon(((-400.0, -400.0), (34.0, -400.0), (34.0, 400.0), (-400.0, 400.0)))
+    assert reroute(route, [], area=tight, soft=[(c, r)], passage=PASS) is None
+    # One corner stays, a later one moves: each is looked at once.
+    far = ((-150.0, 300.0), 30.0)
+    mixed: list[Xy] = [*route, (-150, 150), (-150, 332)]
+    out = reroute(mixed, [], area=BOX, soft=[(c, r), beside, far], passage=PASS)
+    assert out is not None and out[-1] == pytest.approx((-150.0, 335.0))
+    assert _around(out, c, r) and xy_route_violation(out, [], [(c, r), beside, far], PASS) is None
 
 
 # --- boxed in ---------------------------------------------------------------------------
