@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -24,12 +25,13 @@ from flow_rig import VID, H, Rig, rig  # pyright: ignore[reportMissingImports]
 from script_driver import ScriptDriver  # pyright: ignore[reportMissingImports]
 
 from sd_ground.services import approvals as approvals_service
+from sd_ground.services.missions import RELEASE_WAIT_S
 from sd_link.session import Expired
 from sd_safety.targets import distance_m
 from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState
 from sd_schemas.gate import GateDecision
-from sd_schemas.link import CommandCancel, Envelope, SkillCommand
+from sd_schemas.link import CommandCancel, Envelope, OperatorRelease, SkillCommand
 from sd_schemas.skills import SKILL_REGISTRY
 
 if TYPE_CHECKING:
@@ -542,6 +544,113 @@ async def test_stop_cancels_the_running_order(r: Rig) -> None:
     await wait_order_status(r, mid, out["command_id"], "cancelled")
     cmd = (await commands(r, mid))[out["command_id"]]
     assert cmd["status_reason"] == "OPERATOR_STOP"
+
+
+# --- right after Resume ----------------------------------------------------------------
+
+
+async def _stopped(r: Rig, mid: str) -> None:
+    """STOP: the ground's latch, the mission PAUSED and the executor HELD (as the real
+    executor, the fake now refuses every order while HELD: ``ONB_CONTROL_HELD``)."""
+    r.onboard.refuse_while_held = True
+    stop = await r.panel.post(
+        f"/api/v1/vehicles/{VID}/actions/stop", json={"client_action_id": str(new_id())}, headers=H
+    )
+    assert stop.status_code == 202, stop.text
+    await r.wait_status(mid, "PAUSED")
+    await r.until(lambda: r.onboard.executor_state is ExecutorState.HELD, 5, "HELD onboard")
+
+
+def _slow_release(r: Rig, delay_s: float = 0.5) -> None:
+    """The main loop gets to Resume's release late (busy): what an order right after the
+    202 races against."""
+    sink = r.actions.notices
+    send_acked = sink.send_acked
+
+    async def late(vehicle_id: str, message: Any, timeout_s: float) -> Any:
+        if isinstance(message, OperatorRelease):
+            await asyncio.sleep(delay_s)
+        return await send_acked(vehicle_id, message, timeout_s)
+
+    sink.send_acked = late  # type: ignore[method-assign]
+
+
+async def _resume(r: Rig) -> None:
+    res = await r.panel.post(
+        f"/api/v1/vehicles/{VID}/actions/resume",
+        json={"client_action_id": str(new_id())},
+        headers=H,
+    )
+    assert res.status_code == 202, res.text
+
+
+async def test_an_ai_order_right_after_resume_reaches_the_drone_after_the_release(r: Rig) -> None:
+    """The AI acts as soon as the pilot presses Resume. Its order waits on the ground
+    until the executor has let go (and the mission is ACTIVE again), then goes out after
+    the release: allowed, and done onboard, never ``ONB_CONTROL_HELD``."""
+    mid = await r.ready_mission()
+    d = driver(r, mid)
+    await take_off(r, mid, d)
+    await _stopped(r, mid)
+    _slow_release(r)
+    await _resume(r)
+    lat, lon = r.at(50.0, 0.0)
+    out = await order(r, d, "goto", {"lat": lat, "lon": lon, "alt_m": 40})
+    await wait_order_status(r, mid, out["command_id"], "done")
+    assert r.onboard.orders[-1].command_id == uuid.UUID(out["command_id"])
+    assert await r.status(mid) == "ACTIVE"
+
+
+async def test_a_pilot_order_right_after_resume_reaches_the_drone_after_the_release(
+    r: Rig,
+) -> None:
+    mid = await r.ready_mission()
+    await take_off(r, mid, driver(r, mid))
+    await _stopped(r, mid)
+    _slow_release(r)
+    await _resume(r)
+    lat, lon = r.at(0.0, 50.0)
+    res = await r.panel.post(
+        f"/api/v1/missions/{mid}/commands",
+        json={
+            "client_command_id": str(new_id()),
+            "skill": "goto",
+            "params": {"lat": lat, "lon": lon, "alt_m": 40},
+        },
+        headers=H,
+    )
+    assert res.status_code == 201, res.text
+    out = res.json()
+    assert out["gate"]["decision"] == "ALLOW", out
+    await wait_order_status(r, mid, out["command"]["id"], "done")
+
+
+async def test_stop_never_waits_for_a_release_and_ends_an_orders_wait(r: Rig) -> None:
+    """The executor does not answer the release: an order waits for it, but STOP goes
+    out at once meanwhile, and the order is then checked against STOP's latch at once
+    (refused), not after the wait's end."""
+    mid = await r.ready_mission()
+    d = driver(r, mid)
+    await take_off(r, mid, d)
+    await _stopped(r, mid)
+    r.onboard.ack_release = False
+    await _resume(r)
+    no_rate_limit(r)
+    lat, lon = r.at(50.0, 0.0)
+    waiting = asyncio.ensure_future(d.order("goto", {"lat": lat, "lon": lon, "alt_m": 40}))
+    await asyncio.sleep(0.3)
+    assert not waiting.done()  # waits for the release
+    notices = len(r.onboard.notices)
+    t0 = time.monotonic()
+    stop = await r.panel.post(
+        f"/api/v1/vehicles/{VID}/actions/stop", json={"client_action_id": str(new_id())}, headers=H
+    )
+    assert stop.status_code == 202, stop.text
+    assert time.monotonic() - t0 < 0.5
+    await r.until(lambda: len(r.onboard.notices) > notices, 2, "STOP's notice onboard")
+    res = await asyncio.wait_for(waiting, RELEASE_WAIT_S)
+    assert res.status_code == 201 and res.json()["decision"] == "REJECT", res.text
+    assert not any(o.skill == "goto" for o in r.onboard.orders)
 
 
 # --- what the onboard computer answers -------------------------------------------------

@@ -99,6 +99,8 @@ class FakeOnboard:
     accept_charters: bool = True
     order_outcome: str = "done"  # or "running" (stays), "rejected", "silent" (no ack)
     reject_gate: Any = None  # with "rejected": the onboard gate's own decision
+    refuse_while_held: bool = False  # as the executor: an order while HELD, ONB_CONTROL_HELD
+    ack_release: bool = True  # False: Resume's OperatorRelease gets no answer
     battery_rtl_active: bool = False  # the onboard battery rule flies home
     rc_link: bool | None = None  # PF12 (None: not required, as in SITL and CI)
     boot_id: int = 1
@@ -253,6 +255,9 @@ class FakeOnboard:
             await session.ack(inbound.envelope.msg_id, "done")
         elif isinstance(body, SkillCommand):
             self.orders.append(body)
+            if self.refuse_while_held and self.executor_state is ExecutorState.HELD:
+                await session.ack(body.command_id, "rejected", reason_codes=["ONB_CONTROL_HELD"])
+                return
             if self.order_outcome == "silent":
                 return  # the answer is late: the test acks it itself
             if self.order_outcome == "rejected":
@@ -278,8 +283,11 @@ class FakeOnboard:
                 self.set_state(ExecutorState.HELD, held_by="operator_stop")
         elif isinstance(body, OperatorRelease):
             self.notices.append(body)
+            if not self.ack_release:
+                return
             self.stop_latch = False
             self.set_state(ExecutorState.HOLD, hold_reason="operator_released", held_by=None)
+            await session.ack(inbound.envelope.msg_id, "done")
         elif isinstance(body, InspectOutcome | InspectLower | InspectStay):
             self.looks.append(body)
             await session.ack(inbound.envelope.msg_id, "done")

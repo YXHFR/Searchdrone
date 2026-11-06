@@ -66,6 +66,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CLOSE_AFTER_DISARM_S",
+    "RELEASE_WAIT_S",
     "TICK_S",
     "FlowError",
     "MavCaller",
@@ -76,6 +77,10 @@ TLOG_NAME = "flight.tlog"  # the ground station's own MAVLink channel, per missi
 
 CLOSE_AFTER_DISARM_S: Final = 10.0
 TICK_S: Final = 0.2
+# After Resume, how long the gate's picture waits for the onboard executor to let go:
+# its acknowledgement (``RELEASE_ACK_WAIT_S``) and the next snapshot (2 Hz) after it.
+RELEASE_WAIT_S: Final = 2.0
+RELEASE_POLL_S: Final = 0.05
 _HOME_MODES: Final = frozenset({CopterMode.RTL, CopterMode.SMART_RTL})
 _LATCH_TRIGGER: Final = {
     "stop": Trigger.OPERATOR_STOP,
@@ -175,6 +180,9 @@ class _VehicleWatch:
     armed: bool = False
     flown: bool = False  # in the air since it last stood disarmed outside a flight state
     battery_rtl: bool = False  # the onboard battery rule is flying home
+    # The last snapshot the flow has handled (its mission transitions done) and when.
+    handled: StateSnapshot | None = None
+    handled_mono_ms: int = 0
 
 
 @dataclass
@@ -202,6 +210,8 @@ class MissionFlow:
     # Missions not to start recording for again: their files are closing, or opening the
     # file failed once (logged).
     _tlog_done: set[str] = field(default_factory=set[str])
+    # vehicle -> the action_seq of the last Resume whose release the gate has waited for
+    _release_waited: dict[str, int] = field(default_factory=dict[str, int])
 
     # --- small helpers -----------------------------------------------------------------
 
@@ -596,6 +606,52 @@ class MissionFlow:
 
     # --- the gate's picture ------------------------------------------------------------
 
+    async def released_onboard(self, vehicle_id: str) -> None:
+        """After a Resume: wait until the onboard executor has let go and the flow has
+        handled a snapshot from after that (the mission ACTIVE again), at most
+        ``RELEASE_WAIT_S``. Called before an order reads its mission: the gate then sees
+        the drone as it is, and the order goes out after the release over SD-link, which
+        the executor handles in order. So it is never refused onboard as
+        ``ONB_CONTROL_HELD`` for being early.
+
+        Returns at once when no Resume's release is on its way or it was waited for
+        already; when a newer STOP, FLY HOME or system action came (its latch decides); and
+        when the executor did not take the release (refused, no answer, SD-link down): the
+        gate and the executor then refuse as before. STOP and FLY HOME never come here."""
+        actions = self.actions
+        if actions is None:
+            return
+        clock = self.g.clock
+        deadline = clock.monotonic() + RELEASE_WAIT_S
+        while True:
+            release = actions.release(vehicle_id)
+            if release is None or self._release_waited.get(vehicle_id) == release.action_seq:
+                return
+            seq = release.action_seq
+            if actions.latches.override_seq(vehicle_id) != seq or release.result not in (
+                None,
+                "acked",
+            ):
+                break
+            watch = self._watch.get(vehicle_id)
+            snap = None if watch is None else watch.handled
+            if (
+                release.acked_mono_ms is not None
+                and watch is not None
+                and snap is not None
+                # handled after the ack was (the ack's own snapshot came before it)
+                and watch.handled_mono_ms > release.acked_mono_ms
+                and snap.executor_state is not ExecutorState.HELD
+                and not (snap.manual_control or snap.control_suspended or snap.stop_latch)
+                and not watch.resume_pending
+            ):
+                break
+            if clock.monotonic() >= deadline:
+                log.warning("missions.release_wait_timeout", vehicle_id=vehicle_id, seq=seq)
+                break
+            await clock.sleep(RELEASE_POLL_S)
+        self._release_waited[vehicle_id] = seq
+
     async def gate_context(self, mission: Mission) -> GateContext:
         vid = mission.vehicle_id
         row = await self.active_charter_row(mission)
@@ -703,6 +759,8 @@ class MissionFlow:
                 )
         elif isinstance(body, StateSnapshot):
             await self._on_snapshot(vehicle_id, body)
+            watch = self._watch.setdefault(vehicle_id, _VehicleWatch())
+            watch.handled, watch.handled_mono_ms = body, self.g.clock.monotonic_ms()
         elif isinstance(body, PerceptionReport):
             perception_service.enqueue(self, vehicle_id, body)  # never waits for storage
         elif isinstance(body, CropData):
@@ -985,13 +1043,15 @@ class MissionFlow:
     # --- the AI's picture --------------------------------------------------------------
 
     async def situation(self, mission_id: str) -> Any:
-        """``GET /commander/v1/missions/{id}/situation``."""
+        """``GET /commander/v1/missions/{id}/situation``: the AI's picture, right after a
+        Resume the drone once released (``released_onboard``), not the HELD it was in."""
         from sd_ground.services import approvals as approvals_service
         from sd_ground.services import commands as commands_service
         from sd_ground.services import probability_map as map_service
         from sd_ground.services.candidate_lines import candidate_lines
         from sd_ground.services.situation import build_situation
 
+        await self.released_onboard((await self.mission(mission_id)).vehicle_id)
         mission = await self.mission(mission_id)
         row = await self.active_charter_row(mission)
         proposals = [c for c in await self.repo.charters(mission_id) if c.status == "proposed"]

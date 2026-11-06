@@ -30,6 +30,15 @@ SD-link do; the acknowledgement only brings it forward. Without SD-link, LOITER 
 once. A newer action in the meantime (STOP, FLY HOME, a system action, a hand-back) or a
 move of the RC mode switch wins: the waiting take-over never reaches the flight
 controller.
+
+Resume lifts the ground's latch at the click (202 at once), but the onboard executor
+stays HELD until ``OperatorRelease`` reaches it, and the main loop sends that a moment
+later. An order sent in between would pass the ground and be refused onboard
+(``ONB_CONTROL_HELD``). So the release goes out like a take-over notice, waiting for
+the executor's acknowledgement (``RELEASE_ACK_WAIT_S``), and ``release`` tells the
+mission flow whether one is still on its way: the gate's picture waits for it
+(``MissionFlow.released_onboard``). STOP, FLY HOME and the system's actions never wait
+for it, and a newer one ends the wait.
 """
 
 from __future__ import annotations
@@ -64,6 +73,7 @@ from sd_schemas.sv_commands import OverrideIntent, classify_override
 __all__ = [
     "OUTCOMES_MAX",
     "PUMP_S",
+    "RELEASE_ACK_WAIT_S",
     "TAKEOVER_ACK_WAIT_S",
     "ActionRefusedError",
     "GroundView",
@@ -72,6 +82,7 @@ __all__ = [
     "NoticeResult",
     "NoticeSink",
     "OperatorPresence",
+    "Release",
     "StopCheck",
     "VehicleActions",
 ]
@@ -79,6 +90,7 @@ __all__ = [
 OUTCOMES_MAX: Final = 512
 PUMP_S: Final = 0.05
 TAKEOVER_ACK_WAIT_S: Final = 0.3  # the onboard acknowledgement of a take-over notice
+RELEASE_ACK_WAIT_S: Final = 1.0  # the onboard acknowledgement of Resume's OperatorRelease
 MANUAL_MIN_INTERVAL_S: Final = 1 / 30  # the panel sends 15 Hz; anything faster is dropped
 SYSTEM: Final = "system:ground"
 log = get_logger("sd_ground.actions")
@@ -188,6 +200,21 @@ class _Post:
     notice: SdModel | None
     # A take-over whose LOITER waits in the MAVLink thread for the notice's ack.
     takeover: str | None = None
+    # Resume: the release is sent acknowledged and its answer kept (``Release``).
+    release: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Release:
+    """Resume's ``OperatorRelease`` on its way to the onboard executor.
+
+    ``result`` is None until the executor answers or the wait ends (``acked``: it has
+    let go; else ``refused``, ``timeout`` or ``down``); ``acked_mono_ms`` is when the
+    answer came (the actions' clock)."""
+
+    action_seq: int
+    result: NoticeResult | None = None
+    acked_mono_ms: int | None = None
 
 
 @dataclass
@@ -223,6 +250,7 @@ class VehicleActions:
         self._by_client: OrderedDict[tuple[str, str, str], ActionDispatched] = OrderedDict()
         # vehicle -> {its take-over id: who took over}; one take-over per vehicle at a time
         self._takeover_by: dict[str, dict[str, str]] = {}
+        self._releases: dict[str, Release] = {}  # vehicle -> its newest Resume's release
         self._manual_mono: dict[str, float] = {}  # vehicle -> when its last stick value went on
         self._manual_next: dict[str, StickAxes] = {}  # vehicle -> newest value, held to its slot
         self._manual_slots: dict[str, asyncio.Task[None]] = {}  # vehicle -> the task sending it
@@ -462,6 +490,8 @@ class VehicleActions:
         try:
             if action == "resume":
                 seq, _lifted = self.latches.release(vehicle_id)  # number and lift in one step
+                with self._lock:  # before the 202: an order right after it sees it
+                    self._releases[vehicle_id] = Release(seq)
             elif action == "takeover":
                 self.latches.check_release(vehicle_id)  # not while flying home
                 seq = self.latches.next_seq(vehicle_id)
@@ -506,8 +536,13 @@ class VehicleActions:
             action_id, vehicle_id, action, seq, "button", by.issuer_ref, dict(paths)
         )
         self._remember(key, reply)
-        self.post.put(_Post(outcome, notice, takeover_after))
+        self.post.put(_Post(outcome, notice, takeover_after, release=action == "resume"))
         return reply
+
+    def release(self, vehicle_id: str) -> Release | None:
+        """The newest Resume's release for the vehicle and how far it has come."""
+        with self._lock:
+            return self._releases.get(vehicle_id)
 
     def manual_state(self, vehicle_id: str) -> ManualControlState | None:
         """Whether someone steers by hand, as the MAVLink thread holds it (None: unknown)."""
@@ -652,11 +687,15 @@ class VehicleActions:
                     _publish(g, "alerts", "alert", item.payload, item.vehicle_id)
 
     async def _handle_post(self, g: GroundView, item: _Post) -> None:
+        waits: Awaitable[None] | None = None
         if item.takeover is not None and item.notice is not None:
+            waits = self._takeover_after_notice(g, item.outcome, item.notice, item.takeover)
+        elif item.release and item.notice is not None:
+            waits = self._release_after_notice(g, item.outcome, item.notice)
+        if waits is not None:
             # Its own task: the pump (and with it every STOP notice) never waits for it.
             task = asyncio.get_running_loop().create_task(
-                self._takeover_after_notice(g, item.outcome, item.notice, item.takeover),
-                name="takeover-notice",
+                waits, name="takeover-notice" if item.takeover else "release-notice"
             )
             self._tasks.add(task)
             task.add_done_callback(self._task_done)
@@ -688,6 +727,25 @@ class VehicleActions:
             self.mav.takeover_acknowledged(takeover_id)
         elif result in ("refused", "timeout"):
             log.warning("actions.takeover_unacknowledged", vehicle_id=vid, result=result)
+        sdlink = "failed" if result == "down" else "sent"
+        o = o.model_copy(update={"paths": {**o.paths, "sdlink": sdlink}})
+        self._store(o)
+        self._posted(g, o)
+
+    async def _release_after_notice(self, g: GroundView, o: ActionOutcome, notice: SdModel) -> None:
+        """Send Resume's release and keep the executor's answer for ``release``."""
+        vid = str(o.vehicle_id)
+        result: NoticeResult = "down"
+        try:
+            result = await self.notices.send_acked(vid, notice, RELEASE_ACK_WAIT_S)
+        except Exception as exc:
+            log.warning("actions.notice_failed", error=type(exc).__name__)
+        if result in ("refused", "timeout"):
+            log.warning("actions.release_unacknowledged", vehicle_id=vid, result=result)
+        with self._lock:
+            mine = self._releases.get(vid)
+            if mine is not None and mine.action_seq == o.action_seq:  # not a newer Resume's
+                self._releases[vid] = Release(o.action_seq, result, self.clock.monotonic_ms())
         sdlink = "failed" if result == "down" else "sent"
         o = o.model_copy(update={"paths": {**o.paths, "sdlink": sdlink}})
         self._store(o)

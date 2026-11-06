@@ -193,6 +193,7 @@ class Scenario:
     mid: str = ""
     observer_token: str = ""
     sticks_seq: int = 0
+    resume_seq: int = 0  # the snapshot's state_seq when Resume was last pressed
     harness_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     bus_log: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
@@ -379,6 +380,8 @@ class Scenario:
         headers = dict(H)
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
+        if action == "resume":  # a snapshot from after the release comes later
+            self.resume_seq = int((await self.onboard_state())["state_seq"])
         return await self.r.panel.post(
             f"/api/v1/vehicles/{VID}/actions/{action}",
             json={"client_action_id": str(new_id())},
@@ -522,10 +525,13 @@ class Scenario:
         Not just "no longer HELD": the snapshot comes at 2 Hz and the ground sends Resume
         a moment after its 202, so right after a take-over the latest snapshot can still
         show the state from before it (an order sent then finds the executor HELD and is
-        refused with ONB_CONTROL_HELD)."""
+        refused with ONB_CONTROL_HELD). And from a snapshot sent after the Resume
+        (``state_seq`` past the one when it was pressed): a HOLD from before it, by the
+        same name, is no proof."""
         snap = await self.onboard_state()
         return (
-            snap["executor_state"] == "HOLD"
+            snap["state_seq"] > self.resume_seq
+            and snap["executor_state"] == "HOLD"
             and snap["hold_reason"] == "operator_released"
             and not snap["manual_control"]
             and not snap["control_suspended"]
