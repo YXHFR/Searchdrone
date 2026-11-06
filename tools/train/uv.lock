@@ -864,7 +864,7 @@ requires-dist = [
 provides-extras = ["cpu", "cu126"]
 
 [package.metadata.requires-dev]
-cloud = [{ name = "modal", specifier = ">=1.1,<2" }]
+cloud = [{ name = "modal", specifier = ">=1.6.1,<2" }]
 dev = [
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-socket", specifier = ">=0.7" },

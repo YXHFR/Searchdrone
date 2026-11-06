@@ -11,6 +11,7 @@ import json
 import math
 import os
 import sys
+import time
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -93,13 +94,11 @@ class FakeModal:
             self.volume.pop(p.as_posix(), None)
 
     def call_state(self, token: str, call_id: str) -> dict[str, Any]:
-        assert call_id == f"fc-{token}"
-        if token in self.alive:
-            return {"running": True, "seconds": None}
+        assert call_id in (f"fc-{token}", "")
         mark = self.marks.get(token)
-        if mark and mark["ended"]:
-            return {"running": False, "seconds": mark["seconds"]}
-        return {"running": False, "seconds": (mark["seconds"] if mark else 0.0) + 600.0}
+        seconds = (mark["seconds"] if mark else 0.0) + (0.0 if mark and mark["ended"] else 600.0)
+        running = token in self.alive or not call_id  # no id: Modal cannot say
+        return {"running": running, "seconds": seconds}
 
     def cancel(self, call_id: str) -> None:
         self.cancelled.append(call_id)
@@ -903,3 +902,87 @@ def test_the_manifest_must_name_the_onnx_file_itself(bank: Path, named: str) -> 
     fake.manifest_onnx = named
     assert cloud.main([f"data={bank}", "model=yolox_s", "yes=1"], backend=lambda gpu: fake) == 1
     assert not (bank / "models" / named).exists()
+
+
+def test_a_call_is_never_counted_below_the_wait_for_it(tmp_path: Path) -> None:
+    """The client stopped waiting (the deadline) and cancelled the call; its mark says
+    less than the client waited (it lost saves, or the call waited for a GPU): the
+    wait counts."""
+    ledger = tmp_path / "hours.json"
+
+    class Short(FakeModal):
+        def run(self, *a: Any) -> dict[str, Any]:
+            token = a[-2]
+            a[-1](f"fc-{token}")
+            self.tokens.append(token)
+            if len(self.tokens) > 1:  # the next call, at once
+                return {"status": "done", "code": 0, "seconds": 0.0}
+            self.marks[token] = {"seconds": 1000.0, "ended": True}
+            return {"status": "stopped", "code": None}  # no seconds came back
+
+    fake = Short()
+    walls = iter([0.0, 5000.0])  # opened, then back after 5000 s
+    used = cloud.run_until_done(
+        fake, [], [], 24, ledger, clock=lambda: 0.0, wall=lambda: next(walls, 5000.0)
+    )
+    assert used * 3600 == pytest.approx(5000.0)  # not the mark's 1000 s
+    assert json.loads(ledger.read_text())["open"] == {}
+
+
+def test_a_lost_call_keeps_the_wait_for_it_when_settled(tmp_path: Path) -> None:
+    ledger = tmp_path / "hours.json"
+
+    class Lost(FakeModal):
+        def run(self, *a: Any) -> dict[str, Any]:
+            token = a[-2]
+            a[-1](f"fc-{token}")
+            self.marks[token] = {"seconds": 100.0, "ended": True}
+            raise KeyboardInterrupt  # Ctrl+C after 4000 s
+
+    fake = Lost()
+    walls = iter([0.0, 4000.0])
+    with pytest.raises(KeyboardInterrupt):
+        cloud.run_until_done(fake, [], [], 24, ledger, clock=lambda: 0.0, wall=lambda: next(walls))
+    (call,) = json.loads(ledger.read_text())["open"].values()
+    assert call["waited"] == pytest.approx(4000.0)
+    cloud.settle_calls(fake, ledger)  # Modal: ended; the mark says 100 s
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(4000.0)
+
+
+def test_a_call_stopped_while_it_was_sent_is_waited_for(tmp_path: Path) -> None:
+    ledger = tmp_path / "hours.json"
+
+    class Sending(FakeModal):
+        def run(self, *a: Any) -> Any:
+            a[-1]("")  # being sent
+            raise KeyboardInterrupt  # before Modal gave its id
+
+    now = time.time()
+    walls = iter([now, now + 10])
+    with pytest.raises(KeyboardInterrupt):
+        cloud.run_until_done(
+            Sending(), [], [], 24, ledger, clock=lambda: 0.0, wall=lambda: next(walls)
+        )
+    body = json.loads(ledger.read_text())
+    (call,) = body["open"].values()
+    assert call["call"] == "" and body["seconds"] == pytest.approx(call["worst"])
+    with pytest.raises(BenchError, match="avbröts medan det skickades"):
+        cloud.check_no_old_call(FakeModal(), ledger, "samma kommando")
+    assert json.loads(ledger.read_text())["open"]  # still open, at its worst case
+    late = now + cloud.APP_GONE_S + 1
+    assert cloud.settle_calls(FakeModal(), ledger, wall=lambda: late) == []
+    # no mark: no container ran (the fake's 600 s), but at least the 10 s waited
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(600.0)
+    assert json.loads(ledger.read_text())["open"] == {}
+
+
+@pytest.mark.parametrize("text", ["{", '{"open": {}}', '{"seconds": 1, "open": []}'])
+def test_a_ledger_that_cannot_be_read_stops_the_command(tmp_path: Path, text: str) -> None:
+    ledger = tmp_path / "hours.json"
+    ledger.write_text(text)
+    with pytest.raises(BenchError, match="går inte att läsa") as err:
+        cloud.hours_used(ledger)
+    assert err.value.code == 1
+    with pytest.raises(BenchError):
+        cloud.check_no_old_call(FakeModal(), ledger, "samma kommando")
+    assert ledger.read_text() == text  # left as it was

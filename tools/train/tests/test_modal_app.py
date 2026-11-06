@@ -248,7 +248,7 @@ def test_a_call_uses_the_gpu_timeout_and_budget_given(monkeypatch: pytest.Monkey
     app, _mod, log = load(monkeypatch, local=True, at=str(SOURCE))
     ids: list[str] = []
     res = app.ModalBackend("H100").run(["a=1"], ["b=2"], 1234.5, 3600, "t" * 32, ids.append)
-    assert res["status"] == "done" and ids == ["fc-1"]  # the id, as soon as it is known
+    assert res["status"] == "done" and ids == ["", "fc-1"]  # being sent, then its id
     assert ("options", {"gpu": "H100", "timeout": 3600}) in log
     assert ("spawn", (["a=1"], ["b=2"], 1234.5, "t" * 32)) in log
     assert ("get", app.WAIT_STEP_S) in log  # in short waits, against the wall clock
@@ -301,21 +301,25 @@ def test_what_is_known_of_an_earlier_call(monkeypatch: pytest.MonkeyPatch) -> No
     app, mod, _log = load(monkeypatch, local=True, at=str(SOURCE))
     backend = app.ModalBackend("H100")
     token = "t" * 32
+    start_up, unseen = app.START_UP_S, app.UNSEEN_S
     # Modal cannot say (no id yet, or it no longer knows the call): may still run
-    assert backend.call_state(token, "") == {"running": True, "seconds": None}
-    assert backend.call_state(token, "fc-gone") == {"running": True, "seconds": None}
+    assert backend.call_state(token, "") == {"running": True, "seconds": start_up}
+    assert backend.call_state(token, "fc-gone") == {"running": True, "seconds": start_up}
     mod.graphs["fc-1"] = [types.SimpleNamespace(status=InputStatus.PENDING)]
     assert backend.call_state(token, "fc-1")["running"]
-    # ended without its last word: its mark's seconds and what it may have run since
+    # ended, no function ran: only the container's start
     mod.graphs["fc-1"] = [types.SimpleNamespace(status=InputStatus.TERMINATED)]
-    assert backend.call_state(token, "fc-1") == {"running": False, "seconds": app.UNSEEN_S}
+    assert backend.call_state(token, "fc-1") == {"running": False, "seconds": start_up}
+    # ended without its last word: its mark's seconds and what it may have run since
     _mark(app, token, 1000.0, ended=False)
-    assert backend.call_state(token, "fc-1") == {
-        "running": False,
-        "seconds": 1000.0 + app.UNSEEN_S,
-    }
-    _mark(app, token, 1234.5, ended=True)  # its own last word, even without Modal
-    assert backend.call_state(token, "") == {"running": False, "seconds": 1234.5}
+    assert backend.call_state(token, "fc-1") == {"running": False, "seconds": 1000.0 + unseen}
+    # its own last word, and its start-up
+    _mark(app, token, 1234.5, ended=True)
+    assert backend.call_state(token, "fc-1") == {"running": False, "seconds": 1234.5 + start_up}
+    # an ended mark is not enough while Modal says the call runs (moved after a preemption)
+    mod.graphs["fc-1"] = [types.SimpleNamespace(status=InputStatus.PENDING)]
+    assert backend.call_state(token, "fc-1") == {"running": True, "seconds": 1234.5 + start_up}
+    assert backend.call_state(token, "")["running"]  # nor without Modal
     backend.forget(token)
     backend.forget(token)  # already gone: no error
     assert app.volume.files == {}
@@ -368,6 +372,65 @@ def test_a_container_moved_after_a_preemption_counts_the_earlier_attempt(
     before = 1000.0 + app.UNSEEN_S  # its mark and what it may have run after it
     assert before <= res["seconds"] < before + 5
     assert json.loads(mark.read_text()) == {"seconds": round(res["seconds"], 1), "ended": True}
+
+
+def test_two_runs_of_one_call_add_up_their_seconds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app, _mod, _log = load(monkeypatch, local=False, at="/root/modal_app.py")
+    monkeypatch.setattr(app, "REMOTE_DATA", PurePosixPath(tmp_path))
+    monkeypatch.setattr(app.volume, "commit", lambda: None)
+    mark = tmp_path / str(app.CALLS) / f"{'t' * 32}.json"
+
+    def call(*_a: Any) -> dict[str, Any]:
+        time.sleep(0.1)
+        return {"status": "done", "code": 0}
+
+    monkeypatch.setattr(app, "call", call)
+    first = app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)["seconds"]
+    second = app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)["seconds"]
+    # the first ended: its seconds and the second's start-up come first, never 0 again
+    assert second >= round(first, 1) + app.START_UP_S + 0.1
+    assert json.loads(mark.read_text()) == {"seconds": round(second, 1), "ended": True}
+
+
+def test_a_container_that_cannot_save_stops_itself(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app, _mod, _log = load(monkeypatch, local=False, at="/root/modal_app.py")
+    monkeypatch.setattr(app, "REMOTE_DATA", PurePosixPath(tmp_path))
+    monkeypatch.setattr(app, "COMMIT_EVERY_S", 0.05)
+    failing = {"now": False}
+    commits: list[float] = []
+
+    def commit() -> None:
+        if failing["now"]:
+            raise OSError("volume")
+        commits.append(time.monotonic())
+
+    gave_up: list[tuple[str, float]] = []
+    monkeypatch.setattr(app.volume, "commit", commit)
+    monkeypatch.setattr(app, "give_up", lambda why: gave_up.append((why, time.monotonic())))
+
+    def call(*_a: Any) -> dict[str, Any]:
+        failing["now"] = True
+        time.sleep(0.4)
+        failing["now"] = False
+        return {"status": "done", "code": 0}
+
+    monkeypatch.setattr(app, "call", call)
+    app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)
+    assert len(gave_up) == 1 and "OSError" in gave_up[0][0]
+    # within the two commits after the last mark saved that ``UNSEEN_S`` counts
+    assert gave_up[0][1] - commits[0] <= 2 * app.COMMIT_EVERY_S + 0.05
+
+
+def test_give_up_ends_the_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    app, _mod, _log = load(monkeypatch, local=False, at="/root/modal_app.py")
+    codes: list[int] = []
+    monkeypatch.setattr(app.os, "_exit", codes.append)
+    app.give_up("x")
+    assert codes == [3]
 
 
 def test_removing_old_files_is_safe_to_repeat(monkeypatch: pytest.MonkeyPatch) -> None:
