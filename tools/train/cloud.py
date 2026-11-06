@@ -913,25 +913,28 @@ def close_lost_call(
     )
 
 
-def reset_hours(
-    backend: Backend,
-    ledger: Path,
-    hours: float,
-    again: str,
-    wall: Callable[[], float] = time.time,
-) -> None:
-    """``reset_hours=<h>``: start ``LEDGER`` over at ``hours``, with no open calls, when it
-    cannot be read (or the owner wants it so). One that can be read is settled first
-    (``check_no_old_call``): the command stops while a call in it may still run. One
-    that cannot be read says nothing of its calls: the owner has looked at
-    modal.com/apps. An old ``fresh_pending`` is kept when it can be read."""
+def refuse_needless_reset(ledger: Path) -> None:
+    """``reset_hours=`` is only for a ``LEDGER`` that cannot be read. One that can be
+    read keeps what it has counted: a reset from the shell's history (``reset_hours=0``
+    or an old value) would otherwise drop hours, and ``max_hours`` could be passed."""
     try:
-        pending = fresh_pending(ledger)
+        counted = hours_used(ledger)
     except BenchError:
-        pending = False  # nothing is removed on a guess
-    else:
-        check_no_old_call(backend, ledger, again, wall)
-    _write_ledger(ledger, {"seconds": hours * 3600, "fresh_pending": pending, "open": {}})
+        return
+    raise BenchError(
+        f"Timräkningen {ledger} går att läsa ({counted:.1f} h använda), så reset_hours= "
+        "behövs inte: den är bara till för en timräkning som inte går att läsa. Kör samma "
+        "kommando utan reset_hours=.",
+        2,
+    )
+
+
+def reset_hours(ledger: Path, hours: float) -> None:
+    """``reset_hours=<h>``: start a ``LEDGER`` that cannot be read over at ``hours``, with
+    no open calls. It says nothing of its calls: the owner has looked at modal.com/apps.
+    One that can be read is never reset (``refuse_needless_reset``)."""
+    refuse_needless_reset(ledger)
+    _write_ledger(ledger, {"seconds": hours * 3600, "fresh_pending": False, "open": {}})
     say(f"Timräkningen börjar om på {hours:g} h. Kör framöver samma kommando utan reset_hours=.")
 
 
@@ -1232,12 +1235,20 @@ def main(
         if reset is not None and (fresh or args.get("close_call")):
             raise BenchError("reset_hours= går inte ihop med fresh=1 eller close_call=.", 2)
         ledger = data / LEDGER.format(run=where.remote_run.name)
-        before = 0.0 if fresh else reset if reset is not None else hours_used(ledger)
+        if reset is not None:
+            refuse_needless_reset(ledger)
+        before = 0.0 if fresh or reset is not None else hours_used(ledger)
         uploads = plan(data, sets, model, limit, init_local, init_sha)
         say(f"Tränar {model} på {', '.join(sets)} i Modal ({len(uploads)} filer behövs).")
         for line in price.lines(guessed):
             say(line)
-        if before:
+        if reset is not None:
+            say(
+                f"Timräkningen går inte att läsa. Med reset_hours= börjar den om på "
+                f"{reset:g} h av max_hours={max_hours:g} (ungefär {reset * price.price:.0f} $). "
+                "Det är bara så mycket du har gett: ge hellre för många timmar."
+            )
+        elif before:
             say(
                 f"Körningen har redan använt {before:.1f} h av max_hours={max_hours:g} "
                 f"(ungefär {before * price.price:.0f} $)."
@@ -1267,7 +1278,7 @@ def main(
                 close_lost_call(client, ledger, args["close_call"])
                 done.append("close_call")
             if reset is not None:
-                reset_hours(client, ledger, reset, again_text(fresh, ledger))
+                reset_hours(ledger, reset)
                 done.append("reset_hours")
             check_no_old_call(client, ledger, again_text(fresh, ledger, done))
             if fresh_pending(ledger):

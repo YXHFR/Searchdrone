@@ -1130,18 +1130,38 @@ def test_reset_hours_starts_an_unreadable_ledger_over(
     assert cloud.main([*args, "reset_hours=5"], backend=lambda gpu: fake) == 0
     assert cloud.hours_used(ledger) == pytest.approx(5 + 1)  # from 5 h, then the call's hour
     assert json.loads(ledger.read_text())["open"] == {}
-    assert "utan reset_hours=" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "utan reset_hours=" in out
+    assert "börjar den om på 5 h" in out and "redan använt" not in out  # not as if counted
     assert all("reset_hours" not in a for a in fake.calls[0][0])  # not for the script
 
 
-def test_reset_hours_waits_for_a_call_that_may_still_run(bank: Path) -> None:
-    """A ledger that can be read is settled first: its calls are not dropped on a reset."""
+@pytest.mark.parametrize("reset", ["0", "2", "7"])
+def test_reset_hours_never_changes_a_ledger_that_can_be_read(
+    bank: Path, capsys: pytest.CaptureFixture[str], reset: str
+) -> None:
+    """A reset from the shell's history, to 0 or an old value, keeps the hours counted."""
+    fake, ledger, args, _run = _old_run(bank, ["done"])
+    assert cloud.main(args, backend=lambda gpu: fake) == 0
+    cloud._write_ledger(ledger, {"seconds": 5 * 3600, "fresh_pending": False, "open": {}})
+    before = ledger.read_text()
+    again = FakeModal()
+    capsys.readouterr()
+    assert cloud.main([*args, f"reset_hours={reset}"], backend=lambda gpu: again) == 2
+    err = capsys.readouterr().err
+    assert "går att läsa (5.0 h använda)" in err and "utan reset_hours=" in err
+    assert ledger.read_text() == before and cloud.hours_used(ledger) >= 5
+    assert again.calls == []
+
+
+def test_reset_hours_keeps_a_call_that_may_still_run(bank: Path) -> None:
+    """A readable ledger with an open call is not reset: the call is not dropped."""
     fake, ledger, args, _run = _old_run(bank, ["lost_late"])
     assert cloud.main(args, backend=lambda gpu: fake) == 1
     before = ledger.read_text()
     again = _again(fake, ["done"])
     again.marks, again.alive = fake.marks, set(fake.tokens)
-    assert cloud.main([*args, "reset_hours=0"], backend=lambda gpu: again) == 1
+    assert cloud.main([*args, "reset_hours=0"], backend=lambda gpu: again) == 2
     assert ledger.read_text() == before and again.calls == []
 
 

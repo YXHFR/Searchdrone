@@ -240,7 +240,8 @@ Det här händer:
    medan ett gammalt kanske fortfarande kör, eftersom det annars kunde spara över den
    nya träningen. Går räkningen inte att läsa stannar den också: titta då på
    modal.com/apps att inget kör, och kör samma kommando med `reset_hours=` och de
-   timmar körningen redan har använt.
+   timmar körningen redan har använt. Går räkningen att läsa vägras `reset_hours=`,
+   så att inga räknade timmar försvinner.
    Får den inget grafikkort från Modal innan tiden är slut, säger den det: då
    tränades inget, och du kan försöka igen senare eller med en annan `gpu=`.
 4. Den gör ONNX-filen och hämtar hem `best.pt`, `person_yolox_s.onnx` och
@@ -303,7 +304,7 @@ Lagringen i volymen kostar lite eller inget; se modal.com/pricing.
 | `name=person_yolox_s` | Namnet på ONNX-filen och manifestet. |
 | `init=<best.pt>` | Som för `just train-detector`. Måste vara en `.pt`-fil på högst 1 GB. |
 | `close_call=<id>` | Bara när körningen ber om det: ett gammalt anrop som modal.com/apps visar inte kör, fast Modal inte säger att det har slutat, räknas med sin längsta tid och stoppar inte längre körningen. Går först efter den tiden. Ge den bara en gång. |
-| `reset_hours=<h>` | Bara när körningen ber om det: timräkningen går inte att läsa. Den börjar om på `h` timmar, utan öppna anrop; ge de timmar körningen redan har använt, hellre för många. Går inte ihop med `fresh=1` eller `close_call=`. Ge den bara en gång. |
+| `reset_hours=<h>` | Bara när körningen ber om det: timräkningen går inte att läsa. Den börjar om på `h` timmar, utan öppna anrop; ge de timmar körningen redan har använt, hellre för många. En timräkning som går att läsa ändras aldrig: då vägras `reset_hours=`. Går inte ihop med `fresh=1` eller `close_call=`. Ge den bara en gång. |
 
 `device=` och `simfarm=` går inte att använda i molnet.
 
