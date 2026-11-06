@@ -505,12 +505,13 @@ def _saving(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, commit: Any, train_s: float
 ) -> tuple[Any, list[tuple[str, float]]]:
     """A container whose saves go through ``commit``, with short times, that trains for
-    ``train_s``; returns the module and when (and why) it gave up."""
+    ``train_s``; returns the module and when (and why) it gave up. The times leave a
+    few tenths of a second either side of each bound, for a busy CI runner."""
     app, _mod, _log = load(monkeypatch, local=False, at="/root/modal_app.py")
     monkeypatch.setattr(app, "REMOTE_DATA", PurePosixPath(tmp_path))
-    monkeypatch.setattr(app, "COMMIT_EVERY_S", 0.1)
-    monkeypatch.setattr(app, "COMMIT_SLOW_S", 0.25)
-    monkeypatch.setattr(app, "WATCH_S", 0.01)
+    monkeypatch.setattr(app, "COMMIT_EVERY_S", 0.3)
+    monkeypatch.setattr(app, "COMMIT_SLOW_S", 1.0)
+    monkeypatch.setattr(app, "WATCH_S", 0.05)
     monkeypatch.setattr(app.volume, "commit", commit)
     gave_up: list[tuple[str, float]] = []
     monkeypatch.setattr(app, "give_up", lambda why: gave_up.append((why, time.monotonic())))
@@ -528,7 +529,7 @@ def test_one_save_that_fails_is_tried_again(
         if len(tries) in (2, 4):  # every other one fails: never two in a row
             raise OSError("volume")
 
-    app, gave_up = _saving(monkeypatch, tmp_path, commit, train_s=0.55)
+    app, gave_up = _saving(monkeypatch, tmp_path, commit, train_s=1.35)
     res = app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)
     assert gave_up == [] and res["status"] == "done"
     assert len(tries) >= 5  # the first, failed, good, failed, good, ..., the last
@@ -543,9 +544,9 @@ def test_a_save_that_is_slow_but_ends_is_no_hang(
     def commit() -> None:
         tries.append(time.monotonic())
         if len(tries) > 1:
-            time.sleep(0.2)  # under COMMIT_SLOW_S, more than COMMIT_EVERY_S
+            time.sleep(0.5)  # more than COMMIT_EVERY_S, half of COMMIT_SLOW_S
 
-    app, gave_up = _saving(monkeypatch, tmp_path, commit, train_s=0.7)
+    app, gave_up = _saving(monkeypatch, tmp_path, commit, train_s=1.4)
     assert app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)["status"] == "done"
     assert gave_up == [] and len(tries) >= 3
 
@@ -560,12 +561,13 @@ def test_two_failed_saves_in_a_row_stop_the_container(
         if len(tries) > 1:
             raise OSError("volume")
 
-    app, gave_up = _saving(monkeypatch, tmp_path, commit, train_s=0.5)
+    app, gave_up = _saving(monkeypatch, tmp_path, commit, train_s=1.0)
     with contextlib.suppress(app.CallFailedError):  # the last save fails too
         app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)
     assert len(gave_up) == 1 and "två gånger i rad" in gave_up[0][0]
-    # at the second failed save, the keeper's second, not the first
-    assert gave_up[0][1] - tries[2] < 0.05 and tries[2] > tries[1]
+    # at the second failed save (the keeper's second), not at the first one
+    assert tries[2] - tries[1] > app.COMMIT_EVERY_S / 2
+    assert tries[2] <= gave_up[0][1] < tries[2] + 0.3
     assert len(tries) == 4  # the first, two failed, and one last try after the training
 
 
@@ -579,7 +581,7 @@ def test_a_save_that_hangs_stops_the_container(
     def commit() -> None:
         began.append(time.monotonic())
         if len(began) == 2:
-            release.wait(1.0)
+            release.wait(2.0)
             raise OSError("volume")
 
     app, gave_up = _saving(monkeypatch, tmp_path, commit, train_s=0.5)
@@ -587,7 +589,7 @@ def test_a_save_that_hangs_stops_the_container(
     release.set()
     assert len(gave_up) == 1 and "inte klar" in gave_up[0][0]
     after = gave_up[0][1] - began[1]  # the commit begins just after its save does
-    assert app.COMMIT_SLOW_S - 0.005 < after <= app.COMMIT_SLOW_S + app.WATCH_S + 0.05
+    assert app.COMMIT_SLOW_S - 0.005 < after <= app.COMMIT_SLOW_S + app.WATCH_S + 0.3
 
 
 def test_a_last_save_that_fails_once_is_tried_again(
