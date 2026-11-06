@@ -526,6 +526,7 @@ class MissionFlow:
 
     async def close(self, mission: Mission, trigger: Trigger, reason: str) -> Mission:
         from sd_ground.services import files as files_service
+        from sd_ground.services import inspections as inspections_service
 
         await self.end_clearance(
             mission.vehicle_id, "invalidated", "MISSION_CLOSED", str(mission.id)
@@ -533,6 +534,7 @@ class MissionFlow:
         await files_service.close_files(self, mission)
         after = await self.transition(str(mission.id), trigger, closed_reason=reason)
         self.coverage.forget(str(mission.id))
+        inspections_service.forget(self, str(mission.id))
         return after or await self.mission(str(mission.id))
 
     # --- limits and autonomy -----------------------------------------------------------
@@ -822,6 +824,8 @@ class MissionFlow:
                 await commands_service.cancel_open(self, vehicle_id, "BATTERY_RTL")
         watch.battery_rtl = snap.battery_rtl_active
         await commands_service.on_snapshot(self, mission, snap)
+        active = None if snap.active_command_id is None else str(snap.active_command_id)
+        inspections_service.on_snapshot(self, str(mission.id), active)
         if snap.inspect is not None:
             await inspections_service.on_progress(self, mission, snap.inspect)
 

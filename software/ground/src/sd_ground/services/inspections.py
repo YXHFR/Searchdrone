@@ -187,9 +187,12 @@ class Look:
     tell_by: dt.datetime | None = None  # ended here: the drone's report awaited until then
     told: bool = False  # ``inspection.closed`` sent
     resume_ended: bool = False  # the drone's ``inspect.resume_ended`` came
+    resume_seen: bool = False  # the drone's state named the resume as its active order
+    resume_left_at: dt.datetime | None = None  # its state named another order from here
 
-    def flying_on(self) -> bool:
-        """The drone flies the interrupted search on after this look, by its own resume."""
+    def linked(self) -> bool:
+        """The drone said it flies the interrupted search on after this look (its own
+        resume), and the end of that run has not come yet."""
         c = self.closed
         return (
             c is not None
@@ -198,6 +201,11 @@ class Look:
             and c.resumed_command_id is not None
             and not self.resume_ended
         )
+
+    def flying_on(self) -> bool:
+        """The drone flies the interrupted search on after this look, by its own resume:
+        linked, and its state has not named another order since (``on_snapshot``)."""
+        return self.linked() and self.resume_left_at is None
 
     def view(self) -> Inspection:
         r = self.row
@@ -328,10 +336,11 @@ _AI_DURING_LOOK: Final = frozenset({*_KEEPS_LOOK, "return_home", "report", "mark
 
 
 PILOT_ONLY_SV: Final = "En titt pågår. Under titten styr bara piloten drönaren."
-# The INSPECT_BUSY refusal's hint to the AI: the plan waits, it is not dropped.
+# The INSPECT_BUSY refusal's hint to the AI: the plan waits for the look's end, which says
+# what the drone does next (on "resume" it flies the search on by itself: no order).
 WAIT_FOR_CLOSE_SV: Final = (
-    "Vänta tills titten är stängd (skill-händelsen inspect_detection med status closed) "
-    "och skicka ordern då."
+    "Vänta tills titten är stängd (skill-händelsen inspect_detection med status closed); "
+    "den säger vad drönaren gör sedan och om ordern behövs."
 )
 
 
@@ -340,17 +349,38 @@ async def open_look(flow: MissionFlow, mission_id: str) -> LookRow | None:
     return next((x for x in await _repo(flow).open_looks() if x.mission_id == mission_id), None)
 
 
+def _unclosed(flow: MissionFlow, mission_id: str) -> LookRow | None:
+    """A look of the mission ended on the ground whose end the AI has not heard yet: the
+    drone may still be in it (its ``inspect.closed`` is awaited, ``CLOSED_WAIT_S``)."""
+    return next(
+        (
+            x.row
+            for x in flow.looks.values()
+            if x.row.mission_id == mission_id and x.row.ended_at is not None and not x.told
+        ),
+        None,
+    )
+
+
+async def busy_look(flow: MissionFlow, mission_id: str) -> LookRow | None:
+    """The look that holds the AI's moves: the open one, or one ended on the ground until
+    the drone's report of its end came or was given up (``_settle``)."""
+    return await open_look(flow, mission_id) or _unclosed(flow, mission_id)
+
+
 async def refuse_during_look(
     flow: MissionFlow, mission_id: str, skill: str, issuer_kind: str, gate: GateDecision
 ) -> GateDecision:
     """Owner decision: during a look only the pilot moves the drone. The AI's order that
     would take the drone from it onboard (every order the drone takes replaces the look) is
-    refused (``INSPECT_BUSY``) while a look of the mission is open. Its flying home is not,
-    and STOP / FLY HOME never pass the gate. The pilot's click on an AI card made before
-    the look is the pilot's own order (``commands.decide`` does not ask here)."""
+    refused (``INSPECT_BUSY``) while a look of the mission is open, and after its end on
+    the ground until the AI has heard it (``busy_look``: the drone may still be in it).
+    Its flying home is not, and STOP / FLY HOME never pass the gate. The pilot's click on
+    an AI card made before the look is the pilot's own order (``commands.decide`` does
+    not ask here)."""
     if issuer_kind != "brain" or skill in _AI_DURING_LOOK or gate.decision == "REJECT":
         return gate
-    busy = await open_look(flow, mission_id)
+    busy = await busy_look(flow, mission_id)
     if busy is None:
         return gate
     return GateDecision(
@@ -375,13 +405,16 @@ def _phase(flow: MissionFlow, row: LookRow) -> str:
 
 
 async def situation_line(flow: MissionFlow, mission_id: str) -> str | None:
-    """The AI's line while a look of the mission is open: on which candidate, and whether
-    the drone still flies it or waits for the operator's decision. None without one."""
-    row = await open_look(flow, mission_id)
+    """The AI's line while a look of the mission holds its moves (``busy_look``): on which
+    candidate, and whether the drone still flies it, waits for the operator's decision, or
+    has not yet said what it does after it. None without one."""
+    row = await busy_look(flow, mission_id)
     if row is None:
         return None
     k = f"K{row.seq}"
-    if _phase(flow, row) == "await":
+    if row.ended_at is not None:
+        now = f"Titt på {k} avslutas: drönarens besked om vad den gör sedan väntas."
+    elif _phase(flow, row) == "await":
         now = f"Titt på {k} pågår: drönaren väntar på operatörens beslut om {k}."
     else:
         now = f"Titt på {k} pågår: drönaren tittar närmare på {k}."
@@ -668,7 +701,7 @@ async def _settle(flow: MissionFlow, look: Look) -> None:
             return
         look.told = True
         await _tell_closed(flow, look)
-    if look.flying_on():
+    if look.linked():
         flow.looks[cid] = look
     else:
         flow.looks.pop(cid, None)
@@ -679,7 +712,10 @@ def _closed_text(look: Look, sector_id: Any) -> str:
     k = f"K{r.seq}"
     head = f"Titten på {k} är stängd ({_OUTCOME_SV.get(str(r.outcome), str(r.outcome))})."
     if c is None:
-        return f"{head} Drönaren har inte sagt vad den gör nu."
+        return (
+            f"{head} Drönaren har inte sagt vad den gör nu. Se efter i läget vad den gör, "
+            "eller fråga operatören, innan du ger en ny order."
+        )
     if c.next == "resume" and c.breakpoint == "survey":
         where = f"i sektor {sector_id} " if sector_id else ""
         return f"{head} Drönaren söker vidare {where}där sökningen bröts."
@@ -759,7 +795,7 @@ async def _on_closed(flow: MissionFlow, body: InspectClosed) -> None:
         return
     if body.resume_command_id is not None:
         # One resume at a time onboard: an older search flown on is over.
-        for other in [x for x in flow.looks.values() if x is not look and x.flying_on()]:
+        for other in [x for x in flow.looks.values() if x is not look and x.linked()]:
             if other.row.mission_id == look.row.mission_id:
                 other.resume_ended = True
                 flow.looks.pop(other.row.command_id, None)
@@ -770,19 +806,30 @@ async def _on_closed(flow: MissionFlow, body: InspectClosed) -> None:
 async def _on_resume_ended(flow: MissionFlow, body: InspectResumeEnded) -> None:
     """The drone's own resume after a look ended. For a search flown on: the search's
     sector is done when it was flown to its end, and the AI hears the end as a skill event
-    of the search's own order (``inspection.resume_ended``)."""
+    of the search's own order (``inspection.resume_ended``). Only for the run the look's
+    end named (``inspect.closed``: the same search order, of the same mission); another
+    report is only logged."""
     cid = str(body.command_id)
     look = flow.looks.get(cid)
+    c = None if look is None else look.closed
     if look is not None:
         look.resume_ended = True
         if look.told:
             flow.looks.pop(cid, None)
     if body.resumed_command_id is None:
         return  # back to a point only: the look's end said so
-    row = look.row if look is not None else await _repo(flow).look(cid)
-    search = await flow.repo.command(str(body.resumed_command_id))
-    if row is None or search is None:
+    resumed = str(body.resumed_command_id)
+    search = await flow.repo.command(resumed)
+    if (
+        look is None
+        or c is None
+        or str(c.resumed_command_id) != resumed
+        or search is None
+        or str(search.mission_id) != look.row.mission_id
+    ):
+        log.info("inspect.resume_ended_unmatched", command_id=cid, resumed_command_id=resumed)
         return
+    row = look.row
     sector_id = search.params.get("sector_id")
     if body.status == "done" and search.skill == "survey_sector" and sector_id:
         await flow.repo.set_sector_progress(row.mission_id, str(sector_id), "done", 1.0, flow.now())
@@ -811,6 +858,37 @@ async def _on_resume_ended(flow: MissionFlow, body: InspectResumeEnded) -> None:
     flow.publish(
         "mission", "inspection.resume_ended", data, vehicle_id=vid, mission_id=row.mission_id
     )
+
+
+def on_snapshot(flow: MissionFlow, mission_id: str, active_command_id: str | None) -> None:
+    """The drone's active order (state snapshot) ends the link to a search flown on after a
+    look once it is no longer that resume: the resume was seen and another order (or none)
+    is active, or it was never seen within ``CLOSED_WAIT_S`` of the look's end. The look
+    stays in memory a while longer (``tick``) so that a late ``inspect.resume_ended`` is
+    still told; the search no longer counts as flown on (``flying_on``)."""
+    now = flow.now()
+    for look in flow.looks.values():
+        c = look.closed
+        if look.row.mission_id != mission_id or not look.flying_on() or c is None:
+            continue
+        if active_command_id == str(c.resume_command_id):
+            look.resume_seen = True
+            continue
+        since = look.closed_at or now
+        if look.resume_seen or now >= since + dt.timedelta(seconds=CLOSED_WAIT_S):
+            look.resume_left_at = now
+            log.info(
+                "inspect.resume_left",
+                command_id=look.row.command_id,
+                resume_command_id=str(c.resume_command_id),
+                active_command_id=active_command_id,
+            )
+
+
+def forget(flow: MissionFlow, mission_id: str) -> None:
+    """The mission ended: no search of it is flown on any more, no look of it is told."""
+    for cid in [k for k, x in flow.looks.items() if x.row.mission_id == mission_id]:
+        flow.looks.pop(cid, None)
 
 
 async def decided(flow: MissionFlow, mission: Mission, candidate_id: str, decision: str) -> None:
@@ -993,13 +1071,22 @@ async def views(flow: MissionFlow, mission_id: str) -> list[Inspection]:
 async def tick(flow: MissionFlow, mission: Mission) -> None:
     """Once a second: "Gå lägre?" unanswered, the wait for a decision over, a look the
     ground lost track of (a restart) that cannot be going on any more, or an ended look
-    whose report from the drone did not come in time (``CLOSED_WAIT_S``)."""
+    whose report from the drone did not come in time (``CLOSED_WAIT_S``), and a search
+    flown on after a look that the drone left (``on_snapshot``) without its end coming."""
     mid = str(mission.id)
     now = flow.now()
     for look in list(flow.looks.values()):
         r, until = look.row, look.tell_by
         if r.mission_id == mid and not look.told and until is not None and now >= until:
             await _settle(flow, look)
+        left = look.resume_left_at
+        if (
+            r.mission_id == mid
+            and left is not None
+            and now >= left + dt.timedelta(seconds=CLOSED_WAIT_S)
+        ):
+            log.info("inspect.resume_link_dropped", command_id=r.command_id)
+            flow.looks.pop(r.command_id, None)
     for row in await _repo(flow).open_looks():
         if row.mission_id != mid:
             continue

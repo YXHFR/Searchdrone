@@ -116,8 +116,13 @@ async def test_the_look_closes_once_for_the_ai_with_what_comes_next(r: Rig) -> N
     async with person(r, "pilot", "kalle") as pilot:
         res = await decide(pilot, str(det.detection_id), "reject")
         assert res.status_code == 200, res.text
-    # The ground has ended the look; the drone's report says what comes next.
+    # The ground has ended the look; the drone's report says what comes next. Until it
+    # comes the drone may still be in the look: the AI's moves stay refused.
     assert not bus(r, "inspection.closed")
+    out = await order(r, d, "goto", {"lat": lat, "lon": lon, "alt_m": 40}, want="REJECT")
+    assert out["reason_codes"] == ["INSPECT_BUSY"]
+    line = (await d.situation())["candidates_line"]
+    assert "Titt på K1 avslutas" in line
     await event(r, "inspect.closed", **closed(sent, "hold", cause="returned"))
     await event(r, "inspect.closed", **closed(sent, "hold"))  # a resend: told once
     (e,) = bus(r, "inspection.closed")
@@ -151,11 +156,17 @@ async def test_without_the_drones_report_the_look_closes_after_a_while(
     mission = await r.flow.open_mission_of(mid)
     await inspections.tick(r.flow, mission)
     assert not bus(r, "inspection.closed")  # still waiting for the drone
+    lat, lon = r.at(0.0, 60.0)
+    out = await order(r, d, "goto", {"lat": lat, "lon": lon, "alt_m": 40}, want="REJECT")
+    assert out["reason_codes"] == ["INSPECT_BUSY"]  # the drone may still be in the look
     later = r.clock.utc_now() + dt.timedelta(seconds=inspections.CLOSED_WAIT_S + 1)
     monkeypatch.setattr(r.g.clock, "utc_now", lambda: later)
     await inspections.tick(r.flow, mission)
     (e,) = bus(r, "inspection.closed")
     assert e.data["details"]["outcome"] == "unsure" and e.data["details"]["next"] is None
+    # Not knowing what the drone does, the AI looks or asks before it orders anything.
+    assert "fråga operatören" in e.data["message_sv"]
+    assert await inspections.busy_look(r.flow, mid) is None
     # A report after that is only logged.
     await event(r, "inspect.closed", **closed(sent, "hold"))
     assert len(bus(r, "inspection.closed")) == 1
@@ -247,6 +258,117 @@ async def test_the_search_flown_on_after_a_look_is_the_ais_order_to_its_end(r: R
     rows = {s["sector_id"]: s for s in (await d.situation())["sectors"]}
     assert rows["A"]["status"] == "done" and rows["A"]["progress"] == 1.0
     assert (await r.flow.repo.command(sid)).status == "superseded"  # not revived
+    assert str(sent.command_id) not in r.flow.looks
+
+
+async def _flown_on_a(r: Rig) -> tuple[str, str, Any, Any, uuid.UUID]:
+    """A look broke off the AI's search of sector A and the drone flies it on by its own
+    resume (its state names the resume). The mission, the search, the look's order, the
+    AI's situation and the resume's id."""
+    r.onboard.order_outcome = "running"
+    det = seen_at(r, 0, 100)
+    mid, d = await flying_with(r, det, mode="exercise", sectors=sectors(r))
+    survey = await order(r, d, "survey_sector", {"sector_id": "A", "alt_m": 40, "spacing_m": 20})
+    sid = str(survey["command_id"])
+    await wait_order_status(r, mid, sid, "running")
+    sent = await ai_look(r, mid, d)
+    assert r.onboard.session is not None
+    await r.onboard.session.ack(uuid.UUID(sid), "superseded")
+    await wait_order_status(r, mid, sid, "superseded")
+    async with person(r, "pilot", "kalle") as pilot:
+        res = await decide(pilot, str(det.detection_id), "reject")
+        assert res.status_code == 200, res.text
+    resume_id = new_id()
+    r.onboard.active_command_id = resume_id
+    await event(
+        r,
+        "inspect.closed",
+        **closed(
+            sent,
+            "resume",
+            breakpoint="survey",
+            resume_command_id=str(resume_id),
+            resumed_command_id=sid,
+        ),
+    )
+
+    async def active_is_search() -> bool:
+        ac = (await d.situation())["active_command"]
+        return ac is not None and ac["id"] == sid
+
+    await r.until(active_is_search, 5, "the search flown on as the active order")
+    assert r.flow.looks[str(sent.command_id)].resume_seen
+    return mid, sid, sent, d, resume_id
+
+
+async def test_the_link_to_the_search_flown_on_ends_when_the_drone_leaves_it(
+    r: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The drone's state names another order than its resume: the search no longer counts
+    as flown on (active order, coverage), its late end is still told, and the look leaves
+    memory a while later without it."""
+    mid, sid, sent, d, _ = await _flown_on_a(r)
+    r.onboard.active_command_id = None  # e.g. the pilot took over; no resume_ended came
+
+    async def left() -> bool:
+        return (await d.situation())["active_command"] is None
+
+    await r.until(left, 5, "the search no longer the active order")
+    assert inspections.flown_on(r.flow, mid) == []
+    look = r.flow.looks[str(sent.command_id)]
+    assert look.resume_left_at is not None
+    # Its end, late: still the AI's event for the search.
+    await event(
+        r,
+        "inspect.resume_ended",
+        command_id=str(sent.command_id),
+        resumed_command_id=sid,
+        status="superseded",
+    )
+    (e,) = bus(r, "inspection.resume_ended")
+    assert e.data["command_id"] == sid and e.data["status"] == "superseded"
+    assert str(sent.command_id) not in r.flow.looks
+
+
+async def test_a_search_left_without_its_end_leaves_memory_after_a_while(
+    r: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mid, _sid, sent, d, _ = await _flown_on_a(r)
+    r.onboard.active_command_id = None
+
+    async def left() -> bool:
+        return (await d.situation())["active_command"] is None
+
+    await r.until(left, 5, "the search no longer the active order")
+    mission = await r.flow.open_mission_of(mid)
+    await inspections.tick(r.flow, mission)
+    assert str(sent.command_id) in r.flow.looks  # a late resume_ended may still come
+    later = r.clock.utc_now() + dt.timedelta(seconds=inspections.CLOSED_WAIT_S + 1)
+    monkeypatch.setattr(r.g.clock, "utc_now", lambda: later)
+    await inspections.tick(r.flow, mission)
+    assert str(sent.command_id) not in r.flow.looks
+    assert not bus(r, "inspection.resume_ended")
+
+
+async def test_a_resume_end_for_another_search_is_only_logged(r: Rig) -> None:
+    """The run's end must name the search the look's end named (and of its mission)."""
+    _mid, _sid, sent, d, _ = await _flown_on_a(r)
+    await event(
+        r,
+        "inspect.resume_ended",
+        command_id=str(sent.command_id),
+        resumed_command_id=str(new_id()),
+        status="done",
+    )
+    assert not bus(r, "inspection.resume_ended")
+    rows = {s["sector_id"]: s for s in (await d.situation())["sectors"]}
+    assert rows["A"]["status"] != "done"
+
+
+async def test_the_link_ends_with_the_mission(r: Rig) -> None:
+    mid, _sid, sent, _d, _ = await _flown_on_a(r)
+    inspections.forget(r.flow, mid)
+    assert inspections.flown_on(r.flow, mid) == []
     assert str(sent.command_id) not in r.flow.looks
 
 

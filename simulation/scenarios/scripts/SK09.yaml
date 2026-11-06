@@ -36,7 +36,7 @@ turns:
   # operator's decision and refuses moves until then (INSPECT_BUSY). Its "closed" event
   # says what comes next: on "resume" the drone flies sector A on by itself, and its end
   # (that order's own "done") orders sector B below; on "hold" the AI orders sector A
-  # again.
+  # again; with no "next" (the drone's report did not come) the AI asks, it orders nothing.
   - on: skill_event
     when: {skill: inspect_detection, status: [done, failed]}
     say: ["Bilderna är tagna. Väntar på operatörens beslut."]
@@ -52,9 +52,12 @@ turns:
       skill: inspect_detection
       status: closed
       outcome: [rejected, unsure, resume, timeout, failed, aborted]
-      next: [hold, null]
+      next: hold
     say: ["Titten är klar. Söker vidare i sektor A."]
     action: {skill: survey_sector, params: {sector_id: "A", alt_m: 50, spacing_m: 45, speed_ms: 7}}
+  - on: skill_event
+    when: {skill: inspect_detection, status: closed, next: null}
+    say: ["Titten är klar men drönaren har inte sagt vad den gör. Ska jag söka vidare i sektor A?"]
   # Only a person confirms: after a confirmation the drone holds and the AI asks.
   - on: candidate_decided
     when: {decision: confirm}

@@ -950,7 +950,7 @@ async def cancel(
     if (
         brain_only
         and cmd.skill != "capture_stills"
-        and await inspections_service.open_look(flow, str(cmd.mission_id)) is not None
+        and await inspections_service.busy_look(flow, str(cmd.mission_id)) is not None
     ):
         # Owner decision: during a look only the pilot moves the drone (R-INSPECT-PILOT).
         # The AI's cancel onboard would end the look (INSPECT -> HOLD) or move the drone.
