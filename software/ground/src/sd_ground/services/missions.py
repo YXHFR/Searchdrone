@@ -201,6 +201,8 @@ class MissionFlow:
     reports: dict[str, Any] = field(default_factory=dict[str, Any])  # vehicle id -> ReportQueue
     link_watch: dict[str, LinkWatch] = field(default_factory=dict[str, "LinkWatch"])
     looks: dict[str, Any] = field(default_factory=dict[str, Any])  # command id -> Look
+    # look command id -> mission id: the end of the search flown on after it was told
+    resume_told: dict[str, str] = field(default_factory=dict[str, str])
     permit: Any = None  # the pilot's overflight permit; None: the config's
     _watch: dict[str, _VehicleWatch] = field(default_factory=dict[str, _VehicleWatch])
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -825,7 +827,7 @@ class MissionFlow:
         watch.battery_rtl = snap.battery_rtl_active
         await commands_service.on_snapshot(self, mission, snap)
         active = None if snap.active_command_id is None else str(snap.active_command_id)
-        inspections_service.on_snapshot(self, str(mission.id), active)
+        inspections_service.on_snapshot(self, str(mission.id), active, snap.active_skill)
         if snap.inspect is not None:
             await inspections_service.on_progress(self, mission, snap.inspect)
 

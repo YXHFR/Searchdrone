@@ -426,7 +426,8 @@ async def test_sector_survey_gets_the_polygon_and_moves_the_sector(r: Rig) -> No
     active = (await r.mission(mid))["active_command"]
     assert active is not None and active["id"] == out["command_id"]
     # Done: like the real executor, the snapshots stop naming the survey first.
-    r.onboard.active_command_id, r.onboard.progress_pct = None, None
+    r.onboard.idle()
+    r.onboard.progress_pct = None
     await asyncio.sleep(0.5)
     session = r.onboard.session
     assert session is not None

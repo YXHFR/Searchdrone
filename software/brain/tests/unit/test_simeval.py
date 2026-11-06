@@ -857,7 +857,8 @@ def test_the_prompt_has_one_candidate_path_that_keeps_searching() -> None:
     # tell. Without a next (the drone's report never came) the AI looks or asks first.
     assert 'With next "home", "held", "new_order" or "link_loss", only tell the operator' in rule
     assert "With no next given" in rule and "order nothing at once" in rule
-    assert "otherwise ask the operator" in rule and "(or none given)" not in rule
+    assert "its executor state there is HOLD" in rule and "otherwise ask" not in rule
+    assert "in any other state (SURVEY, for one" in rule and "(or none given)" not in rule
     # The AI names the candidate by its number, one look at a time, most important first.
     assert 'candidate_id "K3"' in rule and "detection_id" not in rule
     assert "propose only one at a time" in rule and "the nearest" in rule

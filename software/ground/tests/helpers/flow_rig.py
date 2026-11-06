@@ -117,7 +117,11 @@ class FakeOnboard:
     keepout_seq: int = -1  # as the executor: a lower install_seq is refused (stale)
     position: tuple[float, float] | None = None  # None: at home
     alt_rel_home_m: float = 0.0
+    # The running order as the executor's snapshot names it: its id only once the order
+    # was acked (never for the executor's own resume after a look, ``own_resume``), its
+    # skill always.
     active_command_id: Any = None
+    active_skill: str | None = None
     progress_pct: float | None = None
     inspect: Any = None  # a closer look's progress (InspectProgress) in the snapshots
     looks: list[Any] = field(default_factory=list[Any])  # the answers to a closer look
@@ -131,6 +135,15 @@ class FakeOnboard:
         self.executor_state = state
         for k, v in kw.items():
             setattr(self, k, v)
+
+    def own_resume(self) -> None:
+        """As the executor after a look: it flies on by its own resume, which it never
+        acks, so its state names the resume by skill only (no ``active_command_id``)."""
+        self.active_command_id, self.active_skill = None, "resume"
+
+    def idle(self) -> None:
+        """No order runs onboard."""
+        self.active_command_id, self.active_skill = None, None
 
     def restart(self) -> None:
         """After ``close``: the next ``start`` connects again (a new SD-link session)."""
@@ -171,7 +184,7 @@ class FakeOnboard:
                 "heading_deg": 0.0,
                 "battery_pct": 95.0,
                 "active_command_id": self.active_command_id,
-                "active_skill": None,
+                "active_skill": self.active_skill,
                 "progress_pct": self.progress_pct,
                 "resume_available": False,
                 "charter_id": None if charter is None else charter.charter_id,
@@ -275,10 +288,10 @@ class FakeOnboard:
                 return
             await session.ack(body.command_id, "accepted")
             await session.ack(body.command_id, "running")
-            self.active_command_id = body.command_id
+            self.active_command_id, self.active_skill = body.command_id, body.skill
             if self.order_outcome == "done":
                 await session.ack(body.command_id, "done")
-                self.active_command_id = None
+                self.idle()
         elif isinstance(body, OperatorOverrideNotice):
             self.notices.append(body)
             if body.kind in ("stop", "watchdog_stop"):

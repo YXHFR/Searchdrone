@@ -11,6 +11,7 @@ coverage still counts, and its end is a skill event for the original order.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import sys
 import uuid
@@ -46,10 +47,12 @@ from test_orders import (  # pyright: ignore[reportMissingImports]
 )
 
 from sd_ground.api.commander import to_commander
+from sd_ground.db.inspections import InspectionRepo
 from sd_ground.services import inspections
 from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState
 from sd_schemas.inspect import AWAIT_DECISION_S
+from sd_schemas.mission import Trigger
 
 if TYPE_CHECKING:
     from conftest import Db
@@ -135,7 +138,7 @@ async def test_the_look_closes_once_for_the_ai_with_what_comes_next(r: Rig) -> N
     assert details["outcome"] == "rejected" and details["next"] == "hold"
     assert details["candidate"] == "K1" and details["resumed_command_id"] is None
     assert "K1" in body["message_sv"] and "står still" in body["message_sv"]
-    assert e.data["issuer_kind"] == "brain"
+    assert e.data["issuer_kind"] == "brain" and body["issuer_kind"] == "brain"
     assert "Titt på" not in ((await d.situation())["candidates_line"] or "")
     await r.g.flush_events()
     res = await r.panel.get(f"/api/v1/missions/{mid}/events", params={"type": "inspection.closed"})
@@ -192,7 +195,7 @@ async def test_the_search_flown_on_after_a_look_is_the_ais_order_to_its_end(r: R
         res = await decide(pilot, str(det.detection_id), "reject")
         assert res.status_code == 200, res.text
     resume_id = new_id()
-    r.onboard.active_command_id = resume_id  # the executor's own resume, unknown here
+    r.onboard.own_resume()  # the executor's own resume, unknown here and never acked
     await event(
         r,
         "inspect.closed",
@@ -279,7 +282,7 @@ async def _flown_on_a(r: Rig) -> tuple[str, str, Any, Any, uuid.UUID]:
         res = await decide(pilot, str(det.detection_id), "reject")
         assert res.status_code == 200, res.text
     resume_id = new_id()
-    r.onboard.active_command_id = resume_id
+    r.onboard.own_resume()
     await event(
         r,
         "inspect.closed",
@@ -308,7 +311,7 @@ async def test_the_link_to_the_search_flown_on_ends_when_the_drone_leaves_it(
     as flown on (active order, coverage), its late end is still told, and the look leaves
     memory a while later without it."""
     mid, sid, sent, d, _ = await _flown_on_a(r)
-    r.onboard.active_command_id = None  # e.g. the pilot took over; no resume_ended came
+    r.onboard.idle()  # e.g. the pilot took over; no resume_ended came
 
     async def left() -> bool:
         return (await d.situation())["active_command"] is None
@@ -334,7 +337,7 @@ async def test_a_search_left_without_its_end_leaves_memory_after_a_while(
     r: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     mid, _sid, sent, d, _ = await _flown_on_a(r)
-    r.onboard.active_command_id = None
+    r.onboard.idle()
 
     async def left() -> bool:
         return (await d.situation())["active_command"] is None
@@ -367,9 +370,183 @@ async def test_a_resume_end_for_another_search_is_only_logged(r: Rig) -> None:
 
 async def test_the_link_ends_with_the_mission(r: Rig) -> None:
     mid, _sid, sent, _d, _ = await _flown_on_a(r)
-    inspections.forget(r.flow, mid)
+    mission = await r.flow.open_mission_of(mid)
+    await r.flow.close(mission, Trigger.CLOSE_MANUAL, "manual")  # forgets its looks
     assert inspections.flown_on(r.flow, mid) == []
     assert str(sent.command_id) not in r.flow.looks
+
+
+async def _snapshots_after(r: Rig, n: int = 3) -> None:
+    """``n`` more state snapshots from the drone, the last ones taken in by the ground."""
+    seq = r.onboard.state_seq
+    await r.until(lambda: r.onboard.state_seq > seq + n, 5, f"{n} more snapshots")
+
+
+async def _resume_ended(r: Rig, sent: Any, resumed: str, status: str = "done") -> None:
+    await event(
+        r,
+        "inspect.resume_ended",
+        command_id=str(sent.command_id),
+        resumed_command_id=resumed,
+        status=status,
+    )
+
+
+async def test_the_executors_own_resume_is_followed_to_its_end_past_the_wait(
+    r: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As the real executor: its own resume is never acked, so its state names it by
+    skill only. The search stays flown on however long it runs, and its end is told."""
+    mid, sid, sent, d, _ = await _flown_on_a(r)
+    later = r.clock.utc_now() + dt.timedelta(seconds=3 * inspections.CLOSED_WAIT_S)
+    monkeypatch.setattr(r.g.clock, "utc_now", lambda: later)
+    await _snapshots_after(r)
+    mission = await r.flow.open_mission_of(mid)
+    await inspections.tick(r.flow, mission)
+    (flown,) = inspections.flown_on(r.flow, mid)
+    assert flown.command_id == sid
+    assert (await d.situation())["active_command"]["id"] == sid
+    await _resume_ended(r, sent, sid)
+    (e,) = bus(r, "inspection.resume_ended")
+    assert e.data["command_id"] == sid and e.data["status"] == "done"
+
+
+async def test_a_resume_the_drone_never_shows_ends_the_link_after_the_wait(
+    r: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The look's end says the drone flies the search on, but its state never names the
+    resume (it ended at once, its end lost): after ``CLOSED_WAIT_S`` the search no longer
+    counts as flown on."""
+    r.onboard.order_outcome = "running"
+    det = seen_at(r, 0, 100)
+    mid, d = await flying_with(r, det, mode="exercise", sectors=sectors(r))
+    survey = await order(r, d, "survey_sector", {"sector_id": "A", "alt_m": 40, "spacing_m": 20})
+    sid = str(survey["command_id"])
+    await wait_order_status(r, mid, sid, "running")
+    sent = await ai_look(r, mid, d)
+    assert r.onboard.session is not None
+    await r.onboard.session.ack(uuid.UUID(sid), "superseded")
+    await wait_order_status(r, mid, sid, "superseded")
+    async with person(r, "pilot", "kalle") as pilot:
+        res = await decide(pilot, str(det.detection_id), "reject")
+        assert res.status_code == 200, res.text
+    r.onboard.idle()
+    await event(
+        r,
+        "inspect.closed",
+        **closed(
+            sent,
+            "resume",
+            breakpoint="survey",
+            resume_command_id=str(new_id()),
+            resumed_command_id=sid,
+        ),
+    )
+    await _snapshots_after(r)
+    look = r.flow.looks[str(sent.command_id)]
+    assert not look.resume_seen and look.resume_left_at is None  # not yet
+    later = r.clock.utc_now() + dt.timedelta(seconds=inspections.CLOSED_WAIT_S + 1)
+    monkeypatch.setattr(r.g.clock, "utc_now", lambda: later)
+    await _snapshots_after(r)
+    assert look.resume_left_at is not None
+    assert inspections.flown_on(r.flow, mid) == []
+
+
+def _command_as(r: Rig, monkeypatch: pytest.MonkeyPatch, cid: str, real: str, **kw: Any) -> None:
+    """The ground's order ``cid`` read as its order ``real`` with ``kw`` changed."""
+    read = r.flow.repo.command
+
+    async def command(command_id: str) -> Any:
+        if command_id != cid:
+            return await read(command_id)
+        row = await read(real)
+        return None if row is None else row.model_copy(update={"id": uuid.UUID(cid)} | kw)
+
+    monkeypatch.setattr(r.flow.repo, "command", command)
+
+
+async def test_a_resume_end_naming_another_search_of_the_mission_is_only_logged(
+    r: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another superseded search of the same mission, not the one the look's end named:
+    the named search alone decides."""
+    mid, sid, sent, d, _ = await _flown_on_a(r)
+    other = str(new_id())
+    _command_as(r, monkeypatch, other, sid)  # exists, same mission, superseded
+    await _resume_ended(r, sent, other)
+    assert not bus(r, "inspection.resume_ended")
+    look = r.flow.looks[str(sent.command_id)]
+    assert not look.resume_ended and inspections.flown_on(r.flow, mid) != []
+    rows = {s["sector_id"]: s for s in (await d.situation())["sectors"]}
+    assert rows["A"]["status"] != "done"
+    await _resume_ended(r, sent, sid)  # its own end is still told
+    (e,) = bus(r, "inspection.resume_ended")
+    assert e.data["command_id"] == sid
+
+
+async def test_a_resume_end_whose_search_is_of_another_mission_is_only_logged(
+    r: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The search the look's end named, but an order of another mission: the mission alone
+    decides."""
+    mid, sid, sent, _d, _ = await _flown_on_a(r)
+    _command_as(r, monkeypatch, sid, sid, mission_id=new_id())
+    await _resume_ended(r, sent, sid)
+    assert not bus(r, "inspection.resume_ended")
+    look = r.flow.looks[str(sent.command_id)]
+    assert not look.resume_ended and inspections.flown_on(r.flow, mid) != []
+
+
+async def test_after_a_ground_restart_the_end_of_the_search_broken_off_is_told_once(
+    r: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ground lost the look's end from memory (a restart): the end of the search the
+    look broke off (superseded, of its mission, older than the look) is told, once;
+    another search is only logged."""
+    _mid, sid, sent, _d, _ = await _flown_on_a(r)
+    r.flow.looks.clear()  # as after a restart
+    newer = str(new_id())
+    later = r.clock.utc_now() + dt.timedelta(minutes=5)
+    _command_as(r, monkeypatch, newer, sid, created_at=later)  # ordered after the look
+    await _resume_ended(r, sent, newer)
+    assert not bus(r, "inspection.resume_ended")
+    await _resume_ended(r, sent, sid)
+    await _resume_ended(r, sent, sid)  # a resend
+    (e,) = bus(r, "inspection.resume_ended")
+    assert e.data["command_id"] == sid
+
+
+async def test_while_the_ground_ends_a_look_the_ais_moves_stay_refused(
+    r: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """From its end in the database until the AI has heard it, through every await in
+    between: the look holds the AI's moves, said as a look being closed."""
+    r.onboard.order_outcome = "running"
+    det = seen_at(r, 0, 100)
+    mid, d = await flying_with(r, det, mode="exercise")
+    await ai_look(r, mid, d)
+    written, go = asyncio.Event(), asyncio.Event()
+    end = InspectionRepo.end
+
+    async def slow_end(self: InspectionRepo, *a: Any, **kw: Any) -> bool:
+        ended = await end(self, *a, **kw)
+        written.set()
+        await go.wait()
+        return ended
+
+    monkeypatch.setattr(InspectionRepo, "end", slow_end)
+    async with person(r, "pilot", "kalle") as pilot:
+        deciding = asyncio.ensure_future(decide(pilot, str(det.detection_id), "reject"))
+        await asyncio.wait_for(written.wait(), 5)
+        assert await inspections.open_look(r.flow, mid) is None  # ended in the database
+        assert await inspections.busy_look(r.flow, mid) is not None
+        lat, lon = r.at(0.0, 60.0)
+        out = await order(r, d, "goto", {"lat": lat, "lon": lon, "alt_m": 40}, want="REJECT")
+        assert out["reason_codes"] == ["INSPECT_BUSY"]
+        assert out["message_sv"].startswith(inspections.CLOSING_SV)
+        go.set()
+        res = await deciding
+        assert res.status_code == 200, res.text
 
 
 # --- the race from SK09, with the real AI on its script -----------------------------------
@@ -501,7 +678,7 @@ async def test_sk09_flies_sector_a_on_after_the_look_and_then_searches_sector_b(
             res = await decide(pilot, str(det.detection_id), "reject")
             assert res.status_code == 200, res.text
         resume_id = new_id()
-        r.onboard.active_command_id = resume_id
+        r.onboard.own_resume()
         await event(
             r,
             "inspect.closed",
