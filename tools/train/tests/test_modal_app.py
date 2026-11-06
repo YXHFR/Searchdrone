@@ -538,12 +538,16 @@ def test_two_runs_of_one_call_add_up_their_seconds(
 
     monkeypatch.setattr(app, "call", call)
     first = app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)["seconds"]
+    marked = json.loads(mark.read_text())["seconds"]  # written before it returned
+    assert marked <= first + 0.05  # rounded to 0.1 s
     second = app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)["seconds"]
-    # the first ended: its mark's seconds (rounded to 0.1 s) and the second's start-up
-    # come first, never 0 again
-    assert second >= first - 0.05 + app.START_UP_S + 0.1
+    # the first ended: its mark and the second's start-up come first, never 0 again.
+    # Bounds from the marks themselves, not from when a call returned: a busy runner
+    # can take any time between the last mark and the return.
+    assert second >= marked + app.START_UP_S + 0.1
     last = json.loads(mark.read_text())
-    assert last["ended"] and last["seconds"] == pytest.approx(second, abs=0.1)
+    assert last["ended"]
+    assert marked + app.START_UP_S + 0.1 - 0.05 <= last["seconds"] <= second + 0.05
 
 
 def _saving(

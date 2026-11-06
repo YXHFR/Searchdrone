@@ -137,6 +137,10 @@ START_SLACK_S = 15 * 60
 # ephemeral app, and its calls, soon after the command that started it is gone; a later
 # command waits this long from the call's start before it counts it as ended.
 APP_GONE_S = 15 * 60
+# After close_call='s cancel, Modal is asked again this often, for at most this long,
+# whether the call has ended.
+CANCEL_POLL_S = 5
+CANCEL_WAIT_S = 60
 # A call shorter than this is not worth starting (the container and data take minutes).
 MIN_CALL_S = 15 * 60
 # The local run folder of a run made here, with what came back from which run on the
@@ -663,14 +667,24 @@ def confirm(yes: bool, ask: Callable[[str], str] = input) -> bool:
     return ask("Starta? Skriv ja för att fortsätta: ").strip().lower() in ("ja", "j", "yes", "y")
 
 
+def _seconds(value: Any) -> float:
+    """A time in ``LEDGER``: a finite number of seconds, 0 or more, or ValueError."""
+    seconds = float(value)
+    if not 0 <= seconds < math.inf:
+        raise ValueError("seconds")
+    return seconds
+
+
 def _read_ledger(ledger: Path) -> dict[str, Any]:
     """``LEDGER``: ``seconds`` used by the run (with each open call's worst case),
     ``fresh_pending`` (a ``fresh=1`` whose removal is not yet confirmed) and ``open``,
     the calls whose own time is not yet known: token -> ``{"worst", "at", "call"}``
     (the seconds counted for it, when it started by the wall clock, Modal's call id,
-    and ``waited``, how long this side waited for it, once known). No file: nothing used
+    and ``waited``, how long this side waited for it, once known; ``cancelled``, when
+    ``close_call=`` cancelled it and Modal still said it ran). No file: nothing used
     yet. A file that cannot be read stops the command: it may hold a call that still
-    runs."""
+    runs. So does a time that is not a number of seconds (NaN, infinite or negative):
+    it would let hours be dropped or ``max_hours`` be passed."""
     if not ledger.exists():
         return {"seconds": 0.0, "fresh_pending": False, "open": {}}
     try:
@@ -678,14 +692,15 @@ def _read_ledger(ledger: Path) -> dict[str, Any]:
         if not isinstance(body.get("open", {}), dict):
             raise TypeError("open")
         return {
-            "seconds": float(body["seconds"]),
+            "seconds": _seconds(body["seconds"]),
             "fresh_pending": bool(body.get("fresh_pending", False)),
             "open": {
                 str(token): {
-                    "worst": float(call["worst"]),
-                    "at": float(call["at"]),
+                    "worst": _seconds(call["worst"]),
+                    "at": _seconds(call["at"]),
                     "call": str(call.get("call", "")),
-                    "waited": float(call.get("waited", 0.0)),
+                    "waited": _seconds(call.get("waited", 0.0)),
+                    **({"cancelled": _seconds(call["cancelled"])} if "cancelled" in call else {}),
                 }
                 for token, call in body.get("open", {}).items()
             },
@@ -883,17 +898,26 @@ def check_no_old_call(
 
 
 def close_lost_call(
-    backend: Backend, ledger: Path, token: str, wall: Callable[[], float] = time.time
+    backend: Backend,
+    ledger: Path,
+    token: str,
+    wall: Callable[[], float] = time.time,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> None:
     """``close_call=<token>``: the owner has seen on modal.com/apps that the call no
     longer runs, but Modal does not say so. Only for a call past its worst case: it is
     cancelled once more, then taken out of ``open`` with its worst case, or what its
     mark tells if that is more, so the hours already counted stay; nothing is ever
-    counted less. If Modal still says it runs after the cancel, a warning names it, as
-    a slow container could still save its ``last.pt`` over the next call's.
-    A call with no Modal id (its start was never confirmed) waits out its whole worst
-    case here, up to Modal's 24 hours, where ``settle_calls`` gives up on it after
-    ``APP_GONE_S``: slower, but it is never closed while it may run."""
+    counted less.
+    After the cancel Modal is asked again for up to ``CANCEL_WAIT_S``. If it still says
+    the call runs, the first ``close_call=`` stops (code 1) and notes the cancel in
+    ``LEDGER``: a slow container could still save its ``last.pt`` over the next call's,
+    so the owner looks on modal.com/apps first. Only a second ``close_call=`` for it
+    closes it then, with a warning.
+    A call with no Modal id (its start was never confirmed) cannot be cancelled or
+    asked about: it waits out its whole worst case here, up to Modal's 24 hours, where
+    ``settle_calls`` gives up on it after ``APP_GONE_S``: slower, but it is never closed
+    while it may run."""
     call = _read_ledger(ledger)["open"].get(token)
     if call is None:
         raise BenchError(f"close_call={token}: det finns inget öppet anrop med det id:t.", 2)
@@ -909,13 +933,28 @@ def close_lost_call(
     if call["call"]:
         backend.cancel(call["call"])
     state = backend.call_state(token, call["call"])
-    if call["call"] and state["running"]:
-        warn(
-            f"Varning: avbrottet skickades till anropet {token} (Modal-id {call['call']}), "
-            "men Modal säger ännu inte att det har slutat. Visar searchdrone-train på "
-            "modal.com/apps att det fortfarande kör, tryck Ctrl+C nu: annars kan det spara "
-            "sin last.pt över nästa anrop."
-        )
+    if call["call"]:
+        for _ in range(CANCEL_WAIT_S // CANCEL_POLL_S):
+            if not state["running"]:
+                break
+            sleep(CANCEL_POLL_S)
+            state = backend.call_state(token, call["call"])
+        if state["running"]:
+            named = f"anropet {token} (Modal-id {call['call']})"
+            if "cancelled" not in call:
+                _change_ledger(ledger, lambda body: body["open"][token].update(cancelled=wall()))
+                raise BenchError(
+                    f"close_call={token}: avbrottet skickades till {named}, men Modal säger "
+                    f"efter {CANCEL_WAIT_S} s fortfarande att det kör. Titta på "
+                    "searchdrone-train på modal.com/apps: kör anropet där, stoppa det. När "
+                    "inget anrop kör där, kör samma kommando med close_call= igen; då "
+                    "stängs det, fast Modal inte svarar.",
+                    1,
+                )
+            warn(
+                f"Varning: Modal säger fortfarande att {named} kör; det stängs ändå, eftersom "
+                "du har sett på modal.com/apps att det har stannat."
+            )
     seconds = max(call["worst"], float(state["seconds"]))
     _close_call(ledger, token, seconds)
     backend.forget(token)
