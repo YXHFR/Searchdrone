@@ -687,3 +687,50 @@ def test_release_workflow_writes_only_from_a_job_that_runs_no_repo_code() -> Non
     assert 'cd "$gate"' in lines[:first_python]
     assert all(" -I -m " in line for line in lines if " -m " in line)
     assert not re.search(r"\b(just|uv|pnpm)\b|\./", run), run
+
+
+# The runner's default apt mirror (azure.archive.ubuntu.com) has served packages at
+# 20-60 kB/s and run steps into their timeouts before any test ran. Every apt install in
+# CI goes through tools/ci/apt-install.sh, which falls back to archive.ubuntu.com, and
+# Playwright's system packages through tools/ci/playwright-install.sh, which hands them
+# to the same script. A step that calls apt or `--with-deps` itself fails this test.
+DIRECT_APT_RE = re.compile(
+    r"\bapt(-get)?\s+(\S+\s+)*?(update|install|upgrade|dist-upgrade)\b|--with-deps|\binstall-deps\b"
+)
+
+
+@pytest.mark.parametrize("path", ALL_FILES, ids=ids(ALL_FILES))
+def test_apt_goes_through_the_mirror_fallback(path: Path) -> None:
+    for step in steps(load(path)):
+        run = str(step.get("run", ""))
+        for line in run.splitlines():
+            where = f"{path.name}: {step.get('name', '')}: {line.strip()!r}"
+            assert not DIRECT_APT_RE.search(line), f"{where}; use the scripts in tools/ci/"
+
+
+def test_the_direct_apt_rule_sees_a_gap() -> None:
+    for bad in (
+        "sudo apt-get update -q",
+        "sudo apt-get install -y --no-install-recommends gdal-bin",
+        "sudo apt install ffmpeg",
+        "sudo apt-get -o Acquire::Retries=3 install -y x",
+        "pnpm --filter @searchdrone/panel exec playwright install --with-deps chromium",
+        "npx playwright install-deps chromium",
+    ):
+        assert DIRECT_APT_RE.search(bad), bad
+    for ok in (
+        "bash tools/ci/apt-install.sh gdal-bin",
+        "bash tools/ci/playwright-install.sh chromium",
+    ):
+        assert not DIRECT_APT_RE.search(ok), ok
+
+
+def test_the_apt_script_falls_back_and_never_times_out_dpkg() -> None:
+    script = (ROOT / "tools" / "ci" / "apt-install.sh").read_text(encoding="utf-8")
+    assert "/etc/apt/apt-mirrors.txt" in script
+    assert "http://archive.ubuntu.com/ubuntu/" in script, "no fallback mirror"
+    assert "--download-only" in script
+    installs = [ln for ln in script.splitlines() if " install -y" in ln and "apt-get" in ln]
+    assert installs and all("--download-only" in ln or "timeout" not in ln for ln in installs), (
+        installs
+    )
