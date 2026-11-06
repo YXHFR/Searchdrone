@@ -25,6 +25,7 @@ request, and a low priority only puts a candidate further down.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Final
@@ -193,6 +194,20 @@ async def write(
                 vehicle_id=mission.vehicle_id,
                 mission_id=mission_id,
             )
+    # A merged candidate that blocked the search hands that to the one it joined
+    # (``CandidateRepo.survey_blocks``): its card goes out again even when this batch left
+    # it alone, so the queue puts it first now.
+    survivors = {str(r.merged_into) for r in batch.revisions if r.merged_into is not None}
+    survivors -= touched
+    for card in await card_list(flow, mission_id, only=survivors) if survivors else []:
+        if card.blocks_survey_m is not None:
+            flow.publish(
+                "candidates",
+                "candidate.updated",
+                card.model_dump(mode="json"),
+                vehicle_id=mission.vehicle_id,
+                mission_id=mission_id,
+            )
     return [
         CandidateWritten.model_validate(
             {"candidate_id": w.candidate_id, "rev": w.rev, "seq": w.seq, "state": w.state}
@@ -208,8 +223,14 @@ async def on_survey_blocked(
     nobody has decided yet. Each one's candidate is marked (``candidate.blocks_survey``)
     and its card goes out again: first in the queue, high, with the metres left out, so
     the operator and the AI see that a possible person keeps part of the area unsearched.
-    Nothing flies because of it."""
+    Nothing flies because of it.
+
+    A ``skipped_m`` that is not a finite number of metres >= 0 is left out (logged). A
+    candidate already marked with as many metres or more gets no new mark and its card
+    does not go out again: the same reroute planned again (each resume, each tick of a
+    pass) must not wake the AI for nothing."""
     r = repo(flow)
+    stored = await r.survey_blocks(mission_id)
     touched: set[str] = set()
     for b in data.get("blocked") or []:
         try:
@@ -221,7 +242,19 @@ async def on_survey_blocked(
         except (KeyError, TypeError, ValueError):
             log.warning("candidate.survey_blocked_unreadable", mission_id=mission_id)
             continue
+        if not math.isfinite(skipped) or skipped < 0:
+            log.warning(
+                "candidate.survey_blocked_invalid",
+                mission_id=mission_id,
+                source=source,
+                source_id=source_id,
+                skipped_m=repr(skipped),
+            )
+            continue
         for cid in await r.blocked_candidates(mission_id, source, source_id):
+            if cid in stored and stored[cid] >= skipped:
+                continue  # nothing new: no row, no card
+            stored[cid] = skipped
             await flow.repo.add_event(
                 "candidate.blocks_survey",
                 now=flow.now(),
@@ -288,7 +321,8 @@ async def card_list(
         )
         near = None if c["state"] in _DECIDED else _near(c, decided)
         # Only an open candidate blocks the search: a decided one's cylinder is gone or a
-        # find's, and a merged one's blocks as the candidate it joined.
+        # find's, and a merged one's blocks as the candidate it joined (``survey_blocks``
+        # moves it there).
         blocked = blocks.get(c["candidate_id"]) if c["state"] in _OPEN else None
         out.append(
             CandidateCard.model_validate(
