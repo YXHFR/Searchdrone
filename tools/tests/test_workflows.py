@@ -699,7 +699,7 @@ def test_release_workflow_writes_only_from_a_job_that_runs_no_repo_code() -> Non
 DIRECT_APT_RE = re.compile(
     r"\b(apt|apt-get|aptitude|apt-fast|nala)\s+([^\s;&|#]+\s+)*?"
     r"(update|install|upgrade|dist-upgrade|full-upgrade)\b"
-    r"|\bdpkg\s+([^\s;&|#]+\s+)*?(-[a-zA-Z]*i[a-zA-Z]*|--install)\b|--with-deps|\binstall-deps\b"
+    r"|\bdpkg\s+([^\s;&|#()\"']+\s+)*?(-[a-zA-Z]*i[a-zA-Z]*|--install)\b|--with-deps|\binstall-deps\b"
 )
 
 
@@ -742,6 +742,8 @@ def test_the_direct_apt_rule_sees_a_gap() -> None:
         "dpkg --print-architecture",
         "echo apt is slow; just update",
         "dpkg -l x && pip install -i https://example.org/simple y",
+        "GOARCH=$(dpkg --print-architecture) go build -trimpath ./cmd/x",
+        'find dist -name "*_$(dpkg --print-architecture).deb" -print',
     ):
         assert not DIRECT_APT_RE.search(ok), ok
 
