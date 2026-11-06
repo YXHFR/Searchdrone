@@ -749,6 +749,12 @@ class MissionFlow:
                 await inspections_service.on_event(self, body.type, dict(body.data))
             if body.type == "executor.keepout_hold":
                 self._keepout_hold_alert(vehicle_id, mission, body.data, inbound.envelope.sent_utc)
+            if body.type == "executor.survey_blocked" and mission is not None:
+                from sd_ground.services import candidates as candidates_service
+
+                await candidates_service.on_survey_blocked(
+                    self, str(mission.id), vehicle_id, dict(body.data)
+                )
             if body.type in _PANEL_EVENTS:  # the pilot's log line, after the link is back
                 self.publish(
                     "vehicle",

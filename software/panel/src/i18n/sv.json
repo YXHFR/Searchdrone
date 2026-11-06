@@ -860,6 +860,7 @@
       "format_repaired": "svaret fick lagas"
     },
     "flagNote": "AI-påstående, ej verifierat",
+    "blocksSurvey": "Blockerar sökningen, {{m}} m bana hoppad",
     "state": {
       "new": "Ny",
       "assessing": "Bedöms",

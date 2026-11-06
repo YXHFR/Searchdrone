@@ -30,7 +30,7 @@ from sd_onboard.executor import executor as executor_module
 from sd_onboard.executor.keepout_reflex import remaining
 from sd_onboard.skills import goto as goto_module
 from sd_onboard.skills.goto import GotoHandler
-from sd_onboard.skills.survey_sector import SurveyRun
+from sd_onboard.skills.survey_sector import BLOCKED_MIN_M, SurveyRun
 from sd_safety.constants import (
     GOTO_ALT_STEP_TOL_M,
     KEEPOUT_PAIR_MIN_M,
@@ -182,6 +182,7 @@ async def test_in_sim_a_search_flies_straight_through_an_unconfirmed_cylinder() 
         stays, slowest = await _fly_and_watch(r, centre, radius)
         kinds = r.up.kinds()
         assert "executor.keepout_reroute" not in kinds and "executor.keepout_hold" not in kinds
+        assert "executor.survey_blocked" not in kinds  # searched through: nothing left out
         assert len(stays) == 1, stays  # through once
         assert stays[0] <= KEEPOUT_PASS_MAX_S
         assert slowest > 3.0  # at search speed: no hover, no turn inside
@@ -199,6 +200,16 @@ async def test_live_without_the_permit_or_a_confirmed_find_is_gone_around(
         stays, _ = await _fly_and_watch(r, centre, radius)
         assert "executor.keepout_reroute" in r.up.kinds()
         assert stays == []
+        blocked = [d["blocked"] for t, _, d in r.up.events if t == "executor.survey_blocked"]
+        if source == "confirmed":
+            assert blocked == []  # a find: nobody has to look at it before the search goes on
+        else:
+            # A possible person nobody has looked at: the search left out the leg through
+            # its cylinder (at most its diameter, 20 m), and says whose cylinder it is.
+            assert blocked, r.up.kinds()
+            (b,) = blocked[-1]
+            assert b["source"] == source
+            assert BLOCKED_MIN_M <= b["skipped_m"] <= 20.0, b
 
 
 def test_a_first_leg_that_comes_down_gets_no_passage() -> None:
