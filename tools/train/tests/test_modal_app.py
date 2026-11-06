@@ -11,6 +11,7 @@ import importlib.machinery
 import importlib.util
 import json
 import sys
+import threading
 import time
 import types
 from collections.abc import Iterator
@@ -41,6 +42,14 @@ class FakeImage:
 
 
 class NotFoundError(Exception):
+    pass
+
+
+class ModalConnectionError(Exception):  # as modal.exception.ConnectionError
+    pass
+
+
+class InputCancellation(BaseException):  # as modal.exception
     pass
 
 
@@ -149,9 +158,14 @@ def fake_modal(local: bool) -> tuple[types.ModuleType, list[Any]]:
     mod.Volume = Volume  # type: ignore[attr-defined]
     mod.enable_output = enable_output  # type: ignore[attr-defined]
     mod.is_local = lambda: local  # type: ignore[attr-defined]
-    mod.exception = types.SimpleNamespace(NotFoundError=NotFoundError)  # type: ignore[attr-defined]
+    mod.exception = types.SimpleNamespace(  # type: ignore[attr-defined]
+        NotFoundError=NotFoundError,
+        ConnectionError=ModalConnectionError,
+        InputCancellation=InputCancellation,
+    )
     mod.images = images  # type: ignore[attr-defined]
     graphs: dict[str, list[Any]] = {}  # Modal's call graph per call id
+    results: dict[str, Any] = {}  # what get() gives per call id: none yet, or an error
     cancelled: list[str] = []
 
     class FunctionCall:
@@ -167,6 +181,16 @@ def fake_modal(local: bool) -> tuple[types.ModuleType, list[Any]]:
                 raise NotFoundError(self.call_id)
             return graphs[self.call_id]
 
+        def get(self, timeout: float) -> Any:
+            assert timeout == 0  # never waits
+            if self.call_id not in graphs:
+                raise NotFoundError(self.call_id)
+            if self.call_id not in results:
+                raise TimeoutError
+            if isinstance(results[self.call_id], BaseException):
+                raise results[self.call_id]
+            return results[self.call_id]
+
         def cancel(self, terminate_containers: bool = False) -> None:
             assert terminate_containers
             if self.call_id not in graphs:
@@ -175,6 +199,7 @@ def fake_modal(local: bool) -> tuple[types.ModuleType, list[Any]]:
 
     mod.FunctionCall = FunctionCall  # type: ignore[attr-defined]
     mod.graphs = graphs  # type: ignore[attr-defined]
+    mod.results = results  # type: ignore[attr-defined]
     mod.cancelled = cancelled  # type: ignore[attr-defined]
     return mod, log
 
@@ -325,6 +350,27 @@ def test_what_is_known_of_an_earlier_call(monkeypatch: pytest.MonkeyPatch) -> No
     assert app.volume.files == {}
 
 
+@pytest.mark.parametrize(
+    ("result", "ended"),
+    [
+        ({"status": "done"}, True),  # a result
+        (InputCancellation(), True),  # cancelled
+        (RuntimeError("failed"), True),  # the function failed, or its output expired
+        (ModalConnectionError(), False),  # cannot say
+        (NotFoundError(), False),
+    ],
+)
+def test_a_call_whose_graph_still_says_pending_is_asked_for_its_result(
+    monkeypatch: pytest.MonkeyPatch, result: Any, ended: bool
+) -> None:
+    """The call graph is best effort: a call just cancelled may still show as pending."""
+    app, mod, _log = load(monkeypatch, local=True, at=str(SOURCE))
+    backend = app.ModalBackend("H100")
+    mod.graphs["fc-1"] = [types.SimpleNamespace(status=InputStatus.PENDING)]
+    mod.results["fc-1"] = result
+    assert backend.call_state("t" * 32, "fc-1")["running"] is not ended
+
+
 def test_the_container_keeps_its_mark_with_its_seconds(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -394,35 +440,72 @@ def test_two_runs_of_one_call_add_up_their_seconds(
     assert json.loads(mark.read_text()) == {"seconds": round(second, 1), "ended": True}
 
 
-def test_a_container_that_cannot_save_stops_itself(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def _saving(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, commit: Any, train_s: float
+) -> tuple[Any, list[tuple[str, float]]]:
+    """A container whose saves go through ``commit``, with short times, that trains for
+    ``train_s``; returns the module and when (and why) it gave up."""
     app, _mod, _log = load(monkeypatch, local=False, at="/root/modal_app.py")
     monkeypatch.setattr(app, "REMOTE_DATA", PurePosixPath(tmp_path))
-    monkeypatch.setattr(app, "COMMIT_EVERY_S", 0.05)
-    failing = {"now": False}
-    commits: list[float] = []
+    monkeypatch.setattr(app, "COMMIT_EVERY_S", 0.1)
+    monkeypatch.setattr(app, "SAVE_LIMIT_S", 0.25)  # one failed save is tried again
+    monkeypatch.setattr(app, "WATCH_S", 0.01)
+    monkeypatch.setattr(app.volume, "commit", commit)
+    gave_up: list[tuple[str, float]] = []
+    monkeypatch.setattr(app, "give_up", lambda why: gave_up.append((why, time.monotonic())))
+    monkeypatch.setattr(app, "call", lambda *_a: time.sleep(train_s) or {"status": "done"})
+    return app, gave_up
+
+
+def test_one_save_that_fails_is_tried_again(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    tries: list[float] = []
 
     def commit() -> None:
-        if failing["now"]:
+        tries.append(time.monotonic())
+        if len(tries) == 2:  # the first save in the keeper fails, the next goes through
             raise OSError("volume")
-        commits.append(time.monotonic())
 
-    gave_up: list[tuple[str, float]] = []
-    monkeypatch.setattr(app.volume, "commit", commit)
-    monkeypatch.setattr(app, "give_up", lambda why: gave_up.append((why, time.monotonic())))
+    app, gave_up = _saving(monkeypatch, tmp_path, commit, train_s=0.45)
+    res = app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)
+    assert gave_up == [] and res["status"] == "done"
+    assert len(tries) >= 4  # the first, the failed one, the one after it, the last
 
-    def call(*_a: Any) -> dict[str, Any]:
-        failing["now"] = True
-        time.sleep(0.4)
-        failing["now"] = False
-        return {"status": "done", "code": 0}
 
-    monkeypatch.setattr(app, "call", call)
-    app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)
-    assert len(gave_up) == 1 and "OSError" in gave_up[0][0]
-    # within the two commits after the last mark saved that ``UNSEEN_S`` counts
-    assert gave_up[0][1] - commits[0] <= 2 * app.COMMIT_EVERY_S + 0.05
+@pytest.mark.parametrize("how", ["fails", "hangs"])
+def test_a_container_that_cannot_save_stops_itself(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, how: str
+) -> None:
+    """Twice in a row, or a save that never returns: it stops once ``SAVE_LIMIT_S`` has
+    passed since the last mark saved was written, within one ``WATCH_S``, which is what
+    ``UNSEEN_S`` counts beyond that mark."""
+    written: list[float] = []
+    release = threading.Event()
+
+    def commit() -> None:
+        if written:
+            if how == "hangs":
+                release.wait(0.8)
+            raise OSError("volume")
+        written.append(time.monotonic())
+
+    app, gave_up = _saving(monkeypatch, tmp_path, commit, train_s=0.5)
+    with contextlib.suppress(OSError):  # the last save fails too
+        app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)
+    release.set()
+    assert len(gave_up) == 1
+    why, at = gave_up[0]
+    assert ("OSError" if how == "fails" else "inte klar") in why
+    after = at - written[0]  # the mark was written just before this commit
+    assert app.SAVE_LIMIT_S - 0.005 < after <= app.SAVE_LIMIT_S + app.WATCH_S + 0.03
+
+
+def test_one_retry_fits_in_what_is_counted_after_a_mark(monkeypatch: pytest.MonkeyPatch) -> None:
+    app, _mod, _log = load(monkeypatch, local=False, at="/root/modal_app.py")
+    # the retry comes two commits after the last mark saved; a third would not be waited for
+    assert 2 * app.COMMIT_EVERY_S < app.SAVE_LIMIT_S < 3 * app.COMMIT_EVERY_S
+    assert app.UNSEEN_S == app.START_UP_S + app.SAVE_LIMIT_S + app.WATCH_S
 
 
 def test_give_up_ends_the_container(monkeypatch: pytest.MonkeyPatch) -> None:
