@@ -41,9 +41,11 @@ What happens:
    asked of Modal, though it may move a call to another machine after a preemption;
    this side stops waiting, and cancels the call, when its time is up. Each call's
    worst case is counted against ``max_hours`` before it starts, for this run folder in
-   all (``LEDGER``), and corrected only when the container reports its own time, so the
-   ceiling holds. A stopped command (Ctrl+C, a lost line) carries on the same way when
-   run again.
+   all (``LEDGER``), and corrected once the call's own time is known, from the
+   container or, after Ctrl+C or a lost line, by the next command from the call's mark
+   and Modal (``settle_calls``), so the ceiling holds. A stopped command carries on the
+   same way when run again, but never while a call of it may still run
+   (``check_no_old_call``).
 4. ``best.pt`` and ``settings.json`` come back to ``<data>/train/<run>`` (never over a
    local training's folder: ``check_local_run``) and the ONNX file and its manifest to
    ``<data>/models/detector`` (never over a model exported here: ``check_local_model``),
@@ -66,8 +68,10 @@ import math
 import os
 import sys
 import time
+import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
@@ -114,7 +118,7 @@ CALL_LIMIT_S = 24 * 3600
 STOP_MARGIN_S = 30 * 60
 DEFAULT_MAX_HOURS = 24.0
 # Keys of the cloud command itself; all other keys are train-detector's.
-OWN_KEYS = ("gpu", "yes", "hours", "max_hours", "name")
+OWN_KEYS = ("gpu", "yes", "hours", "max_hours", "name", "close_call")
 # train-detector keys that make no sense here: the GPU is the device, the data folder is
 # the volume, and the simulator's pictures stay on this computer.
 LOCAL_ONLY_KEYS = ("device", "simfarm", "simfarm_epochs")
@@ -129,6 +133,10 @@ FINISH_SLACK_S = 5 * 60
 # How long the container may take to start before its own clock (the budget, Modal's
 # timeout) begins; this side waits at most that much longer, then cancels the call.
 START_SLACK_S = 15 * 60
+# A call stopped while it was being sent has no id to ask Modal about. Modal stops an
+# ephemeral app, and its calls, soon after the command that started it is gone; a later
+# command waits this long from the call's start before it counts it as ended.
+APP_GONE_S = 15 * 60
 # A call shorter than this is not worth starting (the container and data take minutes).
 MIN_CALL_S = 15 * 60
 # The local run folder of a run made here, with what came back from which run on the
@@ -551,16 +559,40 @@ class Backend(Protocol):
         ...
 
     def run(
-        self, train: Sequence[str], export: Sequence[str], budget_s: float, timeout_s: int
+        self,
+        train: Sequence[str],
+        export: Sequence[str],
+        budget_s: float,
+        timeout_s: int,
+        token: str,
+        spawned: Callable[[str], None],
     ) -> dict[str, Any]:
         """One call on the GPU (``gpu_call.call``): the scripts are stopped ``budget_s``
         after the container starts, by its own clock; Modal stops the call after
         ``timeout_s``, and this side stops waiting and cancels it ``START_SLACK_S``
-        later. ``{"status": "done" | "stopped" | "failed" | "no_gpu", "code": int | None,
-        "seconds": float}``. ``stopped``: the time was up; the next call carries on from
-        the last save on the volume. ``no_gpu``: the call never got a container before
-        this side stopped waiting. ``seconds`` (how long the container ran) is there only
-        when the container itself reported it."""
+        later. The container keeps a mark named ``token`` on the volume with the seconds
+        it has run (``call_state``); ``spawned`` gets "" just before the call is sent
+        (it may run from then on) and Modal's id of the call as soon as it is known.
+        ``{"status": "done" | "stopped" | "failed" | "no_gpu", "code": int | None,
+        "seconds": float}``. ``stopped``: the time was up; the next call
+        carries on from the last save on the volume. ``no_gpu``: the call never got a
+        container before this side stopped waiting. ``seconds`` (how long the container
+        ran) is there only when the container itself returned it."""
+        ...
+
+    def call_state(self, token: str, call_id: str) -> dict[str, Any]:
+        """What is known of an earlier call (``run``'s ``token``, Modal's ``call_id`` or
+        ""): ``{"running": bool, "seconds": float}``. ``running``: Modal does not say it
+        has ended (it says it runs, or cannot say). ``seconds``: the most it can have
+        run as far as its mark tells, also while ``running``."""
+        ...
+
+    def cancel(self, call_id: str) -> None:
+        """Stop the call and its container; one Modal no longer knows is no error."""
+        ...
+
+    def forget(self, token: str) -> None:
+        """Remove the call's mark; one that is not there is no error."""
         ...
 
     def fetch(self, remote: PurePosixPath, local: Path) -> None: ...
@@ -631,22 +663,49 @@ def confirm(yes: bool, ask: Callable[[str], str] = input) -> bool:
     return ask("Starta? Skriv ja för att fortsätta: ").strip().lower() in ("ja", "j", "yes", "y")
 
 
-def _read_ledger(ledger: Path) -> tuple[float, bool]:
-    """(seconds used, a ``fresh=1`` whose removal is not yet confirmed) from ``LEDGER``."""
+def _read_ledger(ledger: Path) -> dict[str, Any]:
+    """``LEDGER``: ``seconds`` used by the run (with each open call's worst case),
+    ``fresh_pending`` (a ``fresh=1`` whose removal is not yet confirmed) and ``open``,
+    the calls whose own time is not yet known: token -> ``{"worst", "at", "call"}``
+    (the seconds counted for it, when it started by the wall clock, Modal's call id,
+    and ``waited``, how long this side waited for it, once known). No file: nothing used
+    yet. A file that cannot be read stops the command: it may hold a call that still
+    runs."""
+    if not ledger.exists():
+        return {"seconds": 0.0, "fresh_pending": False, "open": {}}
     try:
         body = json.loads(ledger.read_text(encoding="utf-8"))
-        return float(body["seconds"]), bool(body.get("fresh_pending", False))
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        return 0.0, False
+        if not isinstance(body.get("open", {}), dict):
+            raise TypeError("open")
+        return {
+            "seconds": float(body["seconds"]),
+            "fresh_pending": bool(body.get("fresh_pending", False)),
+            "open": {
+                str(token): {
+                    "worst": float(call["worst"]),
+                    "at": float(call["at"]),
+                    "call": str(call.get("call", "")),
+                    "waited": float(call.get("waited", 0.0)),
+                }
+                for token, call in body.get("open", {}).items()
+            },
+        }
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise BenchError(
+            f"Timräkningen {ledger} går inte att läsa ({type(exc).__name__}), så det går "
+            "inte att veta om ett anrop för körningen fortfarande kör i Modal. Titta efter "
+            "searchdrone-train på modal.com/apps; när inget kör kan du ta bort filen (då "
+            "räknas timmarna från 0) och köra samma kommando igen.",
+            1,
+        ) from exc
 
 
-def _write_ledger(ledger: Path, seconds: float, fresh_pending: bool) -> None:
+def _write_ledger(ledger: Path, body: Mapping[str, Any]) -> None:
     """Write ``LEDGER`` so that a power loss leaves the old or the new one, whole."""
     ledger.parent.mkdir(parents=True, exist_ok=True)
     tmp = ledger.with_name(f".{ledger.name}.tmp")
-    body = {"seconds": round(seconds, 1), "fresh_pending": fresh_pending}
     with tmp.open("w", encoding="utf-8") as fh:
-        fh.write(json.dumps(body) + "\n")
+        fh.write(json.dumps({**body, "seconds": round(body["seconds"], 1)}) + "\n")
         fh.flush()
         os.fsync(fh.fileno())
     tmp.replace(ledger)
@@ -658,28 +717,189 @@ def _write_ledger(ledger: Path, seconds: float, fresh_pending: bool) -> None:
             os.close(folder)
 
 
+def _change_ledger(ledger: Path, change: Callable[[dict[str, Any]], None]) -> None:
+    body = _read_ledger(ledger)
+    change(body)
+    _write_ledger(ledger, body)
+
+
 def hours_used(ledger: Path) -> float:
     """The GPU hours the run has used so far (``LEDGER``)."""
-    return _read_ledger(ledger)[0] / 3600
+    return _read_ledger(ledger)["seconds"] / 3600
 
 
 def fresh_pending(ledger: Path) -> bool:
     """``fresh=1`` was asked for, but the old run's files are not yet known to be gone."""
-    return _read_ledger(ledger)[1]
+    return _read_ledger(ledger)["fresh_pending"]
 
 
 def start_fresh(ledger: Path) -> None:
     """``fresh=1`` confirmed: the run's hours from 0, and its old files to be removed
-    (``remove_old_run``) by this command or, if it stops first, the next one."""
-    _write_ledger(ledger, 0.0, True)
+    (``remove_old_run``) by this command or, if it stops first, the next one. Calls
+    still open stay in ``open``: they must end before anything is removed."""
+
+    def change(body: dict[str, Any]) -> None:
+        body["seconds"] = sum(call["worst"] for call in body["open"].values())
+        body["fresh_pending"] = True
+
+    _change_ledger(ledger, change)
+
+
+def _open_call(ledger: Path, token: str, worst: float, at: float) -> None:
+    """A call is about to be made: count its worst case, and keep it in ``open``."""
+
+    def change(body: dict[str, Any]) -> None:
+        body["seconds"] += worst
+        body["open"][token] = {"worst": worst, "at": at, "call": "", "waited": 0.0}
+
+    _change_ledger(ledger, change)
+
+
+def _spawned(
+    ledger: Path,
+    token: str,
+    ids: list[str],
+    sent: list[float],
+    wall: Callable[[], float],
+    call_id: str,
+) -> None:
+    """The call is being sent (``call_id`` ""), or is made: keep Modal's id for it, to
+    ask about it later. From the first of these on, it may run: its waits are measured
+    from then (``sent``, and ``at`` in ``open``), not from before the image was built."""
+    ids.append(call_id)
+    if not sent:
+        sent.append(wall())
+
+    def change(body: dict[str, Any]) -> None:
+        if token in body["open"]:
+            body["open"][token]["at"] = sent[0]
+            if call_id:
+                body["open"][token]["call"] = call_id
+
+    _change_ledger(ledger, change)
+
+
+def _waited(ledger: Path, token: str, seconds: float) -> None:
+    """How long this side waited for the call: it is counted at least that (up to its
+    worst case), also when a later command settles it."""
+
+    def change(body: dict[str, Any]) -> None:
+        if token in body["open"]:
+            body["open"][token]["waited"] = seconds
+
+    _change_ledger(ledger, change)
+
+
+def _close_call(ledger: Path, token: str, seconds: float) -> None:
+    """The call's own time is known (at most ``seconds``): put it in place of its worst
+    case and take it out of ``open``. It can be more than the worst case: a call Modal
+    moved after a preemption counts both attempts."""
+
+    def change(body: dict[str, Any]) -> None:
+        call = body["open"].pop(token, None)
+        if call is not None:
+            body["seconds"] = max(0.0, body["seconds"] - call["worst"] + seconds)
+
+    _change_ledger(ledger, change)
+
+
+def settle_calls(
+    backend: Backend,
+    ledger: Path,
+    only: str = "",
+    wall: Callable[[], float] = time.time,
+) -> list[tuple[float, bool, str]]:
+    """Ask Modal about the calls in ``LEDGER``'s ``open`` (or only ``only``): one Modal
+    says has ended gets its own time (from its mark) in place of its worst case, and
+    its mark is removed. Never less than this side waited for it (up to its worst case).
+
+    One Modal does not say has ended is waited for until its worst case has passed. If
+    Modal still says it runs then (moved after a preemption while this computer slept,
+    say), it is cancelled; unless Modal then says it has ended, it stays open with its
+    worst case, among the calls that may still run, until Modal says so. A call with
+    no id (stopped while it was being sent) is waited for ``APP_GONE_S``: Modal stops
+    an ephemeral app soon after the command that started it is gone, and the call with
+    it. Returns, for the calls that may still run, when they will surely have ended
+    (wall clock), whether Modal knows them by id, and their token. A call Modal never
+    says has ended is closed only by the owner (``close_lost_call``)."""
+    running: list[tuple[float, bool, str]] = []
+    for token, call in _read_ledger(ledger)["open"].items():
+        if only and token != only:
+            continue
+        limit = call["worst"] if call["call"] else APP_GONE_S
+        state = backend.call_state(token, call["call"])
+        if state["running"] and wall() - call["at"] < limit:
+            running.append((call["at"] + limit, bool(call["call"]), token))
+            continue
+        if state["running"] and call["call"]:
+            backend.cancel(call["call"])
+            state = backend.call_state(token, call["call"])
+            if state["running"]:  # not yet known to have ended: nothing may start
+                running.append((call["at"] + limit, True, token))
+                continue
+        seconds = max(float(state["seconds"]), min(call["waited"], call["worst"]))
+        _close_call(ledger, token, seconds)
+        backend.forget(token)
+    return running
+
+
+def check_no_old_call(
+    backend: Backend, ledger: Path, again: str, wall: Callable[[], float] = time.time
+) -> None:
+    """Stop before anything is removed, uploaded or started while a call of this run from
+    an earlier command (Ctrl+C, a lost line), or this one, may still run: its container
+    could save its ``last.pt`` over what comes after it. Corrects the hours of the ones
+    that ended."""
+    running = settle_calls(backend, ledger, wall=wall)
+    if not running:
+        return
+    overdue = [token for at, known, token in running if known and at <= wall()]
+    if overdue:
+        raise BenchError(
+            "Ett tidigare anrop i Modal för den här körningen har stoppats, men Modal säger "
+            "ännu inte att det har slutat. Stoppa searchdrone-train på modal.com/apps om "
+            f"den finns kvar där och kör sedan {again}: anropet räknas med sina egna "
+            "timmar så snart Modal säger att det har slutat. Visar modal.com/apps att "
+            f"inget kör men Modal svarar ändå inte, kör {again} med "
+            f"close_call={overdue[0]}: då räknas anropet med sin längsta tid.",
+            1,
+        )
+    until = time.strftime("%H:%M", time.localtime(max(at for at, _, _ in running)))
+    if any(known for _, known, _ in running):
+        raise BenchError(
+            "Ett tidigare anrop i Modal för den här körningen kan fortfarande vara igång "
+            f"(senast till klockan {until}). Vänta tills det har slutat, eller stoppa "
+            f"searchdrone-train på modal.com/apps, och kör sedan {again}.",
+            1,
+        )
+    raise BenchError(
+        "Ett tidigare anrop för den här körningen avbröts medan det skickades till Modal, "
+        "så det är inte känt om det kom igång. Modal stoppar det strax efter att "
+        f"kommandot som startade det har slutat. Vänta till klockan {until} och kör sedan "
+        f"{again}.",
+        1,
+    )
+
+
+def close_lost_call(backend: Backend, ledger: Path, token: str) -> None:
+    """``close_call=<token>``: the owner has seen on modal.com/apps that the call no
+    longer runs, but Modal does not say so. It is taken out of ``open`` with its worst
+    case, so the hours already counted stay; nothing is ever counted less."""
+    call = _read_ledger(ledger)["open"].get(token)
+    if call is None:
+        raise BenchError(f"close_call={token}: det finns inget öppet anrop med det id:t.", 2)
+    _close_call(ledger, token, float(call["worst"]))
+    backend.forget(token)
+    say(f"Anropet {token} räknas med sin längsta tid, {call['worst'] / 3600:.1f} h.")
 
 
 def remove_old_run(backend: Backend, where: Places, ledger: Path) -> None:
     """Remove the old run's ``FRESH_FILES`` from the volume, then mark it done in
-    ``LEDGER``. Safe to do again: a file already gone is no error."""
+    ``LEDGER``. Safe to do again: a file already gone is no error. Only after
+    ``check_no_old_call``, so no old container can save them back."""
     run = where.remote_run.relative_to(REMOTE_DATA)
     backend.remove([run / name for name in FRESH_FILES])
-    _write_ledger(ledger, _read_ledger(ledger)[0], False)
+    _change_ledger(ledger, lambda body: body.update(fresh_pending=False))
 
 
 def again_text(fresh_given: bool, ledger: Path) -> str:
@@ -708,20 +928,23 @@ def run_until_done(
     ledger: Path,
     again: str = "samma kommando",
     clock: Callable[[], float] = time.monotonic,
+    wall: Callable[[], float] = time.time,
 ) -> float:
     """Call the GPU until the run is done, together at most ``max_hours`` for the run
     (all calls, also earlier commands', from ``ledger``).
 
     Each call's worst case (Modal's timeout and the wait for the container) is written
-    to ``ledger`` before the call. It is corrected only when the container reported the
-    seconds it ran: then to those or the client's wall time, whichever is longer. Without
-    them (the client stopped waiting, Ctrl+C, a lost line, a hard stop of this computer)
-    the container may still have run that long, so the worst case stays.
+    to ``ledger``, with the call in ``open``, before the call. It is put right when the
+    call's own time is known: what the container returned (or the client's wall time,
+    if longer), or else what Modal and the call's mark tell afterwards
+    (``settle_calls``, also by the next command after Ctrl+C or a lost line). Until
+    then, and after a hard stop of this computer, the worst case stays. The client's
+    time is wall time, so a computer that slept through a call counts the sleep.
     ``again`` is what the messages tell you to run to carry on. Returns the hours used
-    by this command."""
+    by this command, as far as known."""
     used_here = 0.0
     while True:
-        spent = _read_ledger(ledger)[0]
+        spent = _read_ledger(ledger)["seconds"]
         budget = call_budget(max_hours * 3600 - spent)
         if not budget:
             raise BenchError(
@@ -732,17 +955,32 @@ def run_until_done(
             )
         timeout_s = math.ceil(budget + STOP_GRACE_S + FINISH_SLACK_S)
         worst = float(timeout_s + START_SLACK_S)
-        _write_ledger(ledger, spent + worst, False)
+        token = uuid.uuid4().hex
+        opened = wall()
+        _open_call(ledger, token, worst, opened)
+        ids: list[str] = []
+        sent: list[float] = []  # when it was sent (wall clock): it may run from then
         started = clock()
-        res: Mapping[str, Any] = {}
+        spawned = partial(_spawned, ledger, token, ids, sent, wall)
         try:
-            res = backend.run(train, export, budget, timeout_s)
-        finally:
-            seconds = worst
-            if res.get("seconds") is not None:
-                seconds = max(clock() - started, float(res["seconds"]))
-                _write_ledger(ledger, spent + seconds, False)
-            used_here += seconds
+            res = backend.run(train, export, budget, timeout_s, token, spawned)
+        except BaseException:
+            if not ids:  # stopped before the call was sent (the image, say): nothing ran
+                _close_call(ledger, token, 0.0)
+            else:  # it may run: it stays open, counted at least as long as it was waited for
+                _waited(ledger, token, wall() - sent[0])
+            raise
+        since = sent[0] if sent else opened
+        if res.get("seconds") is not None:
+            _close_call(ledger, token, max(wall() - since, float(res["seconds"])))
+            backend.forget(token)
+        else:
+            if res.get("status") != "no_gpu":  # no_gpu: no container ran, nothing to pay
+                _waited(ledger, token, wall() - since)
+            if settle_calls(backend, ledger, only=token, wall=wall):
+                check_no_old_call(backend, ledger, again, wall)  # stops: it may still run
+        seconds = _read_ledger(ledger)["seconds"] - spent
+        used_here += seconds
         status = res.get("status")
         if status == "done":
             return used_here / 3600
@@ -964,6 +1202,9 @@ def main(
         started = time.monotonic()
         try:
             client = backend(gpu)
+            if args.get("close_call"):
+                close_lost_call(client, ledger, args["close_call"])
+            check_no_old_call(client, ledger, again_text(fresh, ledger))
             if fresh_pending(ledger):
                 remove_old_run(client, where, ledger)
             upload(client, uploads, register, data / RECORD.format(volume=VOLUME))
