@@ -171,6 +171,9 @@ class Repo:
     # --- events ----------------------------------------------------------------------
 
     async def add_events(self, rows: Sequence[EventRow]) -> None:
+        """Write the rows; one already there (by id) is skipped. A write the database
+        took but whose call still failed (the reply lost) leaves its rows queued, and the
+        next flush writes them again."""
         if not rows:
             return
         async with self.engine.begin() as conn:
@@ -178,7 +181,7 @@ class Repo:
                 text(
                     "INSERT INTO events (id, mission_id, vehicle_id, t, source, type, severity, "
                     "payload) VALUES (:id, :mission_id, :vehicle_id, :t, :source, :type, "
-                    ":severity, CAST(:payload AS jsonb))"
+                    ":severity, CAST(:payload AS jsonb)) ON CONFLICT (id) DO NOTHING"
                 ),
                 [{**r, "payload": json.dumps(r.get("payload", {}))} for r in rows],
             )
