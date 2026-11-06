@@ -19,6 +19,7 @@ persons (``sd_safety.keepout.Passage``), never when its first leg goes down.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import replace
 from itertools import pairwise
 from typing import Any, ClassVar, Final
@@ -48,17 +49,22 @@ from sd_safety.constants import (
     SURVEY_MAX_AREA_M2,
 )
 from sd_safety.keepout import (
+    Circle,
     Passage,
+    chord_m,
     circles,
     passage_for,
     reroute,
     spent_for,
     split,
+    unconfirmed,
     xy_route_violation,
 )
-from sd_safety.targets import Plane, polygon_from_geojson
+from sd_safety.policy import KEEPOUT_PASS_SKILLS
+from sd_safety.targets import Plane, Xy, polygon_from_geojson
 from sd_schemas.base import Id, LatLon, LatLonAlt
 from sd_schemas.executor import ExecutorState, ResumePoint, SurveyResumePoint
+from sd_schemas.keepout import Keepout
 from sd_schemas.skills import SkillParams, SurveySectorParams
 from sd_schemas.vehicle import VehicleState
 
@@ -69,6 +75,14 @@ TICK_S: Final = 0.1
 # A reroute that stops first waits at most this long for LOITER to stop the drone (from
 # 15 m/s at ArduCopter's braking: about 6 s), then plans from wherever it is.
 FIRST_SEARCH_SEQ: Final = 2  # seq 0 = home, seq 1 = speed
+# A way around an unconfirmed person's cylinder that leaves out at least this much of the
+# search inside it blocks the search (``SurveyRun.blocked``): less is a corner cut.
+BLOCKED_MIN_M: Final = 5.0
+
+
+def _inside_m(route: list[Xy], c: Circle) -> float:
+    """How much of the route lies inside the circle."""
+    return sum(chord_m(a, b, c[0], c[1]) for a, b in pairwise(route))
 
 
 def next_index(seq: int, base_index: int, seq_offset: int) -> int:
@@ -119,6 +133,11 @@ class SurveyRun:
         self.target_state = target_state
         self.pattern: list[LatLon] = list(waypoints)
         self.origin: list[int | None] = list(range(len(waypoints)))
+        # The unconfirmed persons' cylinders the last plan went around instead of searching
+        # through, and how many metres of the search inside each it left out
+        # (:meth:`around_keepouts`); a search route only. A person nobody has looked at
+        # yet blocks the search there until someone reviews the candidate.
+        self.blocked: list[tuple[Keepout, float]] = []
 
     @property
     def flown_points(self) -> list[LatLon]:
@@ -154,6 +173,7 @@ class SurveyRun:
         the straight way enters one (``PlanError`` when there is none in the charter).
         With a passage (:meth:`passage`) the route flies straight through unconfirmed
         cylinders where it may."""
+        self.blocked = []
         if not ctx.keepouts:
             return
         plane = ctx.plane
@@ -170,12 +190,31 @@ class SurveyRun:
         out = reroute(route, cyl, area=area, soft=scyl, passage=passage, spent_m=spent)
         if out is None or len(out) < 2:
             raise PlanError("KEEPOUT_VIOLATION", "ingen väg runt förbudscylindrarna")
+        self.blocked = self._blocked(ctx.keepouts, plane, route, out)
         points = [LatLon(lat=lat, lon=lon) for lat, lon in (plane.latlon(*p) for p in out[1:])]
         lead: list[int | None] = [] if self.interrupted_at is None else [None]
         origins = dict(zip(route[1:], [*lead, *self.origin[self.base_index :]], strict=True))
         self.origin = [origins.get(p) for p in out[1:]]  # the route's own points, kept as they are
         self.waypoints, self.base_index, self.next_index = points, 0, 0
         self.interrupted_at, self.seq_offset = None, 0
+
+    def _blocked(
+        self, keepouts: Sequence[Keepout], plane: Plane, route: list[Xy], out: list[Xy]
+    ) -> list[tuple[Keepout, float]]:
+        """The unconfirmed cylinders ``out`` searches less of than ``route`` did, by at
+        least ``BLOCKED_MIN_M`` (gone around: no passage, or none allowed), with the metres
+        left out; none for a route that is not a search."""
+        if self.skill not in KEEPOUT_PASS_SKILLS:
+            return []
+        found: list[tuple[Keepout, float]] = []
+        for k in keepouts:
+            if not unconfirmed(k):
+                continue
+            c = (plane.xy(k.lat, k.lon), k.radius_m)
+            left_out = _inside_m(route, c) - _inside_m(out, c)
+            if left_out >= BLOCKED_MIN_M:
+                found.append((k, left_out))
+        return found
 
     def plan(self, ctx: PlanContext) -> SkillPlan:
         self.around_keepouts(ctx)
@@ -202,6 +241,23 @@ class SurveyRun:
             ],
         )
 
+    def blocked_event(self) -> dict[str, Any]:
+        """``executor.survey_blocked``: the cylinders of unconfirmed persons the route now
+        flown goes around, so the ground can put their candidates first in the queue."""
+        return {
+            "command_id": str(self.command_id),
+            "skill": self.skill,
+            "blocked": [
+                {
+                    "keepout_id": str(k.keepout_id),
+                    "source": k.source,
+                    "source_id": str(k.source_id),
+                    "skipped_m": round(m, 1),
+                }
+                for k, m in self.blocked
+            ],
+        }
+
     async def fly(self, plan: SkillPlan, io: ExecutorIO, home: LatLonAlt) -> None:
         items = survey_mission(
             home, [(p.lat, p.lon) for p in self.flown_points], self.alt_m, self.speed_ms
@@ -210,6 +266,8 @@ class SurveyRun:
             raise RuntimeError("the mission layout does not match the resume arithmetic")
         self.mission_hash = await io.upload_mission(items)
         io.emit_event("mission_uploaded", {"mission_hash": self.mission_hash, "items": len(items)})
+        if self.blocked:
+            io.emit_event("survey_blocked", self.blocked_event())
         await io.set_mission_current(1)  # the speed item, so AUTO flies at speed_ms
         if not await io.set_mode(CopterMode.AUTO):
             raise mode_failed(CopterMode.AUTO)

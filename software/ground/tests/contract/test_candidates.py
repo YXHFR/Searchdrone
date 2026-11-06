@@ -28,6 +28,7 @@ from flow_rig import BRAIN, SEARCH, VID, H, Rig, rig  # pyright: ignore[reportMi
 
 from sd_ground.app import commander_asgi, create_commander_app
 from sd_schemas.base import LatLon, new_id
+from sd_schemas.candidate_ai import candidate_event_body, candidates_line
 from sd_schemas.link import (
     BBox,
     CropData,
@@ -37,7 +38,7 @@ from sd_schemas.link import (
     PerceptionReport,
     Pose,
 )
-from sd_schemas.search import SearchProfile
+from sd_schemas.search import CandidateCard, SearchProfile
 from sd_search.app import SearchService
 from sd_search.client import GroundClient
 from sd_search.profile import GroundProfileSource
@@ -555,5 +556,92 @@ async def test_a_closer_looks_stills_and_its_end_reach_the_search_service(r: Rig
         assert [(str(d.command_id), str(d.candidate_id), d.end) for d in found] == [
             (look, target, "clear")
         ]
+    finally:
+        await client.aclose()
+
+
+async def test_a_candidate_whose_cylinder_the_search_goes_around_is_first(r: Rig) -> None:
+    """``executor.survey_blocked``: the search went around the cylinder of a low candidate
+    nobody has looked at (SK01 seed 3: the target, seen once at a lane's end). Its card is
+    first in the queue and high, with the metres left out, its priority as the search
+    service gave it; the AI is woken for it. Decided, it blocks nothing."""
+    mid = await r.open_mission()
+    medium, low = revision(r, priority=0.5, state="ready"), revision(r, priority=0.1, state="ready")
+    other = revision(r, priority=0.45, state="ready")
+    assert (await post(r, mid, medium, low, other)).status_code == 200
+    first = (await queue(r, mid))["items"][0]
+    assert first["candidate_id"] == medium["candidate_id"]
+    data = {
+        "command_id": str(new_id()),
+        "skill": "survey_sector",
+        "blocked": [
+            {"keepout_id": str(new_id()), "source": "candidate",
+             "source_id": low["candidate_id"], "skipped_m": 71.4},
+            # a detection no candidate has (yet): nothing to mark
+            {"keepout_id": str(new_id()), "source": "detection",
+             "source_id": str(new_id()), "skipped_m": 20.0},
+        ],
+    }  # fmt: skip
+    await r.onboard.session.send(
+        OnboardEvent(type="executor.survey_blocked", severity="info", data=data), ttl_ms=30_000
+    )
+    end = asyncio.get_running_loop().time() + 10
+    while (await queue(r, mid))["items"][0]["candidate_id"] != low["candidate_id"]:
+        assert asyncio.get_running_loop().time() < end, "the blocking candidate never rose"
+        await asyncio.sleep(0.05)
+    body = await queue(r, mid)
+    top = body["items"][0]
+    assert (top["priority"], top["priority_class"], top["blocks_survey_m"]) == (0.1, "high", 71.4)
+    assert [c["blocks_survey_m"] for c in body["items"][1:]] == [None, None]
+    assert body["counts"]["review"] == 3 and body["counts"]["low"] == 0
+    assert candidate_event_body(top) is not None  # the AI hears of it
+    updated = [
+        e.data
+        for e in r.g.bus.replay(r.g.bus.server_epoch, 0) or []
+        if e.topic == "candidates" and e.type == "candidate.updated"
+    ]
+    assert [u["candidate_id"] for u in updated] == [low["candidate_id"]]
+    assert candidates_line([CandidateCard.model_validate(top)], {}, None) == (
+        "Kandidater: K2 HÖG (1/1 bilder; blockerar sökningen, 71 m bana hoppad) | "
+        "att granska 1, låg 0"
+    )
+
+    res = await r.panel.post(
+        f"/api/v1/candidates/{low['candidate_id']}/decision",
+        json={"decision": "reject", "note": "", "subject_rev": top["rev"]},
+        headers=H,
+    )
+    assert res.status_code == 200, res.text
+    body = await queue(r, mid, state="rejected")
+    assert [(c["priority_class"], c["blocks_survey_m"]) for c in body["items"]] == [("low", None)]
+    assert (await queue(r, mid))["items"][0]["candidate_id"] == medium["candidate_id"]
+
+
+async def test_a_drones_own_cylinder_blocks_through_its_detections_candidate(r: Rig) -> None:
+    """The drone's own cylinder names a detection: the candidate it joined is marked."""
+    mid = await r.open_mission()
+    service, client = search_service(r, red_profile(r))
+    try:
+        seen = person(r, 0, 100)
+        await send(r, seen, person(r, 80, 100))
+        assert await service.step() == 2
+        data = {
+            "command_id": str(new_id()),
+            "skill": "resume",
+            "blocked": [{"keepout_id": str(new_id()), "source": "detection",
+                         "source_id": str(seen.detection_id), "skipped_m": 33.0}],
+        }  # fmt: skip
+        await r.onboard.session.send(
+            OnboardEvent(type="executor.survey_blocked", severity="info", data=data),
+            ttl_ms=30_000,
+        )
+        end = asyncio.get_running_loop().time() + 10
+        while (await queue(r, mid))["items"][0]["blocks_survey_m"] is None:
+            assert asyncio.get_running_loop().time() < end, "the detection's candidate never rose"
+            await asyncio.sleep(0.05)
+        top = (await queue(r, mid))["items"][0]
+        detail = (await r.panel.get(f"/api/v1/candidates/{top['candidate_id']}")).json()
+        assert [o["detection_id"] for o in detail["observations"]] == [str(seen.detection_id)]
+        assert top["blocks_survey_m"] == 33.0 and top["priority_class"] == "high"
     finally:
         await client.aclose()
