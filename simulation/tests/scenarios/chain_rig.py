@@ -22,7 +22,10 @@ AI's proposal and "clear around the drone", asks for the start; the AI searches;
 operator confirms the missing person (or rejects everyone in SK03) and asks the drone
 home. It checks the scenario invariants (``Scenario.check_invariants``) and the search
 invariants (E1, E2, E8 in ``sd_sim.search_invariants``), and writes
-``search_metrics.json`` and ``search_report.md`` in the run's folder.
+``search_metrics.json`` and ``search_report.md`` in the run's folder. When a search
+invariant breaks it also writes ``search_case.json`` there (the track, the cylinders and
+E1's rows, only numbers: ``sd_sim.search_case``), so the case can be run again as a unit
+test.
 
 The flight fails at once when the onboard computer stops steering: one of its tasks
 ends (the executor, SD-link, perception), or the flight controller flies the search
@@ -83,6 +86,7 @@ from sd_sim.operator import ScriptedOperator
 from sd_sim.oracle_detector import Drawn, OracleDetector, OraclePerception, SyntheticStillSource
 from sd_sim.perf.stats import percentile
 from sd_sim.report import measure
+from sd_sim.search_case import CASE, write_case
 from sd_sim.search_invariants import (
     CandidateWatch,
     SeenKeepout,
@@ -197,6 +201,8 @@ class SearchRun:
     # that thing.
     by_picture: set[str] = field(default_factory=set[str])
     misplaced: dict[str, str] = field(default_factory=dict[str, str])
+    # E1's inputs as the ground held them at the end, for ``search_case.json``.
+    e1_rows: dict[str, Any] | None = None
 
     def thing_at(self, lat: float, lon: float) -> tuple[str | None, bool]:
         """The simulator's truth at a point: the nearest thing within ``TRUTH_M`` and
@@ -222,6 +228,8 @@ class SearchRun:
         east, north = self.plane.xy(card["lat"], card["lon"])
         truth = self.world.picture_truth(drawn.thing_id, east, north)
         if drawn.thing_id is not None and truth[0] is None:
+            # Kept on purpose when the card later moves closer: a card that once lay at
+            # the wrong place with this picture was shown there to the operator.
             self.misplaced[cid] = drawn.thing_id
         return truth
 
@@ -369,10 +377,16 @@ async def _search_invariants(run: SearchRun) -> list[str]:
     observed: dict[str, list[str]] = {}
     for cid, det in obs:
         observed.setdefault(cid, []).append(det)
+    run.e1_rows = {
+        "revisions": [r._asdict() for r in revisions],
+        "decisions": [d._asdict() for d in decisions],
+        "views": [v._asdict() for v in views],
+        "observed": observed,
+    }
     broken = no_confirm_without_human(
-        [r._asdict() for r in revisions],
-        [d._asdict() for d in decisions],
-        [v._asdict() for v in views],
+        run.e1_rows["revisions"],
+        run.e1_rows["decisions"],
+        run.e1_rows["views"],
         observed,
     )
     run.candidates.look({cid: max(r.rev for r in revisions if r.candidate_id == cid)
@@ -460,7 +474,11 @@ async def _metrics(run: SearchRun, broken: list[str]) -> RunMetrics:
             m.upper_by_thing.setdefault(thing, []).append(str(top))
     if confirmed is not None and confirmed.target and target is not None:
         # The person's card the operator confirmed, where it lies at the end, from them.
-        card = next(c for c in queue if c["candidate_id"] == confirmed.candidate_id)
+        card = next((c for c in queue if c["candidate_id"] == confirmed.candidate_id), None)
+        assert card is not None, (
+            f"the confirmed card {confirmed.candidate_id} is not in the queue at the end",
+            [c["candidate_id"] for c in queue],
+        )
         m.geo_error_m = round(distance_m(card["lat"], card["lon"], *world.where(target)), 2)
     m.cards_by_picture = len(run.by_picture)
     for thing in run.misplaced.values():
@@ -697,6 +715,20 @@ async def search_run(
         metrics = await _metrics(run, broken)
         metrics.with_map = with_map
     write_run(run_dir, metrics)
+    if broken:
+        try:
+            write_case(
+                run_dir,
+                scenario=world.scenario,
+                seed=world.seed,
+                broken=broken,
+                track=sc.track,
+                keepouts=run.keepouts.values(),
+                e1=run.e1_rows,
+                params={"with_map": with_map, "limit_s": limit, "home": list(sc.r.home)},
+            )
+        except Exception as e:  # the case file helps: it never hides the broken invariants
+            broken = [*broken, f"({CASE} kunde inte skrivas: {e!r})"]
     if metrics.time_to_confirmed_s is not None:
         measure(f"{world.scenario} take-off -> confirmed", metrics.time_to_confirmed_s, limit)
     assert not broken, broken
@@ -705,11 +737,18 @@ async def search_run(
         # The confirmed card lies where the person is, within a card's error, to the end.
         err = metrics.geo_error_m
         assert err is not None and err <= CARD_ERR_MAX_M, (err, metrics.decisions)
-    if world.target is not None:
-        # No card with the person's picture lay away from the person.
-        assert world.target.thing_id not in metrics.misplaced_by_thing, (
-            metrics.misplaced_by_thing,
-            metrics.queue_end,
+    # No card with the person's picture lay away from the person.
+    if world.target is not None and world.target.thing_id in metrics.misplaced_by_thing:
+        where = world.where(world.target)
+        away = {
+            c["candidate_id"]: round(distance_m(c["lat"], c["lon"], *where), 1)
+            for c in await run.operator.queue()
+            if run.misplaced.get(str(c["candidate_id"])) == world.target.thing_id
+        }
+        raise AssertionError(
+            f"cards with the person's picture lay away from the person: {away} m "
+            f"(more than {CARD_ERR_MAX_M} m); {metrics.misplaced_by_thing}; "
+            f"queue {metrics.queue_end}"
         )
     if (
         require_found

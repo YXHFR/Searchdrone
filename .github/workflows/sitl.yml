@@ -193,6 +193,7 @@ jobs:
           path: |
             runs/**/result.json
             runs/summary.md
+            runs/**/search_case.json
             !runs/**/secrets/**
             !build/sim/**/secrets/**
           if-no-files-found: warn
@@ -516,6 +517,7 @@ jobs:
           path: |
             runs/*/search_metrics.json
             runs/*/result.json
+            runs/*/search_case.json
             !runs/**/secrets/**
           if-no-files-found: warn
           retention-days: 14

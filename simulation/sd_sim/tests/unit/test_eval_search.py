@@ -50,6 +50,15 @@ def test_the_report_is_swedish_labelled_and_has_no_profile_text(tmp_path: Path) 
     assert data["found"] is True and data["label"] == LABEL
 
 
+def test_the_report_shows_the_cards_judged_by_picture_and_the_dropped_sources(
+    tmp_path: Path,
+) -> None:
+    body = write_run(tmp_path, run("SK10", 1, cards_by_picture=7, sources_dropped=2)).read_text(
+        encoding="utf-8"
+    )
+    assert "| Kort efter bild / källor oraklet glömde | 7 / 2 |" in body
+
+
 def _by(reqs: list, scenario: str) -> list:
     return [r for r in reqs if r.scenario == scenario]
 
@@ -153,6 +162,13 @@ def test_the_cli_writes_the_requirements_and_fails_on_a_miss(tmp_path: Path) -> 
         write_run(tmp_path / "runs" / f"r{s}", run("SK03", s, has_target=False))
     assert main(["aggregate", str(tmp_path / "runs"), str(tmp_path / "out")]) == 0
     assert "SK03" in (tmp_path / "out" / "search_requirements.md").read_text(encoding="utf-8")
+    write_run(tmp_path / "runs" / "r5", run("SK03", 5, has_target=False, sources_dropped=3))
+    write_run(tmp_path / "runs" / "r6", run("SK03", 6, has_target=False, sources_dropped=1))
+    assert main(["aggregate", str(tmp_path / "runs"), str(tmp_path / "out")]) == 0
+    md = (tmp_path / "out" / "search_requirements.md").read_text(encoding="utf-8")
+    assert "Källor som oraklet glömde (kortet bedömt efter läge): 4." in md
+    out = json.loads((tmp_path / "out" / "search_requirements.json").read_text(encoding="utf-8"))
+    assert out["sources_dropped"] == 4
     write_run(tmp_path / "runs" / "r9", run("SK03", 9, has_target=False, false_confirms=1))
     assert main(["aggregate", str(tmp_path / "runs"), str(tmp_path / "out")]) == 1
     assert main(["aggregate", str(tmp_path / "empty"), str(tmp_path / "out")]) == 1

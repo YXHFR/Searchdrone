@@ -35,6 +35,7 @@ __all__ = [
     "RunMetrics",
     "aggregate",
     "main",
+    "sources_dropped",
     "wilson_lower",
     "write_run",
 ]
@@ -154,6 +155,7 @@ def report_md(m: RunMetrics) -> str:
         f"| Cylindrar / minsta avstånd till kant | {m.keepouts} / "
         f"{_fmt(m.keepout_min_distance_m, ' m', 1)} |",
         f"| Motorer | {', '.join(m.engines) or '-'} |",
+        f"| Kort efter bild / källor oraklet glömde | {m.cards_by_picture} / {m.sources_dropped} |",
         f"| Molnkostnad | {_fmt(m.cloud_cost_sek, ' kr', 2)} |",
         "",
         "## Kön vid slutet",
@@ -366,12 +368,19 @@ def aggregate(runs: Iterable[Mapping[str, Any]]) -> list[Requirement]:
     return out + _all(every)
 
 
-def requirements_md(reqs: Sequence[Requirement], n_runs: int) -> str:
+def sources_dropped(runs: Iterable[Mapping[str, Any]]) -> int:
+    """How many detections' sources the detector oracle forgot over the runs: their cards
+    were judged by position instead of by picture."""
+    return sum(int(r.get("sources_dropped") or 0) for r in runs)
+
+
+def requirements_md(reqs: Sequence[Requirement], n_runs: int, dropped: int = 0) -> str:
     lines = [
         "# Sökkedjan, nattliga krav",
         "",
         f"*{LABEL}: detektorn och bildmodellen är orakel med modellerade startprofiler. "
-        f"{n_runs} körningar.*",
+        f"{n_runs} körningar. Källor som oraklet glömde (kortet bedömt efter läge): "
+        f"{dropped}.*",
         "",
         "| Scenario | Krav | Värde | Körningar | Resultat |",
         "|---|---|---|---|---|",
@@ -394,12 +403,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         sys.stderr.write(f"inga {METRICS} under {args.runs}\n")
         return 1
     reqs = aggregate(runs)
+    dropped = sources_dropped(runs)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "search_requirements.md").write_text(
-        requirements_md(reqs, len(runs)), encoding="utf-8"
+        requirements_md(reqs, len(runs), dropped), encoding="utf-8"
     )
     (args.out / "search_requirements.json").write_text(
-        json.dumps({"label": LABEL, "runs": len(runs),
+        json.dumps({"label": LABEL, "runs": len(runs), "sources_dropped": dropped,
                     "requirements": [asdict(r) for r in reqs]}, indent=2, ensure_ascii=False)
         + "\n",
         encoding="utf-8",
