@@ -874,9 +874,41 @@ def test_an_old_call_modal_never_answers_for_can_be_closed_by_hand(
     later.alive = set(again.alive)
     later.stuck = set(again.stuck)  # Modal still does not say
     assert cloud.main([*args, f"close_call={token}"], backend=lambda gpu: later) == 0
+    assert later.cancelled[0] == f"fc-{token}"  # cancelled once more first
     assert token not in later.marks and later.calls  # closed, then the run went on
     assert cloud.hours_used(ledger) * 3600 == pytest.approx(worst + 3600.0)  # never less
     assert all("close_call" not in a for a in later.calls[0][0])  # not for the script
+    assert "utan close_call=" in capsys.readouterr().out  # not to be given again
+
+
+def test_close_call_waits_for_the_calls_worst_case(
+    bank: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A call that may still run by its own time is never closed by hand."""
+    fake, ledger, args, _run = _old_run(bank, ["lost_late"])
+    assert cloud.main(args, backend=lambda gpu: fake) == 1
+    (token,) = json.loads(ledger.read_text())["open"]
+    before = ledger.read_text()
+    again = _again(fake, ["done"])
+    again.marks, again.alive, again.stuck = fake.marks, {token}, {token}
+    assert cloud.main([*args, f"close_call={token}"], backend=lambda gpu: again) == 1
+    err = capsys.readouterr().err
+    assert "kan fortfarande köra" in err and "close_call" in err
+    assert ledger.read_text() == before and again.cancelled == [] and again.calls == []
+
+
+def test_close_call_counts_the_marks_seconds_if_they_are_more(tmp_path: Path) -> None:
+    ledger = tmp_path / "hours.json"
+    token = "t" * 32
+    call = {"worst": 100.0, "at": 0.0, "call": f"fc-{token}", "waited": 0.0}
+    cloud._write_ledger(ledger, {"seconds": 100.0, "fresh_pending": False, "open": {token: call}})
+    fake = FakeModal()
+    fake.marks[token] = {"seconds": 1800.0, "ended": False}
+    fake.alive = fake.stuck = {token}
+    cloud.close_lost_call(fake, ledger, token, wall=lambda: 101.0)
+    assert fake.cancelled == [f"fc-{token}"]
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(1800.0 + 600.0)  # the mark's
+    assert json.loads(ledger.read_text())["open"] == {} and token not in fake.marks
 
 
 def test_a_call_cancelled_by_this_command_that_still_runs_stops_it(tmp_path: Path) -> None:
@@ -1081,6 +1113,56 @@ def test_a_ledger_that_cannot_be_read_stops_the_command(tmp_path: Path, text: st
     with pytest.raises(BenchError, match="går inte att läsa") as err:
         cloud.hours_used(ledger)
     assert err.value.code == 1
+    assert "reset_hours=" in str(err.value) and "ta bort" not in str(err.value)
     with pytest.raises(BenchError):
         cloud.check_no_old_call(FakeModal(), ledger, "samma kommando")
     assert ledger.read_text() == text  # left as it was
+
+
+def test_reset_hours_starts_an_unreadable_ledger_over(
+    bank: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake, ledger, args, _run = _old_run(bank, ["done"])
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text("{")
+    assert cloud.main(args, backend=lambda gpu: fake) == 1
+    assert "reset_hours=" in capsys.readouterr().err and fake.calls == []
+    assert cloud.main([*args, "reset_hours=5"], backend=lambda gpu: fake) == 0
+    assert cloud.hours_used(ledger) == pytest.approx(5 + 1)  # from 5 h, then the call's hour
+    assert json.loads(ledger.read_text())["open"] == {}
+    assert "utan reset_hours=" in capsys.readouterr().out
+    assert all("reset_hours" not in a for a in fake.calls[0][0])  # not for the script
+
+
+def test_reset_hours_waits_for_a_call_that_may_still_run(bank: Path) -> None:
+    """A ledger that can be read is settled first: its calls are not dropped on a reset."""
+    fake, ledger, args, _run = _old_run(bank, ["lost_late"])
+    assert cloud.main(args, backend=lambda gpu: fake) == 1
+    before = ledger.read_text()
+    again = _again(fake, ["done"])
+    again.marks, again.alive = fake.marks, set(fake.tokens)
+    assert cloud.main([*args, "reset_hours=0"], backend=lambda gpu: again) == 1
+    assert ledger.read_text() == before and again.calls == []
+
+
+@pytest.mark.parametrize("extra", ["reset_hours=-1", "reset_hours=x", "reset_hours=inf", "fresh=1"])
+def test_reset_hours_is_a_number_of_hours_on_its_own(bank: Path, extra: str) -> None:
+    args = [f"data={bank}", "model=yolox_s", "yes=1", "reset_hours=1", extra]
+    if extra.startswith("reset_hours"):
+        args.remove("reset_hours=1")
+    fake = FakeModal()
+    assert cloud.main(args, backend=lambda gpu: fake) == 2
+    assert fake.calls == []
+
+
+def test_the_trainings_own_error_names_its_kind_not_the_line() -> None:
+    class CallFailedError(Exception):  # as modal_app's, which cloud never imports
+        def __init__(self, kind: str, text: str) -> None:
+            super().__init__(kind, text)
+            self.kind = kind
+
+    err = cloud.remote_error(CallFailedError("MemoryError", "secret text"), "samma kommando")
+    assert "(MemoryError)" in str(err) and "secret" not in str(err)
+    assert "modal token info" not in str(err) and "modal.com/apps" in str(err)
+    odd = cloud.remote_error(CallFailedError("not a name\n", "x"))
+    assert "(okänt fel)" in str(odd)
