@@ -236,7 +236,8 @@ Det här händer:
    anropet står kvar med sin längsta tid tills Modal säger att det har slutat, och
    räknas då med sin egen tid. Visar modal.com/apps att inget kör men Modal svarar ändå
    inte, säger körningen hur du stänger anropet med `close_call=`; det räknas då med sin
-   längsta tid, eller mer om anropet skrev mer. Ingen körning startar ett nytt anrop
+   längsta tid, eller mer om anropet skrev mer. Anropet avbryts först, och säger Modal
+   att det ändå kör vidare varnar körningen, så att du hinner trycka Ctrl+C. Ingen körning startar ett nytt anrop
    medan ett gammalt kanske fortfarande kör, eftersom det annars kunde spara över den
    nya träningen. Går räkningen inte att läsa stannar den också: titta då på
    modal.com/apps att inget kör, och kör samma kommando med `reset_hours=` och de

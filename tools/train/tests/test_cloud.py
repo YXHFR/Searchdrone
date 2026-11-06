@@ -897,7 +897,9 @@ def test_close_call_waits_for_the_calls_worst_case(
     assert ledger.read_text() == before and again.cancelled == [] and again.calls == []
 
 
-def test_close_call_counts_the_marks_seconds_if_they_are_more(tmp_path: Path) -> None:
+def test_close_call_counts_the_marks_seconds_if_they_are_more(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     ledger = tmp_path / "hours.json"
     token = "t" * 32
     call = {"worst": 100.0, "at": 0.0, "call": f"fc-{token}", "waited": 0.0}
@@ -906,9 +908,27 @@ def test_close_call_counts_the_marks_seconds_if_they_are_more(tmp_path: Path) ->
     fake.marks[token] = {"seconds": 1800.0, "ended": False}
     fake.alive = fake.stuck = {token}
     cloud.close_lost_call(fake, ledger, token, wall=lambda: 101.0)
-    assert fake.cancelled == [f"fc-{token}"]
+    out, err = capsys.readouterr()
+    assert fake.cancelled == [f"fc-{token}"] and "Avbrott skickat" in out
+    # Modal still says it runs after the cancel (stuck): a warning names it
+    assert "Varning" in err and token in err and f"fc-{token}" in err and "Ctrl+C" in err
     assert cloud.hours_used(ledger) * 3600 == pytest.approx(1800.0 + 600.0)  # the mark's
     assert json.loads(ledger.read_text())["open"] == {} and token not in fake.marks
+
+
+def test_close_call_says_nothing_more_when_the_cancel_ended_the_call(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ledger = tmp_path / "hours.json"
+    token = "t" * 32
+    call = {"worst": 100.0, "at": 0.0, "call": f"fc-{token}", "waited": 0.0}
+    cloud._write_ledger(ledger, {"seconds": 100.0, "fresh_pending": False, "open": {token: call}})
+    fake = FakeModal()
+    fake.alive = {token}  # not stuck: the cancel ends it
+    cloud.close_lost_call(fake, ledger, token, wall=lambda: 101.0)
+    out, err = capsys.readouterr()
+    assert "Avbrott skickat" in out and "Varning" not in err
+    assert json.loads(ledger.read_text())["open"] == {}
 
 
 def test_a_call_cancelled_by_this_command_that_still_runs_stops_it(tmp_path: Path) -> None:

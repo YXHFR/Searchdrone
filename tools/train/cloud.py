@@ -889,7 +889,11 @@ def close_lost_call(
     longer runs, but Modal does not say so. Only for a call past its worst case: it is
     cancelled once more, then taken out of ``open`` with its worst case, or what its
     mark tells if that is more, so the hours already counted stay; nothing is ever
-    counted less."""
+    counted less. If Modal still says it runs after the cancel, a warning names it, as
+    a slow container could still save its ``last.pt`` over the next call's.
+    A call with no Modal id (its start was never confirmed) waits out its whole worst
+    case here, up to Modal's 24 hours, where ``settle_calls`` gives up on it after
+    ``APP_GONE_S``: slower, but it is never closed while it may run."""
     call = _read_ledger(ledger)["open"].get(token)
     if call is None:
         raise BenchError(f"close_call={token}: det finns inget öppet anrop med det id:t.", 2)
@@ -904,11 +908,20 @@ def close_lost_call(
         )
     if call["call"]:
         backend.cancel(call["call"])
-    seconds = max(call["worst"], float(backend.call_state(token, call["call"])["seconds"]))
+    state = backend.call_state(token, call["call"])
+    if call["call"] and state["running"]:
+        warn(
+            f"Varning: avbrottet skickades till anropet {token} (Modal-id {call['call']}), "
+            "men Modal säger ännu inte att det har slutat. Visar searchdrone-train på "
+            "modal.com/apps att det fortfarande kör, tryck Ctrl+C nu: annars kan det spara "
+            "sin last.pt över nästa anrop."
+        )
+    seconds = max(call["worst"], float(state["seconds"]))
     _close_call(ledger, token, seconds)
     backend.forget(token)
+    sent = "Avbrott skickat; anropet" if call["call"] else "Anropet (utan Modal-id)"
     say(
-        f"Anropet {token} räknas med {seconds / 3600:.1f} h. Kör framöver samma kommando "
+        f"{sent} {token} räknas med {seconds / 3600:.1f} h. Kör framöver samma kommando "
         "utan close_call=."
     )
 
@@ -1128,6 +1141,8 @@ def remote_error(exc: BaseException, again: str = "samma kommando") -> BenchErro
         return BenchError(
             "Modal är inte installerat här. Kör via: just train-detector-cloud ...", 2
         )
+    # By name: cloud.py never imports modal_app, which needs the optional cloud group
+    # (Modal); without it, this module and its tests still run.
     if type(exc).__name__ == "CallFailedError":
         kind = str(getattr(exc, "kind", ""))
         kind = kind if kind.isidentifier() and len(kind) <= 60 else "okänt fel"
