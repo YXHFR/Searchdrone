@@ -269,12 +269,62 @@ async def stack(migrated_db: Db, tmp_path: Path) -> AsyncIterator[tuple[Rig, int
         yield r, port
 
 
-async def test_sk09_orders_sector_b_once_the_slow_decision_closes_the_look(
+async def _sk09_look(r: Rig, mid: str) -> tuple[Any, Any]:
+    """With SK09's script on the real AI: a HÖG candidate, the AI's look at it approved
+    and sent, and the drone's "done" (it now waits for the operator). The detection and
+    the look's order."""
+    det = seen_at(r, 0, 100)
+    await send(r, det)
+    found = {"detection_id": str(det.detection_id), "distance_m": 0.0}
+    res = await post(
+        r,
+        mid,
+        revision(
+            r,
+            candidate_id=str(det.detection_id),
+            state="ready",
+            lat=det.lat,
+            lon=det.lon,
+            sigma95_m=det.sigma95_m,
+            priority=0.9,
+            observations=[found],
+        ),
+    )
+    assert res.status_code == 200, res.text
+
+    # The AI's card for the look; the pilot approves it.
+    async def card() -> str | None:
+        res = await r.panel.get(f"/api/v1/missions/{mid}/approvals")
+        pending = [a for a in res.json() if a["status"] == "pending"] if res.is_success else []
+        return str(pending[0]["id"]) if pending else None
+
+    await r.until(card, 15, "the AI's card for the look")
+    res = await r.approve(str(await card()))
+    assert res.status_code == 200, res.text
+    await r.until(lambda: any(o.skill == "inspect_detection" for o in r.onboard.orders), 5, "look")
+    sent = next(o for o in r.onboard.orders if o.skill == "inspect_detection")
+    await event(r, "inspect.done", **done(sent))
+    assert r.onboard.session is not None
+    await r.onboard.session.ack(sent.command_id, "done")
+    await r.until(lambda: said(r, mid, "Väntar på operatörens beslut"), 10, "the AI waits")
+    return det, sent
+
+
+async def said(r: Rig, mid: str, text: str) -> bool:
+    res = await r.panel.get(f"/api/v1/missions/{mid}/chat")
+    return any(text in m["text"] for m in res.json()["items"])
+
+
+def surveys(r: Rig) -> list[Any]:
+    return [o for o in r.onboard.orders if o.skill == "survey_sector"]
+
+
+async def test_sk09_orders_the_search_again_once_the_slow_decision_closes_the_look(
     stack: tuple[Rig, int], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """SK09's script on the real AI: the operator decides 40 s after the look's "done"
-    (when the AI used to order sector B into INSPECT_BUSY); sector B goes onboard once the
-    look has closed."""
+    (when the AI used to order sector B into INSPECT_BUSY); the drone holds after the
+    look, so sector A goes onboard again once the look has closed."""
     r, port = stack
     r.onboard.order_outcome = "running"
     # The setup's own orders and candidates go to the loopback APIs on their bound address.
@@ -285,48 +335,8 @@ async def test_sk09_orders_sector_b_once_the_slow_decision_closes_the_look(
     no_rate_limit(r)  # the setup's takeoff is not the AI's
     config = {"backend": {"kind": "scripted", "scripted_file": str(SK09)}, "profile": "sim"}
     async with run_brain(r, port, **config):
-        det = seen_at(r, 0, 100)
-        await send(r, det)
-        found = {"detection_id": str(det.detection_id), "distance_m": 0.0}
-        res = await post(
-            r,
-            mid,
-            revision(
-                r,
-                candidate_id=str(det.detection_id),
-                state="ready",
-                lat=det.lat,
-                lon=det.lon,
-                sigma95_m=det.sigma95_m,
-                priority=0.9,
-                observations=[found],
-            ),
-        )
-        assert res.status_code == 200, res.text
-
-        # The AI's card for the look; the pilot approves it.
-        async def card() -> str | None:
-            res = await r.panel.get(f"/api/v1/missions/{mid}/approvals")
-            pending = [a for a in res.json() if a["status"] == "pending"] if res.is_success else []
-            return str(pending[0]["id"]) if pending else None
-
-        await r.until(card, 15, "the AI's card for the look")
-        res = await r.approve(str(await card()))
-        assert res.status_code == 200, res.text
-        await r.until(
-            lambda: any(o.skill == "inspect_detection" for o in r.onboard.orders), 5, "look"
-        )
-        sent = next(o for o in r.onboard.orders if o.skill == "inspect_detection")
-        await event(r, "inspect.done", **done(sent))
-        assert r.onboard.session is not None
-        await r.onboard.session.ack(sent.command_id, "done")
-
-        async def said(text: str) -> bool:
-            res = await r.panel.get(f"/api/v1/missions/{mid}/chat")
-            return any(text in m["text"] for m in res.json()["items"])
-
-        await r.until(lambda: said("Väntar på operatörens beslut"), 10, "the AI waits")
-        assert not [o for o in r.onboard.orders if o.skill == "survey_sector"]
+        det, sent = await _sk09_look(r, mid)
+        assert not surveys(r)
         # The operator decides 40 s later (the drone waits up to AWAIT_DECISION_S).
         later = r.clock.utc_now() + dt.timedelta(seconds=40)
         assert later < r.clock.utc_now() + dt.timedelta(seconds=AWAIT_DECISION_S)
@@ -336,12 +346,61 @@ async def test_sk09_orders_sector_b_once_the_slow_decision_closes_the_look(
             res = await decide(pilot, str(det.detection_id), "reject")
             assert res.status_code == 200, res.text
         await event(r, "inspect.closed", **closed(sent, "hold", cause="returned"))
-        await r.until(
-            lambda: any(o.skill == "survey_sector" for o in r.onboard.orders),
-            15,
-            "sector B ordered after the look closed",
-        )
-        (survey,) = [o for o in r.onboard.orders if o.skill == "survey_sector"]
-        assert survey.params["polygon"] == sectors(r)[1]["area"]
+        await r.until(lambda: bool(surveys(r)), 15, "sector A ordered after the look closed")
+        (survey,) = surveys(r)
+        assert survey.params["polygon"] == sectors(r)[0]["area"]
         rows = (await r.panel.get(f"/api/v1/missions/{mid}/commands")).json()
         assert not [o for o in rows if "INSPECT_BUSY" in (o.get("status_reason") or "")]
+
+
+async def test_sk09_flies_sector_a_on_after_the_look_and_then_searches_sector_b(
+    stack: tuple[Rig, int],
+) -> None:
+    """SK09's script on the real AI, as in SITL: the look breaks off the search of sector
+    A and the drone flies it on by itself. The AI orders nothing on the close (the rest of
+    sector A may hold the wrong person when the look was at a false detection), and orders
+    sector B once the search flown on is done."""
+    r, port = stack
+    r.onboard.order_outcome = "running"
+    assert r.search is not None
+    for client in (r.commander, r.search):
+        client.base_url = httpx.URL(f"http://127.0.0.1:{port}")
+    mid, d = await flying_with(r, mode="exercise", sectors=sectors(r))
+    search_a = await order(r, d, "survey_sector", {"sector_id": "A", "alt_m": 50, "spacing_m": 45})
+    sid = str(search_a["command_id"])
+    await wait_order_status(r, mid, sid, "running")
+    no_rate_limit(r)  # the setup's orders are not the AI's
+    config = {"backend": {"kind": "scripted", "scripted_file": str(SK09)}, "profile": "sim"}
+    async with run_brain(r, port, **config):
+        det, sent = await _sk09_look(r, mid)
+        assert r.onboard.session is not None
+        await r.onboard.session.ack(uuid.UUID(sid), "superseded")  # the look broke it off
+        async with person(r, "pilot", "kalle") as pilot:
+            res = await decide(pilot, str(det.detection_id), "reject")
+            assert res.status_code == 200, res.text
+        resume_id = new_id()
+        r.onboard.active_command_id = resume_id
+        await event(
+            r,
+            "inspect.closed",
+            **closed(
+                sent,
+                "resume",
+                breakpoint="survey",
+                resume_command_id=str(resume_id),
+                resumed_command_id=sid,
+            ),
+        )
+        await r.until(
+            lambda: said(r, mid, "Drönaren söker vidare i sektor A"), 10, "the AI flies A on"
+        )
+        assert len(surveys(r)) == 1  # only the setup's search of sector A
+        await event(
+            r,
+            "inspect.resume_ended",
+            command_id=str(sent.command_id),
+            resumed_command_id=sid,
+            status="done",
+        )
+        await r.until(lambda: len(surveys(r)) == 2, 15, "sector B ordered after sector A")
+        assert surveys(r)[-1].params["polygon"] == sectors(r)[1]["area"]
