@@ -289,7 +289,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 45
     env:
       VIDEO_APT_PACKAGES: >-
         gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
@@ -321,7 +321,7 @@ jobs:
         # mirror list is cut down to archive.ubuntu.com for two more tries. What a try got
         # stays in the cache folder, so the next try goes on from there. apt gives up on
         # a dead connection after 30 s. The man-db index is not rebuilt.
-        timeout-minutes: 17
+        timeout-minutes: 20
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -339,21 +339,29 @@ jobs:
                 || echo 'http://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt
             fi
             for f in /etc/apt/sources.list.d/*.sources /etc/apt/sources.list; do
-              [ -f "$f" ] && sudo sed -i 's#azure\.archive\.ubuntu\.com#archive.ubuntu.com#g' "$f"
+              if [ -f "$f" ]; then
+                sudo sed -i 's#azure\.archive\.ubuntu\.com#archive.ubuntu.com#g' "$f"
+              fi
             done
           }
+          # Only the download has a time limit: a timeout inside dpkg would leave it half
+          # done and fail every later try. The install itself reads the local .debs.
           ok=0
           for try in 1 2 3; do
             if [ "$try" = 1 ]; then limit=150; else limit=240; use_archive_mirror; fi
             if sudo timeout 90 apt-get "${apt_opts[@]}" update -q && \
-               sudo timeout "$limit" apt-get "${apt_opts[@]}" install -y -q \
+               sudo timeout "$limit" apt-get "${apt_opts[@]}" install -y -q --download-only \
                  --no-install-recommends "${packages[@]}"; then
               ok=1
               break
             fi
-            echo "apt try $try failed or timed out, retrying"
-            sleep 10
+            echo "apt try $try failed or timed out"
+            if [ "$try" != 3 ]; then sleep 10; fi
           done
+          if [ "$ok" = 1 ]; then
+            sudo timeout 180 apt-get "${apt_opts[@]}" install -y -q --no-install-recommends \
+              "${packages[@]}" || ok=0
+          fi
           # Leave only whole .debs that can still be fetched, readable by the cache save.
           sudo rm -rf "$debs/partial" "$debs/lock"
           sudo apt-get "${apt_opts[@]}" autoclean -q || true
