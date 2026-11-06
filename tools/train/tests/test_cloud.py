@@ -8,6 +8,7 @@ import dataclasses
 import hashlib
 import importlib
 import json
+import math
 import os
 import sys
 from pathlib import Path, PurePosixPath
@@ -57,13 +58,17 @@ def bank(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 class FakeModal:
     """``cloud.Backend`` with a dict for a volume. ``runs`` are the answers of the GPU
-    calls in turn; a ``done`` one writes the results as the export would."""
+    calls in turn: ``done`` writes the results as the export would; ``lost`` breaks
+    before the container starts and ``lost_late`` after the training has saved;
+    ``failed_early`` fails before the first save (out of memory); ``no_gpu`` never
+    gets a container."""
 
     def __init__(self, runs: list[str] | None = None) -> None:
         self.volume: dict[str, bytes] = {}
         self.sent: list[list[str]] = []
+        self.removed: list[list[str]] = []
         self.calls: list[tuple[list[str], list[str], float, int]] = []
-        self.resumed: list[bool] = []  # per call: carried on from last.pt
+        self.resumed: list[bytes | None] = []  # per call: the last.pt carried on from
         self.runs = runs or ["done"]
         self.manifest_onnx = ""  # what the manifest names ("": <name>.onnx)
 
@@ -75,17 +80,31 @@ class FakeModal:
         for u in uploads:
             self.volume[u.remote.as_posix()] = u.local.read_bytes()
 
+    def remove(self, paths: Any) -> None:
+        self.removed.append([p.as_posix() for p in paths])
+        for p in paths:
+            self.volume.pop(p.as_posix(), None)
+
     def run(self, train: Any, export: Any, budget_s: float, timeout_s: int) -> dict[str, Any]:
         self.calls.append((list(train), list(export), budget_s, timeout_s))
         status = self.runs[len(self.calls) - 1]
         if status == "lost":
             raise ConnectionError("secret-looking text\nmore lines")
         targs = dict(a.split("=", 1) for a in train)
-        if "out" in targs:
-            last = f"{PurePosixPath(targs['out']).relative_to(cloud.REMOTE_DATA)}/last.pt"
-            # as train_detector.py: fresh=1 starts over, otherwise last.pt is carried on from
-            self.resumed.append(last in self.volume and targs.get("fresh") != "1")
-            self.volume[last] = b"state"
+        assert "fresh" not in targs  # fresh=1 is done on the volume, before the calls
+        if "out" in targs and status != "no_gpu":  # no_gpu: no container ever ran
+            run = PurePosixPath(targs["out"]).relative_to(cloud.REMOTE_DATA)
+            # as train_detector.py: carry on from last.pt if there is one, else start clean
+            self.resumed.append(self.volume.get(f"{run}/last.pt"))  # type: ignore[arg-type]
+            self.volume[f"{run}/settings.json"] = b"settings"
+            if status != "failed_early":
+                self.volume[f"{run}/last.pt"] = b"state"
+        if status == "lost_late":
+            raise ConnectionError("lost")
+        if status == "failed_early":
+            return {"status": "failed", "code": 1, "seconds": 600.0}
+        if status == "no_gpu":
+            return {"status": "no_gpu", "code": None}
         if status == "done":
             args = dict(a.split("=", 1) for a in export)
             run = PurePosixPath(args["train"]).relative_to(cloud.REMOTE_DATA)
@@ -299,7 +318,8 @@ def test_the_cost_is_gpu_price_times_hours_with_its_source() -> None:
     assert c.price == pytest.approx(2.50 + cloud.EXTRA_PER_HOUR)
     assert c.usd == pytest.approx(4 * c.price) and c.max_usd == pytest.approx(24 * c.price)
     text = "\n".join(c.lines(guessed=True))
-    assert "A100-80GB 2.50 $ + processor och minne (8 kärnor, 32 GiB) 0.63 $ = 3.13 $/h" in text
+    per_hour = "A100-80GB 2.50 $ + processor och minne (exakt 8 kärnor, 32 GiB) 0.63 $ = 3.13 $/h"
+    assert per_hour in text
     assert "3.13 $/h x 4.0 h = 13 $" in text and "Högst: 24 h x 3.13 $/h = 75 $" in text
     assert "modal.com/pricing, läst 2026-11-04" in text and "procent" not in text
     h100 = cloud.cost("H100", 2.0, 1.0)
@@ -453,7 +473,7 @@ def test_the_command_uploads_trains_until_done_and_brings_the_model_home(
     # call (with its start, stop and last commit) stays under Modal's 24 hours.
     assert budget == timeout_s - cloud.STOP_GRACE_S - cloud.FINISH_SLACK_S
     assert timeout_s + cloud.START_SLACK_S == cloud.CALL_LIMIT_S - cloud.STOP_MARGIN_S
-    assert fake.resumed == [False, True]
+    assert fake.resumed == [None, b"state"]
     run = bank / "train" / "yolox_s"
     assert (run / "best.pt").read_bytes() == b"best"
     assert json.loads((run / cloud.MARKER).read_text())["volume"] == cloud.VOLUME
@@ -502,21 +522,23 @@ def test_max_hours_is_a_ceiling_for_the_run_over_all_commands(bank: Path) -> Non
     assert len(fake.calls) == 3
 
 
-def test_every_second_is_counted_even_when_a_call_breaks(tmp_path: Path) -> None:
-    ticks = iter([0.0, 5000.0, 5000.0, 9000.0])
+def test_without_the_containers_own_seconds_the_worst_case_stays(tmp_path: Path) -> None:
     ledger = tmp_path / "hours.json"
+    budget = cloud.call_budget(24 * 3600)
+    worst = math.ceil(budget + cloud.STOP_GRACE_S + cloud.FINISH_SLACK_S) + cloud.START_SLACK_S
 
     class Slow(FakeModal):
         def run(self, *a: Any) -> dict[str, Any]:
             super().run(*a)
             return {"status": "stopped", "code": None, "seconds": 100.0}  # less than wall
 
-    with pytest.raises(ConnectionError):
-        cloud.run_until_done(FakeModal(["lost"]), [], [], 24, ledger, clock=lambda: next(ticks))
-    assert cloud.hours_used(ledger) * 3600 == pytest.approx(5000.0)
+    with pytest.raises(ConnectionError):  # the container's time is not known
+        cloud.run_until_done(FakeModal(["lost"]), [], [], 24, ledger, clock=lambda: 0.0)
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(worst)
+    ticks = iter([5000.0, 9000.0])
     with pytest.raises(BenchError, match="max_hours"):
-        cloud.run_until_done(Slow(["stopped"]), [], [], 2.5, ledger, clock=lambda: next(ticks))
-    assert cloud.hours_used(ledger) * 3600 == pytest.approx(9000.0)  # the client's 4000 s
+        cloud.run_until_done(Slow(["stopped"]), [], [], 25, ledger, clock=lambda: next(ticks))
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(worst + 4000.0)  # the wall's
 
 
 def test_a_call_budget_is_never_more_than_what_is_left() -> None:
@@ -592,27 +614,136 @@ def test_a_failed_run_says_so_and_fetches_nothing(bank: Path) -> None:
     assert not (bank / "models" / "detector").exists()
 
 
-def test_fresh_goes_to_the_first_call_only_and_resets_the_hours(bank: Path) -> None:
+def _old_run(bank: Path, runs: list[str]) -> tuple[FakeModal, Path, list[str], str]:
+    """A fake volume that holds an older run in this folder."""
     remote = cloud.places(bank, "yolox_s").remote_run.name
+    fake = FakeModal(runs)
+    for name in cloud.FRESH_FILES:
+        fake.volume[f"train/{remote}/{name}"] = b"old run"
     ledger = bank / cloud.LEDGER.format(run=remote)
+    return fake, ledger, [f"data={bank}", "model=yolox_s", "yes=1"], f"train/{remote}"
+
+
+def _again(fake: FakeModal, runs: list[str]) -> FakeModal:
+    """The same volume, for the next command."""
+    again = FakeModal(runs)
+    again.volume = fake.volume
+    return again
+
+
+def test_fresh_removes_the_old_run_first_and_resets_the_hours(bank: Path) -> None:
+    fake, ledger, args, run = _old_run(bank, ["stopped", "stopped", "done"])
     ledger.parent.mkdir(parents=True, exist_ok=True)
-    ledger.write_text('{"seconds": 36000}')  # 10 h of an earlier run in this folder
-    fake = FakeModal(runs=["stopped", "stopped", "done"])
-    fake.volume[f"train/{remote}/last.pt"] = b"old run"
-    args = [f"data={bank}", "model=yolox_s", "yes=1", "fresh=1", "max_hours=12"]
-    assert cloud.main(args, backend=lambda gpu: fake) == 0
-    assert ["fresh=1" in train for train, *_ in fake.calls] == [True, False, False]
-    assert fake.resumed == [False, True, True]  # starts over once, then carries on
+    ledger.write_text('{"seconds": 36000}')  # 10 h of the earlier run
+    assert cloud.main([*args, "fresh=1", "max_hours=12"], backend=lambda gpu: fake) == 0
+    assert fake.removed == [[f"{run}/{name}" for name in cloud.FRESH_FILES]]
+    assert fake.resumed == [None, b"state", b"state"]  # clean, then its own saves
     assert cloud.hours_used(ledger) == pytest.approx(3.0)  # counted from 0 again
+    assert not cloud.fresh_pending(ledger)
 
 
 def test_the_message_after_a_stop_says_to_leave_fresh_out(
     bank: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    fake = FakeModal(runs=["lost"])
+    fake = FakeModal(runs=["stopped", "lost"])
     args = [f"data={bank}", "model=yolox_s", "yes=1", "fresh=1"]
     assert cloud.main(args, backend=lambda gpu: fake) == 1
     assert "samma kommando utan fresh=1" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("first", ["lost", "lost_late", "no_gpu"])
+def test_after_fresh_a_broken_call_carries_on_the_new_run(
+    bank: Path, capsys: pytest.CaptureFixture[str], first: str
+) -> None:
+    fake, _ledger, args, _run = _old_run(bank, [first])
+    args.append("max_hours=48")  # the broken call's worst case stays counted
+    assert cloud.main([*args, "fresh=1"], backend=lambda gpu: fake) == 1
+    assert "samma kommando utan fresh=1" in capsys.readouterr().err
+    again = _again(fake, ["done"])
+    assert cloud.main(args, backend=lambda gpu: again) == 0  # as the message says
+    assert again.removed == []  # nothing the new run saved is thrown away
+    # the new run's own save after training began, or a clean start: never the old run
+    assert again.resumed == [b"state" if first == "lost_late" else None]
+
+
+def test_after_fresh_a_failure_before_the_first_save_starts_clean(bank: Path) -> None:
+    fake, _ledger, args, run = _old_run(bank, ["failed_early"])  # e.g. out of memory
+    assert cloud.main([*args, "fresh=1", "batch=4"], backend=lambda gpu: fake) == 1
+    assert f"{run}/last.pt" not in fake.volume
+    again = _again(fake, ["done"])
+    assert cloud.main([*args, "batch=4"], backend=lambda gpu: again) == 0
+    assert again.resumed == [None]  # not the old weights under the new settings
+
+
+def test_fresh_stopped_during_the_upload_starts_clean_next_time(
+    bank: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake, _ledger, args, run = _old_run(bank, [])
+
+    def interrupted(uploads: Any) -> None:
+        raise KeyboardInterrupt
+
+    fake.upload = interrupted  # type: ignore[method-assign]
+    assert cloud.main([*args, "fresh=1"], backend=lambda gpu: fake) == 130
+    assert "samma kommando utan fresh=1" in capsys.readouterr().err
+    assert fake.calls == [] and f"{run}/last.pt" not in fake.volume
+    again = _again(fake, ["done"])
+    assert cloud.main(args, backend=lambda gpu: again) == 0
+    assert again.removed == [] and again.resumed == [None]
+
+
+def test_a_fresh_whose_removal_broke_is_redone_by_the_next_command(
+    bank: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake, ledger, args, run = _old_run(bank, [])
+
+    def broken(paths: Any) -> None:
+        raise ConnectionError("lost")
+
+    fake.remove = broken  # type: ignore[method-assign]
+    assert cloud.main([*args, "fresh=1"], backend=lambda gpu: fake) == 1
+    err = capsys.readouterr().err
+    assert "samma kommando" in err and "utan fresh=1" not in err
+    assert cloud.fresh_pending(ledger) and fake.sent == [] and fake.calls == []
+    again = _again(fake, ["done"])
+    assert cloud.main(args, backend=lambda gpu: again) == 0  # without fresh=1
+    assert "tas bort" not in capsys.readouterr().err
+    assert again.removed == [[f"{run}/{name}" for name in cloud.FRESH_FILES]]
+    assert again.resumed == [None] and not cloud.fresh_pending(ledger)
+
+
+def test_a_call_that_never_got_a_gpu_says_so(
+    bank: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeModal(runs=["no_gpu"])
+    assert cloud.main([f"data={bank}", "model=yolox_s", "yes=1"], backend=lambda gpu: fake) == 1
+    err = capsys.readouterr().err
+    assert "inget grafikkort" in err and "inget tränades" in err
+    assert "kod" not in err
+
+
+def test_the_worst_case_is_counted_before_each_call(tmp_path: Path) -> None:
+    ledger = tmp_path / "hours.json"
+    seen: list[float] = []
+
+    class Peek(FakeModal):
+        def run(self, train: Any, export: Any, budget_s: float, timeout_s: int) -> Any:
+            seen.append(cloud.hours_used(ledger) * 3600)
+            raise SystemExit("power gone")  # nothing after this runs, as on a hard stop
+
+    with pytest.raises(SystemExit):
+        cloud.run_until_done(Peek(), [], [], 24, ledger, clock=lambda: 0.0)
+    budget = cloud.call_budget(24 * 3600)
+    worst = math.ceil(budget + cloud.STOP_GRACE_S + cloud.FINISH_SLACK_S) + cloud.START_SLACK_S
+    assert seen == [pytest.approx(worst)]
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(worst)
+
+
+def test_the_ledger_is_written_whole(tmp_path: Path) -> None:
+    ledger = tmp_path / "train" / "hours.json"
+    cloud.start_fresh(ledger)
+    assert json.loads(ledger.read_text()) == {"seconds": 0.0, "fresh_pending": True}
+    assert [p.name for p in ledger.parent.iterdir()] == [ledger.name]  # no temp file left
 
 
 @pytest.mark.parametrize("found", ["person_yolox_s.onnx", "person_yolox_s.json"])

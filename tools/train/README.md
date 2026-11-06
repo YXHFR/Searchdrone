@@ -215,7 +215,12 @@ Det här händer:
    före och startar om från senaste sparningen, tills den är klar. Det som tränats
    sedan senaste sparningen görs om, högst ungefär en kvart. Den ber inte Modal att
    försöka igen. Flyttar Modal ändå anropet till en annan dator slutar den vänta när
-   tiden är slut och stoppar anropet; varje sekund räknas mot `max_hours=`.
+   tiden är slut och stoppar anropet; varje sekund räknas mot `max_hours=`. Innan
+   varje anrop skrivs den längsta tid anropet kan ta upp i räkningen. Den rättas bara
+   när Modal har sagt hur länge anropet körde. Vet den inte det (Ctrl+C, tappat nät,
+   datorn stängs av, eller den slutade vänta) räknas den längsta tiden.
+   Får den inget grafikkort från Modal innan tiden är slut, säger den det: då
+   tränades inget, och du kan försöka igen senare eller med en annan `gpu=`.
 4. Den gör ONNX-filen och hämtar hem `best.pt`, `person_yolox_s.onnx` och
    `person_yolox_s.json` till samma ställen som `just train-detector` och
    `just export-detector` använder. Den skriver aldrig över något du gjort på din egen
@@ -227,14 +232,21 @@ Det här händer:
 
 Avbryter du med Ctrl+C, eller tappar nätet, stannar grafikkortet och du slutar betala.
 Den sparar inte just då. Kör samma kommando igen så fortsätter den från senaste
-sparningen (var tionde minut och efter varje epok). Hade du med `fresh=1` (börja om
-från noll), ta bort det när du kör igen: annars börjar den om igen. Går något fel hos Modal eller med
-nätet skriver den vad, på svenska, och vad du kan göra.
+sparningen (var tionde minut och efter varje epok).
+
+`fresh=1` (börja om från noll) tar först bort den gamla träningen i Modal (`last.pt`,
+`best.pt` och `settings.json`), innan något laddas upp. Sedan fortsätter varje anrop
+från den nya träningens egen sparning, eller börjar från noll om det inte finns någon.
+Kör därför utan `fresh=1` när du fortsätter, annars tas det som tränats bort igen.
+Stoppas kommandot innan den gamla träningen är borttagen, gör nästa körning det, med
+eller utan `fresh=1`. Kommandot säger vilket när det stannar. Går något fel hos Modal eller med nätet
+skriver den vad, på svenska, och vad du kan göra.
 
 **Vad det kostar**
 
 Priser från modal.com/pricing, lästa 2026-11-04. Utöver grafikkortet betalar du för
-processorn och minnet bredvid det (8 kärnor och 32 GiB), ungefär 0,63 $ i timmen:
+processorn och minnet bredvid det, ungefär 0,63 $ i timmen. Anropet får exakt 8 kärnor
+och 32 GiB, aldrig mer, så priset per timme håller:
 
 | `gpu=` | Grafikkortet | Allt per timme | Ungefär för `yolox_s`, 20 epoker |
 |---|---|---|---|
@@ -537,7 +549,9 @@ publishing the weights. `software/detector/MODEL_CARD.md` has the details.
   container (`IMAGE_FILES`, an allowlist). It never imports `modal`, so its tests run
   without Modal, the network or an account.
 - `gpu_call.py`: what one GPU call does: `train_detector.py`, then `export_onnx.py`,
-  stopped at the client's deadline. No Modal; tested with real child processes.
+  stopped with SIGINT when the call's own budget (`budget_s`, counted from when the
+  container started) is used up, and killed if it has not stopped after a grace. No
+  Modal; tested with real child processes.
 - `modal_app.py`: the Modal side: the container image (this folder's `uv.lock` with
   PyTorch for CUDA, plus the allowlisted files), the volume and the function that runs
   `gpu_call` on the GPU, without retries. Its tests use a fake `modal`. Modal is the `cloud` dependency group, installed only by
