@@ -10,6 +10,7 @@ import enum
 import importlib.machinery
 import importlib.util
 import json
+import pickle
 import sys
 import threading
 import time
@@ -49,15 +50,11 @@ class InputCancellation(BaseException):  # as modal.exception
     pass
 
 
-# The rest of modal.exception that matters here, by name: the ends of a call, and the
-# errors of the line, the account, Modal's servers and a closed client.
-ENDED = (
-    "FunctionTimeoutError",
-    "OutputExpiredError",
-    "InternalFailure",
-    "RemoteError",
-    "ExecutionError",
-)
+# The rest of modal.exception that matters here, by name: the ends of a call, the two
+# that count only with an ended mark, and the errors of the line, the account, Modal's
+# servers and a closed client.
+ENDED = ("FunctionTimeoutError", "OutputExpiredError", "RemoteError")
+WEAK = ("InternalFailure", "ExecutionError")
 CANNOT_SAY = (
     "ConnectionError",
     "ServiceError",
@@ -67,7 +64,7 @@ CANNOT_SAY = (
     "ClientClosed",
     "PermissionDeniedError",
 )
-MODAL_ERRORS = {name: type(name, (Exception,), {}) for name in ENDED + CANNOT_SAY}
+MODAL_ERRORS = {name: type(name, (Exception,), {}) for name in ENDED + WEAK + CANNOT_SAY}
 
 
 class InputStatus(enum.IntEnum):  # as modal.types
@@ -343,15 +340,16 @@ def test_what_is_known_of_an_earlier_call(monkeypatch: pytest.MonkeyPatch) -> No
     app, mod, _log = load(monkeypatch, local=True, at=str(SOURCE))
     backend = app.ModalBackend("H100")
     token = "t" * 32
-    start_up, unseen = app.START_UP_S, app.UNSEEN_S
+    start_up, unseen, no_mark = app.START_UP_S, app.UNSEEN_S, app.NO_MARK_S
     # Modal cannot say (no id yet, or it no longer knows the call): may still run
-    assert backend.call_state(token, "") == {"running": True, "seconds": start_up}
-    assert backend.call_state(token, "fc-gone") == {"running": True, "seconds": start_up}
+    assert backend.call_state(token, "") == {"running": True, "seconds": no_mark}
+    assert backend.call_state(token, "fc-gone") == {"running": True, "seconds": no_mark}
     mod.graphs["fc-1"] = [types.SimpleNamespace(status=InputStatus.PENDING)]
     assert backend.call_state(token, "fc-1")["running"]
-    # ended, no function ran: only the container's start
+    # ended with no mark: its start, and a first save that may have hung until stopped
     mod.graphs["fc-1"] = [types.SimpleNamespace(status=InputStatus.TERMINATED)]
-    assert backend.call_state(token, "fc-1") == {"running": False, "seconds": start_up}
+    assert backend.call_state(token, "fc-1") == {"running": False, "seconds": no_mark}
+    assert no_mark == start_up + app.COMMIT_SLOW_S + app.WATCH_S
     # ended without its last word: its mark's seconds and what it may have run since
     _mark(app, token, 1000.0, ended=False)
     assert backend.call_state(token, "fc-1") == {"running": False, "seconds": 1000.0 + unseen}
@@ -374,6 +372,7 @@ def test_what_is_known_of_an_earlier_call(monkeypatch: pytest.MonkeyPatch) -> No
         ("InputCancellation", True),
         ("CallFailedError", True),  # the function's own error
         *((name, True) for name in ENDED),
+        *((name, False) for name in WEAK),  # no second sign: may still run
         ("TimeoutError", False),  # no result yet
         ("NotFoundError", False),
         ("OSError", False),
@@ -414,8 +413,41 @@ def test_a_call_graph_modal_cannot_give_is_no_crash(
     assert not app.ModalBackend("H100").call_state("t" * 32, "fc-1")["running"]
 
 
+@pytest.mark.parametrize("name", WEAK)
+@pytest.mark.parametrize(("mark", "ended"), [(None, False), (False, False), (True, True)])
+def test_a_weak_end_counts_only_with_an_ended_mark(
+    monkeypatch: pytest.MonkeyPatch, name: str, mark: bool | None, ended: bool
+) -> None:
+    """Modal raises these for its own trouble too, with a call that may run on: they
+    count as an end only when the call's mark says ``ended`` (or its graph is over)."""
+    app, mod, _log = load(monkeypatch, local=True, at=str(SOURCE))
+    if mark is not None:
+        _mark(app, "t" * 32, 100.0, ended=mark)
+    mod.graphs["fc-1"] = [types.SimpleNamespace(status=InputStatus.PENDING)]
+    mod.results["fc-1"] = MODAL_ERRORS[name]("x")
+    assert app.ModalBackend("H100").call_state("t" * 32, "fc-1")["running"] is not ended
+    mod.graphs["fc-1"] = [types.SimpleNamespace(status=InputStatus.TERMINATED)]
+    assert not app.ModalBackend("H100").call_state("t" * 32, "fc-1")["running"]
+
+
+def test_the_ended_errors_are_in_the_installed_modal() -> None:
+    """``ENDED_ERRORS`` and ``WEAK_ENDED_ERRORS`` were checked against modal 1.6.1: a new
+    modal fails here, so they are checked again. Needs the ``cloud`` group (not in CI)."""
+    with pytest.MonkeyPatch.context() as mp:
+        app, _mod, _log = load(mp, local=True, at=str(SOURCE))
+        names = (*app.ENDED_ERRORS, *app.WEAK_ENDED_ERRORS)
+    real = pytest.importorskip("modal")
+    import modal.exception
+    from modal.types import InputStatus as RealStatus
+
+    assert real.__version__ == "1.6.1", "check ENDED_ERRORS against this modal, then here"
+    for name in names:
+        assert issubclass(getattr(modal.exception, name), BaseException), name
+    assert RealStatus.PENDING is not None
+
+
 def test_the_functions_own_error_reaches_the_client_as_one_kind(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     app, _mod, _log = load(monkeypatch, local=False, at="/root/modal_app.py")
     monkeypatch.setattr(app, "REMOTE_DATA", PurePosixPath(tmp_path))
@@ -425,8 +457,13 @@ def test_the_functions_own_error_reaches_the_client_as_one_kind(
         raise MemoryError("out of memory")
 
     monkeypatch.setattr(app, "call", call)
-    with pytest.raises(app.CallFailedError, match="MemoryError: out of memory"):
+    with pytest.raises(app.CallFailedError, match="MemoryError: out of memory") as err:
         app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)
+    assert err.value.kind == "MemoryError"
+    back = pickle.loads(pickle.dumps(err.value))  # noqa: S301 - our own bytes, as Modal sends it
+    assert (back.kind, back.text, str(back)) == ("MemoryError", "out of memory", str(err.value))
+    logged = capsys.readouterr().err  # the whole error, in the call's log
+    assert "Traceback" in logged and "MemoryError: out of memory" in logged
 
 
 def test_the_container_keeps_its_mark_with_its_seconds(
@@ -471,8 +508,16 @@ def test_a_container_moved_after_a_preemption_counts_the_earlier_attempt(
     mark = tmp_path / str(app.CALLS) / f"{'t' * 32}.json"
     mark.parent.mkdir(parents=True)
     mark.write_text(json.dumps({"seconds": 1000.0, "ended": False}))  # the first attempt's
-    monkeypatch.setattr(app, "call", lambda *a: {"status": "done", "code": 0})
+    budgets: list[float] = []
+    monkeypatch.setattr(app, "call", lambda *a: budgets.append(a[2]) or {"status": "done"})
     res = app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)
+    assert budgets == [0.0]  # the earlier attempt used more than the budget
+    budget = 1000.0 + app.UNSEEN_S + 500.0
+    app.train_on_gpu.fn(["a=1"], ["b=2"], budget, "u" * 32)
+    assert budgets == [0.0, budget]  # a call with no earlier attempt gets it all
+    (mark.parent / f"{'v' * 32}.json").write_text(json.dumps({"seconds": 1000.0, "ended": True}))
+    app.train_on_gpu.fn(["a=1"], ["b=2"], budget, "v" * 32)
+    assert budgets[-1] == pytest.approx(500.0 + app.UNSEEN_S - app.START_UP_S)
     before = 1000.0 + app.UNSEEN_S  # its mark and what it may have run after it
     assert before <= res["seconds"] < before + 5
     last = json.loads(mark.read_text())

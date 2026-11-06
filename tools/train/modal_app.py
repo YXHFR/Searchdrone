@@ -39,6 +39,7 @@ import os
 import threading
 import time
 import tomllib
+import traceback
 from collections.abc import Callable, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -77,6 +78,9 @@ WATCH_S = 10  # how often the container looks at the save under way
 SAVE_LIMIT_S = 2 * max(COMMIT_EVERY_S, COMMIT_SLOW_S) + COMMIT_SLOW_S + WATCH_S
 # What a call may have run beyond a mark that is not ``ended``: its start-up and that.
 UNSEEN_S = START_UP_S + SAVE_LIMIT_S
+# What a call with no mark may have run: its start-up and a first save that hung until
+# the watchdog stopped it (or none ran: the client's wait still counts that).
+NO_MARK_S = START_UP_S + COMMIT_SLOW_S + WATCH_S
 # The client waits for a call in steps of this many seconds (see ``ModalBackend.run``).
 WAIT_STEP_S = 60.0
 
@@ -130,12 +134,20 @@ def train_on_gpu(
     try:
         return _train(train, export, budget_s, token)
     except Exception as exc:  # one known kind, so the client can tell it has ended
-        raise CallFailedError(f"{type(exc).__name__}: {exc}") from None
+        traceback.print_exc()  # the whole error, in the call's log on modal.com
+        raise CallFailedError(type(exc).__name__, str(exc)) from None
 
 
 class CallFailedError(Exception):
-    """``train_on_gpu`` failed (its own error, as text). Modal hands it to the client as
-    the call's result: the call has ended."""
+    """``train_on_gpu`` failed: ``kind`` is its own error's type, ``text`` that error's
+    text. Modal hands it to the client as the call's result: the call has ended."""
+
+    def __init__(self, kind: str, text: str = "") -> None:
+        super().__init__(kind, text)  # both in args, so it comes back whole from Modal
+        self.kind, self.text = kind, text
+
+    def __str__(self) -> str:
+        return f"{self.kind}: {self.text}"
 
 
 def _train(train: list[str], export: list[str], budget_s: float, token: str) -> dict[str, Any]:
@@ -160,42 +172,51 @@ def _train(train: list[str], export: list[str], budget_s: float, token: str) -> 
     # keeper's last save, if it failed; final: the last mark is saved
     state: dict[str, Any] = {"busy": None, "failed": "", "final": False}
 
-    def save(ended: bool) -> None:
-        """Write the mark and commit the volume. After the last mark nothing is written
-        again, and once the training is over only the last mark is."""
-        with lock:
-            if state["final"] or (stop.is_set() and not ended):
-                return
-            state["busy"] = time.monotonic()
-            try:
-                mark.parent.mkdir(parents=True, exist_ok=True)
-                tmp = mark.with_name(f".{mark.name}.tmp")
-                body = {"seconds": round(seconds(), 1), "ended": ended}
-                tmp.write_text(json.dumps(body) + "\n", encoding="utf-8")
-                tmp.replace(mark)
-                volume.commit()
-                state["final"] = ended
-            finally:
-                state["busy"] = None
+    def write(ended: bool) -> None:
+        """Write the mark and commit the volume, with ``lock`` held. After the last mark
+        nothing is written again, and once the training is over only the last mark is."""
+        if state["final"] or (stop.is_set() and not ended):
+            return
+        state["busy"] = time.monotonic()
+        try:
+            mark.parent.mkdir(parents=True, exist_ok=True)
+            tmp = mark.with_name(f".{mark.name}.tmp")
+            body = {"seconds": round(seconds(), 1), "ended": ended}
+            tmp.write_text(json.dumps(body) + "\n", encoding="utf-8")
+            tmp.replace(mark)
+            volume.commit()
+            state["final"] = ended
+        finally:
+            state["busy"] = None
 
-    def keep_saving(next_at: float) -> None:
-        while True:
-            next_at += COMMIT_EVERY_S
-            if stop.wait(max(0.0, next_at - time.monotonic())):
-                return
+    def save(ended: bool) -> None:
+        with lock:
+            write(ended)
+
+    def keeper_save() -> bool:
+        """One of the keeper's saves; ``False``: the container gives up. Whether it failed
+        is set with ``lock`` still held, so the last save always sees it."""
+        with lock:
             try:
-                save(ended=False)
-                state["failed"] = ""
+                write(ended=False)
             except Exception as exc:
-                failed = state["failed"]
+                failed, state["failed"] = state["failed"], type(exc).__name__
                 if failed:  # the second in a row: nothing is saved, last.pt neither
                     give_up(
                         f"volymen gick inte att spara två gånger i rad ({failed}, "
                         f"{type(exc).__name__})"
                     )
-                    return
-                state["failed"] = type(exc).__name__
+                    return False
                 print(f"volymen sparades inte nu ({state['failed']}); försöker igen", flush=True)
+                return True
+            state["failed"] = ""
+            return True
+
+    def keep_saving(next_at: float) -> None:
+        while True:
+            next_at += COMMIT_EVERY_S
+            if stop.wait(max(0.0, next_at - time.monotonic())) or not keeper_save():
+                return
 
     def watch() -> None:
         # Apart from the keeper, so that a save that hangs is stopped too.
@@ -213,7 +234,9 @@ def _train(train: list[str], export: list[str], budget_s: float, token: str) -> 
         keeper = threading.Thread(target=keep_saving, args=(first,), daemon=True)
         keeper.start()
         try:
-            result = call(train, export, budget_s, IN_CONTAINER / "tools" / "train")
+            # an earlier attempt's time is already used (``before``): only the rest is left
+            left_s = max(0.0, budget_s - before)
+            result = call(train, export, left_s, IN_CONTAINER / "tools" / "train")
         finally:
             stop.set()
             try:  # waits for a save under way (the watchdog bounds that)
@@ -234,27 +257,27 @@ def give_up(why: str) -> None:
     os._exit(3)
 
 
-def _ended_errors() -> tuple[type[BaseException], ...]:
-    """The errors ``FunctionCall.get`` raises for a call that is over: cancelled, out of
-    time, its output gone, the container failed or stopped (``give_up``), or the
-    function's own error (``CallFailedError``). Any other error (the line, the account,
-    Modal's servers, a closed client) says nothing about the call."""
-    e = modal.exception
-    return (
-        e.InputCancellation,
-        e.FunctionTimeoutError,
-        e.OutputExpiredError,
-        e.InternalFailure,
-        e.RemoteError,
-        e.ExecutionError,
-        CallFailedError,
-    )
+# The errors in ``modal.exception`` that ``FunctionCall.get`` raises for a call that is
+# over: cancelled, out of time, its output gone, or the container stopped. Checked
+# against modal 1.6.1 (``_process_result`` and ``poll_function``); check them again, and
+# ``test_the_ended_errors_are_in_the_installed_modal``, when modal is upgraded. Any
+# other error (the line, the account, Modal's servers, a closed client) says nothing.
+ENDED_ERRORS = ("InputCancellation", "FunctionTimeoutError", "OutputExpiredError", "RemoteError")
+# These two Modal also raises for its own trouble with a call that may run on, so they
+# count only with a second sign that it is over: the call graph, or an ``ended`` mark.
+WEAK_ENDED_ERRORS = ("InternalFailure", "ExecutionError")
 
 
-def _has_ended(call_id: str) -> bool:
+def _errors(names: Sequence[str]) -> tuple[type[BaseException], ...]:
+    return tuple(getattr(modal.exception, name) for name in names)
+
+
+def _has_ended(call_id: str, mark_ended: bool = False) -> bool:
     """Whether Modal says the call is over (``False``: running, or it cannot say). Its
     call graph is best effort (a call just cancelled may still show as pending), so ask
-    for the result too, without waiting: a result, or one of ``_ended_errors``."""
+    for the result too, without waiting: a result, the function's own error
+    (``CallFailedError``) or one of ``ENDED_ERRORS``; one of ``WEAK_ENDED_ERRORS`` only
+    when the call's mark says ``ended`` too (``mark_ended``)."""
     from modal.types import InputStatus
 
     handle = modal.FunctionCall.from_id(call_id)
@@ -266,8 +289,10 @@ def _has_ended(call_id: str) -> bool:
         return True
     try:
         handle.get(timeout=0)
-    except _ended_errors():
+    except (CallFailedError, *_errors(ENDED_ERRORS)):
         return True
+    except _errors(WEAK_ENDED_ERRORS):
+        return mark_ended  # the graph did not say it is over (above): the mark must
     except BaseException as exc:
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
@@ -338,13 +363,13 @@ class ModalBackend:
     def call_state(self, token: str, call_id: str) -> dict[str, Any]:
         """``running`` unless Modal says the call has ended (also when it cannot say, or
         has no id); ``seconds`` from the mark: an ``ended`` one plus its start-up,
-        another plus ``UNSEEN_S``, no mark ``START_UP_S`` (no function ran). A mark that
-        says ``ended`` is not trusted alone: after a preemption the earlier container
-        may have written it while Modal runs the call again."""
-        ended = bool(call_id) and _has_ended(call_id)
+        another plus ``UNSEEN_S``, no mark ``NO_MARK_S``. A mark that says ``ended`` is
+        not trusted alone: after a preemption the earlier container may have written it
+        while Modal runs the call again."""
         mark = self._mark(token)
+        ended = bool(call_id) and _has_ended(call_id, bool(mark and mark.get("ended")))
         if mark is None:
-            seconds = float(START_UP_S)
+            seconds = float(NO_MARK_S)
         elif mark.get("ended"):
             seconds = float(mark["seconds"]) + START_UP_S
         else:
