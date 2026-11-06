@@ -137,18 +137,20 @@ def test_inside_since_it_came_braking_may_take_it_its_stop_deeper() -> None:
     assert keepout_never_entered([_cyl()], turned)
 
 
-def _turning_in(brake_after_s: float | None) -> list[Sample]:
+def _turning_in(brake_after_s: float | None, decel_ms2: float = 2.7) -> list[Sample]:
     """A cylinder comes 10 m around a drone at a survey corner: it flies north-east at
     3 m/s, 1 m/s of it towards the middle, and turns east (2.6 m/s² east), as in SK03 seed
     2 (CI run 42166655395: 1.35 m/s deeper when the cylinder came, 2.86 m/s 0.65 s later).
-    With ``brake_after_s`` it then brakes at 2.7 m/s² to a stop."""
+    With ``brake_after_s`` it then brakes at ``decel_ms2`` to a stop. Flown in 0.05 s steps
+    and sampled at 5 Hz, as the rig streams."""
     e, n, ve, vn = 80.0, 0.0, 1.0, 2.8
     out: list[tuple[float, float, float, float]] = []
-    dt_s = 0.1
-    for i in range(41):
+    dt_s = 0.05
+    for i in range(121):
         t = i * dt_s
-        out.append((t, e, n, math.hypot(ve, vn)))
-        if brake_after_s is None or t < brake_after_s:
+        if i % 4 == 0:
+            out.append((round(t, 2), e, n, math.hypot(ve, vn)))
+        if brake_after_s is None or t < brake_after_s - 1e-9:
             ve += 2.6 * dt_s
             vn = max(0.0, vn - 4.3 * dt_s)  # the turn takes the northward speed
             speed = math.hypot(ve, vn)
@@ -157,10 +159,16 @@ def _turning_in(brake_after_s: float | None) -> list[Sample]:
         else:
             speed = math.hypot(ve, vn)
             if speed > 0.0:
-                slower = max(0.0, speed - 2.7 * dt_s) / speed
+                slower = max(0.0, speed - decel_ms2 * dt_s) / speed
                 ve, vn = ve * slower, vn * slower
         e, n = e + ve * dt_s, n + vn * dt_s
     return _flown(out)
+
+
+def _bunched(track: list[Sample]) -> list[Sample]:
+    """The same track as the rig may receive it: every second sample a few ms after the
+    one before (``scenario_rig._observe`` pumps under the harness lock)."""
+    return [replace(s, t=track[i - 1].t + 0.004) if i % 2 else s for i, s in enumerate(track)]
 
 
 def test_a_cylinder_that_comes_in_a_turn_towards_it_allows_the_turns_speed() -> None:
@@ -170,8 +178,40 @@ def test_a_cylinder_that_comes_in_a_turn_towards_it_allows_the_turns_speed() -> 
     still caught."""
     braked = _turning_in(brake_after_s=0.65)
     assert keepout_never_entered([_cyl()], braked) == []
+    assert keepout_never_entered([_cyl()], _bunched(braked)) == []
     on = _turning_in(brake_after_s=None)
     broken = keepout_never_entered([_cyl()], on)
+    assert broken and broken[0].startswith("E8") and "djupare" in broken[0]
+
+
+@pytest.mark.parametrize(
+    ("brake_after_s", "decel_ms2"),
+    [(1.15, 2.7), (1.65, 2.7), (0.65, 1.35), (None, 2.7)],
+    ids=["half-a-second-late", "a-second-late", "half-the-braking", "no-braking"],
+)
+@pytest.mark.parametrize("bunch", [False, True], ids=["even", "bunched"])
+def test_a_turn_towards_a_cylinder_braking_late_or_weakly_breaks_e8(
+    brake_after_s: float | None, decel_ms2: float, bunch: bool
+) -> None:
+    """The corner's allowance is the stop from the turn's speed, braking on time: braking
+    later or weaker goes deeper and is caught, with samples evenly spaced or bunched."""
+    track = _turning_in(brake_after_s, decel_ms2)
+    broken = keepout_never_entered([_cyl()], _bunched(track) if bunch else track)
+    assert broken and broken[0].startswith("E8") and "djupare" in broken[0]
+
+
+@pytest.mark.parametrize("bunch", [False, True], ids=["even", "bunched"])
+def test_bunched_samples_do_not_make_a_sideways_drone_fast_inwards(bunch: bool) -> None:
+    """10 m inside, flying sideways at 5 m/s when the cylinder comes, then 2 m/s straight
+    in for 2.4 s without braking (14.8 m deep): caught however the samples bunch, since
+    0.4 m between two samples a few ms apart is no 5 m/s inwards."""
+    pts: list[tuple[float, float, float, float]] = []
+    for i in range(3):  # sideways (north), 5 Hz
+        pts.append((i * 0.2, 80.0, i * 1.0, 5.0))
+    for i in range(1, 13):  # then 2 m/s east, deeper, from 0.4 s on
+        pts.append((0.4 + i * 0.2, 80.0 + i * 0.4, 2.0, 2.0))
+    track = _flown(pts)
+    broken = keepout_never_entered([_cyl()], _bunched(track) if bunch else track)
     assert broken and broken[0].startswith("E8") and "djupare" in broken[0]
 
 

@@ -32,7 +32,6 @@ flight. Nothing here touches the flight stack.
 from __future__ import annotations
 
 import datetime as dt
-import itertools
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -262,23 +261,39 @@ def _closing_ms(rows: Sequence[tuple[float, float, Sample]]) -> float:
     return v0
 
 
-def _reaction_closing_ms(rows: Sequence[tuple[float, float, Sample]]) -> float:
-    """The fastest the drone headed deeper from the first row until its braking is in
-    full force (``STOP_REACT_S``, then the jerk-limited ramp to ``STOP_DECEL_MS2``), and
-    never below :func:`_closing_ms`. A cylinder that comes while the drone turns towards it
-    (a survey corner) finds it gaining speed inwards: the flight controller finishes the
-    turn it was flying until the new order takes, so the speed at the first row alone is
-    too low. Between two samples the speed is at most the faster sample's ground speed (a
-    wobble of the position is no speed)."""
-    t0 = rows[0][0]
-    window = STOP_REACT_S + STOP_DECEL_MS2 / STOP_JERK_MS3
+def _reaction_closing_ms(k: SeenKeepout, rows: Sequence[tuple[float, float, Sample]]) -> float:
+    """The fastest the drone headed deeper from when the cylinder came (``k.arrival``)
+    until its braking is in full force (``STOP_REACT_S``, then the jerk-limited ramp to
+    ``STOP_DECEL_MS2``), and never below :func:`_closing_ms`. A cylinder that comes while
+    the drone turns towards it (a survey corner) finds it gaining speed inwards: the
+    flight controller finishes the turn it was flying until the new order takes, so the
+    speed at the first row alone is too low.
+
+    Each speed is a ground speed times the share of a movement of at least ``MOVED_M``
+    that heads in, as in :func:`_closing_ms`, and never a step divided by the time between
+    two samples: the samples' times are when the rig received them, and samples that come
+    in a bunch, a few ms apart, would make centimetres look like a fast drone. Of the two
+    ground speeds at the ends of a movement the lower counts: the drone cannot gain
+    speed inwards faster than it flies.
+
+    Speed gained inwards after the cylinder came (a new wrong turn) counts as well, but
+    only for a movement that starts and ends within this window of ``STOP_REACT_S +
+    STOP_DECEL_MS2 / STOP_JERK_MS3`` (1 s) and never above the ground speed: the
+    allowance is at most the stop from the fastest the drone flew in that second, and a
+    turn inwards after it is caught by the depth as before."""
+    window_end = k.arrival + STOP_REACT_S + STOP_DECEL_MS2 / STOP_JERK_MS3
     fastest = _closing_ms(rows)
-    for (ta, da, sa), (tb, db, sb) in itertools.pairwise(rows):
-        if tb > t0 + window:
+    for i, (ta, da, sa) in enumerate(rows):
+        if ta > window_end:
             break
-        if tb > ta:
-            inwards = (da - db) / (tb - ta)
-            fastest = max(fastest, min(inwards, max(sa.groundspeed_ms, sb.groundspeed_ms)))
+        for tb, db, sb in rows[i + 1 :]:
+            if tb > window_end:
+                break
+            moved = distance_m(sa.lat, sa.lon, sb.lat, sb.lon)
+            if moved >= MOVED_M:
+                share = min(1.0, max(0.0, (da - db) / moved))
+                fastest = max(fastest, min(sa.groundspeed_ms, sb.groundspeed_ms) * share)
+                break
     return fastest
 
 
@@ -311,7 +326,7 @@ def _entered(
     # the id came, as for a cylinder ahead).
     came_in = -rows[0][1] if rows[0][1] < 0.0 else None
     came_brake_m = (
-        stop_distance_m(_reaction_closing_ms(rows))
+        stop_distance_m(_reaction_closing_ms(k, rows))
         if came_in is not None and rows[0][0] - k.arrival <= ARRIVAL_S
         else 0.0
     )
