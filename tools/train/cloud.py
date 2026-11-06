@@ -118,7 +118,7 @@ CALL_LIMIT_S = 24 * 3600
 STOP_MARGIN_S = 30 * 60
 DEFAULT_MAX_HOURS = 24.0
 # Keys of the cloud command itself; all other keys are train-detector's.
-OWN_KEYS = ("gpu", "yes", "hours", "max_hours", "name")
+OWN_KEYS = ("gpu", "yes", "hours", "max_hours", "name", "close_call")
 # train-detector keys that make no sense here: the GPU is the device, the data folder is
 # the volume, and the simulator's pictures stay on this computer.
 LOCAL_ONLY_KEYS = ("device", "simfarm", "simfarm_epochs")
@@ -808,7 +808,7 @@ def settle_calls(
     ledger: Path,
     only: str = "",
     wall: Callable[[], float] = time.time,
-) -> list[tuple[float, bool]]:
+) -> list[tuple[float, bool, str]]:
     """Ask Modal about the calls in ``LEDGER``'s ``open`` (or only ``only``): one Modal
     says has ended gets its own time (from its mark) in place of its worst case, and
     its mark is removed. Never less than this side waited for it (up to its worst case).
@@ -820,21 +820,22 @@ def settle_calls(
     no id (stopped while it was being sent) is waited for ``APP_GONE_S``: Modal stops
     an ephemeral app soon after the command that started it is gone, and the call with
     it. Returns, for the calls that may still run, when they will surely have ended
-    (wall clock) and whether Modal knows them by id."""
-    running: list[tuple[float, bool]] = []
+    (wall clock), whether Modal knows them by id, and their token. A call Modal never
+    says has ended is closed only by the owner (``close_lost_call``)."""
+    running: list[tuple[float, bool, str]] = []
     for token, call in _read_ledger(ledger)["open"].items():
         if only and token != only:
             continue
         limit = call["worst"] if call["call"] else APP_GONE_S
         state = backend.call_state(token, call["call"])
         if state["running"] and wall() - call["at"] < limit:
-            running.append((call["at"] + limit, bool(call["call"])))
+            running.append((call["at"] + limit, bool(call["call"]), token))
             continue
         if state["running"] and call["call"]:
             backend.cancel(call["call"])
             state = backend.call_state(token, call["call"])
             if state["running"]:  # not yet known to have ended: nothing may start
-                running.append((call["at"] + limit, True))
+                running.append((call["at"] + limit, True, token))
                 continue
         seconds = max(float(state["seconds"]), min(call["waited"], call["worst"]))
         _close_call(ledger, token, seconds)
@@ -852,16 +853,19 @@ def check_no_old_call(
     running = settle_calls(backend, ledger, wall=wall)
     if not running:
         return
-    if any(known and at <= wall() for at, known in running):
+    overdue = [token for at, known, token in running if known and at <= wall()]
+    if overdue:
         raise BenchError(
             "Ett tidigare anrop i Modal för den här körningen har stoppats, men Modal säger "
             "ännu inte att det har slutat. Stoppa searchdrone-train på modal.com/apps om "
             f"den finns kvar där och kör sedan {again}: anropet räknas med sina egna "
-            "timmar så snart Modal säger att det har slutat.",
+            "timmar så snart Modal säger att det har slutat. Visar modal.com/apps att "
+            f"inget kör men Modal svarar ändå inte, kör {again} med "
+            f"close_call={overdue[0]}: då räknas anropet med sin längsta tid.",
             1,
         )
-    until = time.strftime("%H:%M", time.localtime(max(at for at, _ in running)))
-    if any(known for _, known in running):
+    until = time.strftime("%H:%M", time.localtime(max(at for at, _, _ in running)))
+    if any(known for _, known, _ in running):
         raise BenchError(
             "Ett tidigare anrop i Modal för den här körningen kan fortfarande vara igång "
             f"(senast till klockan {until}). Vänta tills det har slutat, eller stoppa "
@@ -875,6 +879,18 @@ def check_no_old_call(
         f"{again}.",
         1,
     )
+
+
+def close_lost_call(backend: Backend, ledger: Path, token: str) -> None:
+    """``close_call=<token>``: the owner has seen on modal.com/apps that the call no
+    longer runs, but Modal does not say so. It is taken out of ``open`` with its worst
+    case, so the hours already counted stay; nothing is ever counted less."""
+    call = _read_ledger(ledger)["open"].get(token)
+    if call is None:
+        raise BenchError(f"close_call={token}: det finns inget öppet anrop med det id:t.", 2)
+    _close_call(ledger, token, float(call["worst"]))
+    backend.forget(token)
+    say(f"Anropet {token} räknas med sin längsta tid, {call['worst'] / 3600:.1f} h.")
 
 
 def remove_old_run(backend: Backend, where: Places, ledger: Path) -> None:
@@ -1186,6 +1202,8 @@ def main(
         started = time.monotonic()
         try:
             client = backend(gpu)
+            if args.get("close_call"):
+                close_lost_call(client, ledger, args["close_call"])
             check_no_old_call(client, ledger, again_text(fresh, ledger))
             if fresh_pending(ledger):
                 remove_old_run(client, where, ledger)

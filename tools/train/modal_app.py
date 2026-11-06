@@ -65,13 +65,18 @@ CALLS = PurePosixPath(".calls")  # in the volume: <token>.json per call whose co
 # that Modal moves before its first mark is saved loses this much from the count (the
 # client's own wait for the call, see ``cloud.settle_calls``, still counts it then).
 START_UP_S = 5 * 60
-# A container that has not saved its mark for this long stops itself: one save that
-# fails is tried again a commit later; when that fails too, or a save hangs, it stops.
-SAVE_LIMIT_S = 2 * COMMIT_EVERY_S + 60
-WATCH_S = 10  # how often the container looks at the time since its last save
-# What a call may have run beyond a mark that is not ``ended``: its start-up and the time
-# since that mark was written until the container stops itself.
-UNSEEN_S = START_UP_S + SAVE_LIMIT_S + WATCH_S
+# How long one save (the mark and a commit of the volume, with what the training wrote
+# since the last one: checkpoints, several GB of tile cache) may take. One that takes
+# longer is taken to hang, and the container stops itself. A save that fails is tried
+# again at the next commit; when that fails too, the container stops itself.
+COMMIT_SLOW_S = 10 * 60
+WATCH_S = 10  # how often the container looks at the save under way
+# How long after the last mark saved was written the container stops itself at the
+# latest: that save's commit, then the failed one and the one tried again, each started
+# a commit's interval (or that save's time) after the one before.
+SAVE_LIMIT_S = 2 * max(COMMIT_EVERY_S, COMMIT_SLOW_S) + COMMIT_SLOW_S + WATCH_S
+# What a call may have run beyond a mark that is not ``ended``: its start-up and that.
+UNSEEN_S = START_UP_S + SAVE_LIMIT_S
 # The client waits for a call in steps of this many seconds (see ``ModalBackend.run``).
 WAIT_STEP_S = 60.0
 
@@ -122,6 +127,18 @@ image = build_image(HERE)
 def train_on_gpu(
     train: list[str], export: list[str], budget_s: float, token: str
 ) -> dict[str, Any]:
+    try:
+        return _train(train, export, budget_s, token)
+    except Exception as exc:  # one known kind, so the client can tell it has ended
+        raise CallFailedError(f"{type(exc).__name__}: {exc}") from None
+
+
+class CallFailedError(Exception):
+    """``train_on_gpu`` failed (its own error, as text). Modal hands it to the client as
+    the call's result: the call has ended."""
+
+
+def _train(train: list[str], export: list[str], budget_s: float, token: str) -> dict[str, Any]:
     started = time.monotonic()
     mark = Path(REMOTE_DATA / CALLS / f"{token}.json")
     # A mark already there is an earlier attempt of this call that Modal moved (a
@@ -139,56 +156,73 @@ def train_on_gpu(
     lock = threading.Lock()  # one writer of the mark at a time
     stop = threading.Event()  # the training is over: the keeper saves no more
     watched = threading.Event()  # the last mark is saved: the watchdog may go
-    state: dict[str, Any] = {"saved": started, "error": "", "final": False}
+    # busy: when the save under way began (None: none); failed: the error of the
+    # keeper's last save, if it failed; final: the last mark is saved
+    state: dict[str, Any] = {"busy": None, "failed": "", "final": False}
 
     def save(ended: bool) -> None:
-        """Write the mark and commit the volume; ``saved`` is when that mark was written,
-        once the commit is through. After the last mark nothing is written again."""
+        """Write the mark and commit the volume. After the last mark nothing is written
+        again, and once the training is over only the last mark is."""
         with lock:
-            if state["final"]:
+            if state["final"] or (stop.is_set() and not ended):
                 return
-            state["final"] = ended
-            at = time.monotonic()
-            mark.parent.mkdir(parents=True, exist_ok=True)
-            tmp = mark.with_name(f".{mark.name}.tmp")
-            body = {"seconds": round(seconds(), 1), "ended": ended}
-            tmp.write_text(json.dumps(body) + "\n", encoding="utf-8")
-            tmp.replace(mark)
-            volume.commit()
-            state["saved"] = at
+            state["busy"] = time.monotonic()
+            try:
+                mark.parent.mkdir(parents=True, exist_ok=True)
+                tmp = mark.with_name(f".{mark.name}.tmp")
+                body = {"seconds": round(seconds(), 1), "ended": ended}
+                tmp.write_text(json.dumps(body) + "\n", encoding="utf-8")
+                tmp.replace(mark)
+                volume.commit()
+                state["final"] = ended
+            finally:
+                state["busy"] = None
 
-    def keep_saving() -> None:
-        next_at = time.monotonic()
+    def keep_saving(next_at: float) -> None:
         while True:
             next_at += COMMIT_EVERY_S
             if stop.wait(max(0.0, next_at - time.monotonic())):
                 return
             try:
                 save(ended=False)
+                state["failed"] = ""
             except Exception as exc:
-                state["error"] = type(exc).__name__
-                print(f"volymen sparades inte nu ({state['error']}); försöker igen", flush=True)
+                failed = state["failed"]
+                if failed:  # the second in a row: nothing is saved, last.pt neither
+                    give_up(
+                        f"volymen gick inte att spara två gånger i rad ({failed}, "
+                        f"{type(exc).__name__})"
+                    )
+                    return
+                state["failed"] = type(exc).__name__
+                print(f"volymen sparades inte nu ({state['failed']}); försöker igen", flush=True)
 
     def watch() -> None:
-        # Apart from the keeper, so that a save that hangs is stopped too. Nothing is
-        # saved then, last.pt neither: training on would only cost.
+        # Apart from the keeper, so that a save that hangs is stopped too.
         while not watched.wait(WATCH_S):
-            if time.monotonic() - state["saved"] > SAVE_LIMIT_S:
-                why = state["error"] or "sparningen blev inte klar"
-                give_up(f"volymen har inte gått att spara på {SAVE_LIMIT_S // 60} minuter ({why})")
+            busy = state["busy"]
+            if busy is not None and time.monotonic() - busy > COMMIT_SLOW_S:
+                give_up(f"sparningen på volymen blev inte klar på {COMMIT_SLOW_S // 60} minuter")
                 return
 
     watchdog = threading.Thread(target=watch, daemon=True)
     watchdog.start()
     try:
+        first = time.monotonic()  # the keeper's commits are counted from this one
         save(ended=False)
-        keeper = threading.Thread(target=keep_saving, daemon=True)
+        keeper = threading.Thread(target=keep_saving, args=(first,), daemon=True)
         keeper.start()
         try:
             result = call(train, export, budget_s, IN_CONTAINER / "tools" / "train")
         finally:
             stop.set()
-            save(ended=True)  # waits for a save under way (the watchdog bounds that)
+            try:  # waits for a save under way (the watchdog bounds that)
+                save(ended=True)
+            except Exception as exc:  # a finished run is not lost on one failed commit,
+                if state["failed"]:  # but never a third failed save in a row
+                    raise
+                print(f"volymen sparades inte nu ({type(exc).__name__}); försöker igen", flush=True)
+                save(ended=True)
     finally:
         watched.set()
     return {**result, "seconds": seconds()}
@@ -200,27 +234,44 @@ def give_up(why: str) -> None:
     os._exit(3)
 
 
+def _ended_errors() -> tuple[type[BaseException], ...]:
+    """The errors ``FunctionCall.get`` raises for a call that is over: cancelled, out of
+    time, its output gone, the container failed or stopped (``give_up``), or the
+    function's own error (``CallFailedError``). Any other error (the line, the account,
+    Modal's servers, a closed client) says nothing about the call."""
+    e = modal.exception
+    return (
+        e.InputCancellation,
+        e.FunctionTimeoutError,
+        e.OutputExpiredError,
+        e.InternalFailure,
+        e.RemoteError,
+        e.ExecutionError,
+        CallFailedError,
+    )
+
+
 def _has_ended(call_id: str) -> bool:
-    """Whether Modal says the call is over. Its call graph is best effort (a call just
-    cancelled may still show as pending), so ask for the result too, without waiting:
-    an answer, or any error but "not yet" or "cannot say", means it has ended."""
+    """Whether Modal says the call is over (``False``: running, or it cannot say). Its
+    call graph is best effort (a call just cancelled may still show as pending), so ask
+    for the result too, without waiting: a result, or one of ``_ended_errors``."""
     from modal.types import InputStatus
 
     handle = modal.FunctionCall.from_id(call_id)
     try:
         graph = handle.get_call_graph()
-    except modal.exception.NotFoundError:  # Modal no longer knows: cannot say
+    except Exception:  # Modal no longer knows it, or cannot answer now: cannot say
         graph = []
     if graph and all(i.status != InputStatus.PENDING for i in graph):
         return True
     try:
         handle.get(timeout=0)
-    except TimeoutError:  # no result yet: still running
-        return False
-    except (modal.exception.NotFoundError, modal.exception.ConnectionError, OSError):
-        return False  # cannot say
-    except (Exception, modal.exception.InputCancellation):  # failed, stopped, expired
+    except _ended_errors():
         return True
+    except BaseException as exc:
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
+        return False  # not yet (TimeoutError), or cannot say
     return True
 
 
@@ -252,12 +303,13 @@ class ModalBackend:
     ) -> dict[str, Any]:
         with modal.enable_output(), app.run():
             fn = train_on_gpu.with_options(gpu=self.gpu, timeout=timeout_s)
+            # Wall clock, in short waits: a computer that slept past the deadline (the
+            # monotonic clock stops then) cancels as soon as it wakes. From before the
+            # send, as ``cloud.settle_calls`` counts it (from ``spawned("")``).
+            deadline = time.time() + timeout_s + START_SLACK_S
             spawned("")  # being sent: from here on it may run, before its id is known
             handle = fn.spawn(list(train), list(export), budget_s, token)
             spawned(handle.object_id)
-            # Wall clock, in short waits: a computer that slept past the deadline (the
-            # monotonic clock stops then) cancels as soon as it wakes.
-            deadline = time.time() + timeout_s + START_SLACK_S
             while (left := deadline - time.time()) > 0:
                 try:
                     return handle.get(timeout=min(left, WAIT_STEP_S))

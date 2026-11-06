@@ -223,20 +223,22 @@ Det här händer:
    den tiden också, och vaknar datorn efter att tiden är slut stoppar den anropet
    direkt. Efter Ctrl+C, tappat nät eller att datorn stängts av rättar nästa körning
    det, när Modal säger att anropet har slutat. Då räknas den tid anropet senast skrev,
-   plus högst 17 minuter för start och det som det kan ha kört efter det, men aldrig
+   plus högst 36 minuter för start och det som det kan ha kört efter det, men aldrig
    mindre än den tid kommandot väntade på det. Går en sparning på volymen fel försöker
-   anropet igen vid nästa; går den också fel, eller blir en sparning aldrig klar,
-   stoppar anropet sig självt efter elva minuter utan sparning. Avbröts kommandot medan
-   anropet skickades, så att Modal inte hann ge det något id, väntar nästa körning en
-   kvart: då har Modal stoppat det. Kan Modal inte säga att anropet har slutat, stannar
-   nästa körning och säger när det senast slutar. Kör anropet ändå efter den tiden (det
-   flyttades medan datorn sov, till exempel), stoppar nästa körning det. Säger Modal
-   fortfarande att det kör, stannar körningen och ber dig stoppa `searchdrone-train` på
-   modal.com/apps; anropet står kvar med sin längsta tid tills Modal säger att det har
-   slutat, och räknas då med sin egen tid. Ingen körning startar ett nytt anrop medan
-   ett gammalt kanske fortfarande kör, eftersom det annars kunde spara över den nya
-   träningen. Går räkningen inte att läsa stannar den också: titta då på modal.com/apps
-   att inget kör, ta bort filen den nämner och kör igen.
+   anropet igen vid nästa; går den också fel stoppar anropet sig självt, och likaså om
+   en sparning inte blir klar på tio minuter. Avbröts kommandot medan anropet skickades,
+   så att Modal inte hann ge det något id, väntar nästa körning en kvart: då har Modal
+   stoppat det. Kan Modal inte säga att anropet har slutat, stannar nästa körning och
+   säger när det senast slutar. Kör anropet ändå efter den tiden (det flyttades medan
+   datorn sov, till exempel), stoppar nästa körning det. Säger Modal fortfarande att det
+   kör, stannar körningen och ber dig stoppa `searchdrone-train` på modal.com/apps;
+   anropet står kvar med sin längsta tid tills Modal säger att det har slutat, och
+   räknas då med sin egen tid. Visar modal.com/apps att inget kör men Modal svarar ändå
+   inte, säger körningen hur du stänger anropet med `close_call=`; det räknas då med sin
+   längsta tid. Ingen körning startar ett nytt anrop medan ett gammalt kanske
+   fortfarande kör, eftersom det annars kunde spara över den nya träningen. Går
+   räkningen inte att läsa stannar den också: titta då på modal.com/apps att inget kör,
+   ta bort filen den nämner och kör igen.
    Får den inget grafikkort från Modal innan tiden är slut, säger den det: då
    tränades inget, och du kan försöka igen senare eller med en annan `gpu=`.
 4. Den gör ONNX-filen och hämtar hem `best.pt`, `person_yolox_s.onnx` och
@@ -298,6 +300,7 @@ Lagringen i volymen kostar lite eller inget; se modal.com/pricing.
 | `max_hours=24` | Högst så många timmar på grafikkortet för körningen, allt sammanräknat. |
 | `name=person_yolox_s` | Namnet på ONNX-filen och manifestet. |
 | `init=<best.pt>` | Som för `just train-detector`. Måste vara en `.pt`-fil på högst 1 GB. |
+| `close_call=<id>` | Bara när körningen ber om det: ett gammalt anrop som modal.com/apps visar inte kör, fast Modal inte säger att det har slutat, räknas med sin längsta tid och stoppar inte längre körningen. |
 
 `device=` och `simfarm=` går inte att använda i molnet.
 

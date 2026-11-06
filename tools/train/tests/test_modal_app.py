@@ -45,12 +45,29 @@ class NotFoundError(Exception):
     pass
 
 
-class ModalConnectionError(Exception):  # as modal.exception.ConnectionError
-    pass
-
-
 class InputCancellation(BaseException):  # as modal.exception
     pass
+
+
+# The rest of modal.exception that matters here, by name: the ends of a call, and the
+# errors of the line, the account, Modal's servers and a closed client.
+ENDED = (
+    "FunctionTimeoutError",
+    "OutputExpiredError",
+    "InternalFailure",
+    "RemoteError",
+    "ExecutionError",
+)
+CANNOT_SAY = (
+    "ConnectionError",
+    "ServiceError",
+    "InternalError",
+    "ResourceExhaustedError",
+    "AuthError",
+    "ClientClosed",
+    "PermissionDeniedError",
+)
+MODAL_ERRORS = {name: type(name, (Exception,), {}) for name in ENDED + CANNOT_SAY}
 
 
 class InputStatus(enum.IntEnum):  # as modal.types
@@ -159,12 +176,10 @@ def fake_modal(local: bool) -> tuple[types.ModuleType, list[Any]]:
     mod.enable_output = enable_output  # type: ignore[attr-defined]
     mod.is_local = lambda: local  # type: ignore[attr-defined]
     mod.exception = types.SimpleNamespace(  # type: ignore[attr-defined]
-        NotFoundError=NotFoundError,
-        ConnectionError=ModalConnectionError,
-        InputCancellation=InputCancellation,
+        NotFoundError=NotFoundError, InputCancellation=InputCancellation, **MODAL_ERRORS
     )
     mod.images = images  # type: ignore[attr-defined]
-    graphs: dict[str, list[Any]] = {}  # Modal's call graph per call id
+    graphs: dict[str, Any] = {}  # Modal's call graph per call id (or the error it gives)
     results: dict[str, Any] = {}  # what get() gives per call id: none yet, or an error
     cancelled: list[str] = []
 
@@ -179,7 +194,9 @@ def fake_modal(local: bool) -> tuple[types.ModuleType, list[Any]]:
         def get_call_graph(self) -> list[Any]:
             if self.call_id not in graphs:
                 raise NotFoundError(self.call_id)
-            return graphs[self.call_id]
+            if isinstance(graphs[self.call_id], Exception):
+                raise graphs[self.call_id]
+            return list(graphs[self.call_id])
 
         def get(self, timeout: float) -> Any:
             assert timeout == 0  # never waits
@@ -353,22 +370,63 @@ def test_what_is_known_of_an_earlier_call(monkeypatch: pytest.MonkeyPatch) -> No
 @pytest.mark.parametrize(
     ("result", "ended"),
     [
-        ({"status": "done"}, True),  # a result
-        (InputCancellation(), True),  # cancelled
-        (RuntimeError("failed"), True),  # the function failed, or its output expired
-        (ModalConnectionError(), False),  # cannot say
-        (NotFoundError(), False),
+        ("a result", True),
+        ("InputCancellation", True),
+        ("CallFailedError", True),  # the function's own error
+        *((name, True) for name in ENDED),
+        ("TimeoutError", False),  # no result yet
+        ("NotFoundError", False),
+        ("OSError", False),
+        ("RuntimeError", False),  # unknown: cannot say
+        *((name, False) for name in CANNOT_SAY),
     ],
 )
 def test_a_call_whose_graph_still_says_pending_is_asked_for_its_result(
-    monkeypatch: pytest.MonkeyPatch, result: Any, ended: bool
+    monkeypatch: pytest.MonkeyPatch, result: str, ended: bool
 ) -> None:
-    """The call graph is best effort: a call just cancelled may still show as pending."""
+    """The call graph is best effort: a call just cancelled may still show as pending.
+    Only the ends of a call count as ended; any error of the line, the account or
+    Modal's servers cannot say, and the call is taken to run on."""
     app, mod, _log = load(monkeypatch, local=True, at=str(SOURCE))
-    backend = app.ModalBackend("H100")
+    errors = {
+        **MODAL_ERRORS,
+        "InputCancellation": InputCancellation,
+        "CallFailedError": app.CallFailedError,
+        "NotFoundError": NotFoundError,
+        "TimeoutError": TimeoutError,
+        "OSError": OSError,
+        "RuntimeError": RuntimeError,
+    }
     mod.graphs["fc-1"] = [types.SimpleNamespace(status=InputStatus.PENDING)]
-    mod.results["fc-1"] = result
-    assert backend.call_state("t" * 32, "fc-1")["running"] is not ended
+    mod.results["fc-1"] = errors[result]("x") if result in errors else {"status": "done"}
+    assert app.ModalBackend("H100").call_state("t" * 32, "fc-1")["running"] is not ended
+
+
+@pytest.mark.parametrize("name", ["NotFoundError", *CANNOT_SAY])
+def test_a_call_graph_modal_cannot_give_is_no_crash(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    app, mod, _log = load(monkeypatch, local=True, at=str(SOURCE))
+    error = NotFoundError if name == "NotFoundError" else MODAL_ERRORS[name]
+    mod.graphs["fc-1"] = error("x")
+    assert app.ModalBackend("H100").call_state("t" * 32, "fc-1")["running"]  # get: not yet
+    mod.results["fc-1"] = {"status": "done"}
+    assert not app.ModalBackend("H100").call_state("t" * 32, "fc-1")["running"]
+
+
+def test_the_functions_own_error_reaches_the_client_as_one_kind(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app, _mod, _log = load(monkeypatch, local=False, at="/root/modal_app.py")
+    monkeypatch.setattr(app, "REMOTE_DATA", PurePosixPath(tmp_path))
+    monkeypatch.setattr(app.volume, "commit", lambda: None)
+
+    def call(*_a: Any) -> dict[str, Any]:
+        raise MemoryError("out of memory")
+
+    monkeypatch.setattr(app, "call", call)
+    with pytest.raises(app.CallFailedError, match="MemoryError: out of memory"):
+        app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)
 
 
 def test_the_container_keeps_its_mark_with_its_seconds(
@@ -417,7 +475,8 @@ def test_a_container_moved_after_a_preemption_counts_the_earlier_attempt(
     res = app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)
     before = 1000.0 + app.UNSEEN_S  # its mark and what it may have run after it
     assert before <= res["seconds"] < before + 5
-    assert json.loads(mark.read_text()) == {"seconds": round(res["seconds"], 1), "ended": True}
+    last = json.loads(mark.read_text())
+    assert last["ended"] and last["seconds"] == pytest.approx(res["seconds"], abs=0.1)
 
 
 def test_two_runs_of_one_call_add_up_their_seconds(
@@ -435,9 +494,11 @@ def test_two_runs_of_one_call_add_up_their_seconds(
     monkeypatch.setattr(app, "call", call)
     first = app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)["seconds"]
     second = app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)["seconds"]
-    # the first ended: its seconds and the second's start-up come first, never 0 again
-    assert second >= round(first, 1) + app.START_UP_S + 0.1
-    assert json.loads(mark.read_text()) == {"seconds": round(second, 1), "ended": True}
+    # the first ended: its mark's seconds (rounded to 0.1 s) and the second's start-up
+    # come first, never 0 again
+    assert second >= first - 0.05 + app.START_UP_S + 0.1
+    last = json.loads(mark.read_text())
+    assert last["ended"] and last["seconds"] == pytest.approx(second, abs=0.1)
 
 
 def _saving(
@@ -448,7 +509,7 @@ def _saving(
     app, _mod, _log = load(monkeypatch, local=False, at="/root/modal_app.py")
     monkeypatch.setattr(app, "REMOTE_DATA", PurePosixPath(tmp_path))
     monkeypatch.setattr(app, "COMMIT_EVERY_S", 0.1)
-    monkeypatch.setattr(app, "SAVE_LIMIT_S", 0.25)  # one failed save is tried again
+    monkeypatch.setattr(app, "COMMIT_SLOW_S", 0.25)
     monkeypatch.setattr(app, "WATCH_S", 0.01)
     monkeypatch.setattr(app.volume, "commit", commit)
     gave_up: list[tuple[str, float]] = []
@@ -464,48 +525,101 @@ def test_one_save_that_fails_is_tried_again(
 
     def commit() -> None:
         tries.append(time.monotonic())
-        if len(tries) == 2:  # the first save in the keeper fails, the next goes through
+        if len(tries) in (2, 4):  # every other one fails: never two in a row
             raise OSError("volume")
 
-    app, gave_up = _saving(monkeypatch, tmp_path, commit, train_s=0.45)
+    app, gave_up = _saving(monkeypatch, tmp_path, commit, train_s=0.55)
     res = app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)
     assert gave_up == [] and res["status"] == "done"
-    assert len(tries) >= 4  # the first, the failed one, the one after it, the last
+    assert len(tries) >= 5  # the first, failed, good, failed, good, ..., the last
 
 
-@pytest.mark.parametrize("how", ["fails", "hangs"])
-def test_a_container_that_cannot_save_stops_itself(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, how: str
+def test_a_save_that_is_slow_but_ends_is_no_hang(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Twice in a row, or a save that never returns: it stops once ``SAVE_LIMIT_S`` has
-    passed since the last mark saved was written, within one ``WATCH_S``, which is what
-    ``UNSEEN_S`` counts beyond that mark."""
-    written: list[float] = []
+    """A commit with much new on the volume (the tile cache) may take long."""
+    tries: list[float] = []
+
+    def commit() -> None:
+        tries.append(time.monotonic())
+        if len(tries) > 1:
+            time.sleep(0.2)  # under COMMIT_SLOW_S, more than COMMIT_EVERY_S
+
+    app, gave_up = _saving(monkeypatch, tmp_path, commit, train_s=0.7)
+    assert app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)["status"] == "done"
+    assert gave_up == [] and len(tries) >= 3
+
+
+def test_two_failed_saves_in_a_row_stop_the_container(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    tries: list[float] = []
+
+    def commit() -> None:
+        tries.append(time.monotonic())
+        if len(tries) > 1:
+            raise OSError("volume")
+
+    app, gave_up = _saving(monkeypatch, tmp_path, commit, train_s=0.5)
+    with contextlib.suppress(app.CallFailedError):  # the last save fails too
+        app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)
+    assert len(gave_up) == 1 and "två gånger i rad" in gave_up[0][0]
+    # at the second failed save, the keeper's second, not the first
+    assert gave_up[0][1] - tries[2] < 0.05 and tries[2] > tries[1]
+    assert len(tries) == 4  # the first, two failed, and one last try after the training
+
+
+def test_a_save_that_hangs_stops_the_container(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Within one ``WATCH_S`` after ``COMMIT_SLOW_S``, from when that save began."""
+    began: list[float] = []
     release = threading.Event()
 
     def commit() -> None:
-        if written:
-            if how == "hangs":
-                release.wait(0.8)
+        began.append(time.monotonic())
+        if len(began) == 2:
+            release.wait(1.0)
             raise OSError("volume")
-        written.append(time.monotonic())
 
     app, gave_up = _saving(monkeypatch, tmp_path, commit, train_s=0.5)
-    with contextlib.suppress(OSError):  # the last save fails too
-        app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)
+    app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)
     release.set()
-    assert len(gave_up) == 1
-    why, at = gave_up[0]
-    assert ("OSError" if how == "fails" else "inte klar") in why
-    after = at - written[0]  # the mark was written just before this commit
-    assert app.SAVE_LIMIT_S - 0.005 < after <= app.SAVE_LIMIT_S + app.WATCH_S + 0.03
+    assert len(gave_up) == 1 and "inte klar" in gave_up[0][0]
+    after = gave_up[0][1] - began[1]  # the commit begins just after its save does
+    assert app.COMMIT_SLOW_S - 0.005 < after <= app.COMMIT_SLOW_S + app.WATCH_S + 0.05
 
 
-def test_one_retry_fits_in_what_is_counted_after_a_mark(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_last_save_that_fails_once_is_tried_again(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A finished run is not lost on one failed commit at its end."""
+    ended: list[bool] = []
+    mark = tmp_path / ".calls" / f"{'t' * 32}.json"
+
+    def commit() -> None:
+        last = json.loads(mark.read_text())["ended"]
+        ended.append(last)
+        if last and ended.count(True) == 1:
+            raise OSError("volume")
+
+    app, gave_up = _saving(monkeypatch, tmp_path, commit, train_s=0.05)
+    assert app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)["status"] == "done"
+    assert gave_up == [] and ended[-2:] == [True, True]
+    assert json.loads(mark.read_text())["ended"]
+
+
+def test_what_is_counted_after_a_mark_holds_one_retry_and_a_slow_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app, _mod, _log = load(monkeypatch, local=False, at="/root/modal_app.py")
-    # the retry comes two commits after the last mark saved; a third would not be waited for
-    assert 2 * app.COMMIT_EVERY_S < app.SAVE_LIMIT_S < 3 * app.COMMIT_EVERY_S
-    assert app.UNSEEN_S == app.START_UP_S + app.SAVE_LIMIT_S + app.WATCH_S
+    every, slow = app.COMMIT_EVERY_S, app.COMMIT_SLOW_S
+    # the last mark's own commit, the failed save and the one tried again (each begun a
+    # commit's interval, or the save before's time, after the one before), and a hang
+    # found within one WATCH_S
+    assert 2 * max(every, slow) + slow + app.WATCH_S == app.SAVE_LIMIT_S
+    assert app.UNSEEN_S == app.START_UP_S + app.SAVE_LIMIT_S
+    assert slow >= 10 * 60  # a few GB of tile cache on one commit
 
 
 def test_give_up_ends_the_container(monkeypatch: pytest.MonkeyPatch) -> None:

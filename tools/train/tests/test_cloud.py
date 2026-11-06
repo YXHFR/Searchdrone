@@ -858,6 +858,27 @@ def test_an_old_call_modal_still_runs_after_the_cancel_stops_the_command(
     assert cloud.hours_used(ledger) * 3600 == pytest.approx(1800.0 + 600.0 + 3600.0)
 
 
+def test_an_old_call_modal_never_answers_for_can_be_closed_by_hand(
+    bank: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Modal forgets the call (not found) and never says it has ended: the refusal names
+    ``close_call=``, which keeps the hours already counted (its worst case)."""
+    again, ledger, args, token, worst = _old_call_past_its_timeout(bank)
+    again.stuck = set(again.alive)
+    assert cloud.main(args, backend=lambda gpu: again) == 1
+    assert f"close_call={token}" in capsys.readouterr().err
+    assert cloud.main([*args, "close_call=" + "x" * 32], backend=lambda gpu: again) == 2
+    assert json.loads(ledger.read_text())["open"][token]  # nothing closed by a wrong id
+    later = _again(again, ["done"])
+    later.marks = again.marks
+    later.alive = set(again.alive)
+    later.stuck = set(again.stuck)  # Modal still does not say
+    assert cloud.main([*args, f"close_call={token}"], backend=lambda gpu: later) == 0
+    assert token not in later.marks and later.calls  # closed, then the run went on
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(worst + 3600.0)  # never less
+    assert all("close_call" not in a for a in later.calls[0][0])  # not for the script
+
+
 def test_a_call_cancelled_by_this_command_that_still_runs_stops_it(tmp_path: Path) -> None:
     """Past the deadline the client cancels the call; if Modal does not say it has ended,
     no next call starts over its container's saves."""
