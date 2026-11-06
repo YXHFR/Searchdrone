@@ -582,6 +582,10 @@ class Backend(Protocol):
         from its mark, or ``None`` if that is not known."""
         ...
 
+    def cancel(self, call_id: str) -> None:
+        """Stop the call and its container; one Modal no longer knows is no error."""
+        ...
+
     def forget(self, token: str) -> None:
         """Remove the call's mark; one that is not there is no error."""
         ...
@@ -764,18 +768,22 @@ def settle_calls(
     wall: Callable[[], float] = time.time,
 ) -> list[float]:
     """Ask Modal about the calls in ``LEDGER``'s ``open`` (or only ``only``): an ended one
-    gets its own time in place of its worst case, and its mark is removed. One that is
-    past its worst case has ended too, as Modal stops a call at its timeout, but keeps
-    its worst case unless its time is known. Returns when the others will surely have
-    ended (wall clock), the ones that may still be running."""
+    gets its own time in place of its worst case, and its mark is removed. One past its
+    worst case that Modal still says runs (moved after a preemption while this computer
+    slept, say) is cancelled; it keeps its worst case unless its time is known. Returns
+    when the others will surely have ended (wall clock), the ones that may still run."""
     running: list[float] = []
     for token, call in _read_ledger(ledger)["open"].items():
         if only and token != only:
             continue
         state = backend.call_state(token, call["call"])
-        if state["running"] and wall() - call["at"] < call["worst"]:
-            running.append(call["at"] + call["worst"])
-            continue
+        if state["running"]:
+            if wall() - call["at"] < call["worst"]:
+                running.append(call["at"] + call["worst"])
+                continue
+            if call["call"]:
+                backend.cancel(call["call"])
+                state = backend.call_state(token, call["call"])
         seconds = state["seconds"]
         _close_call(ledger, token, call["worst"] if seconds is None else float(seconds))
         backend.forget(token)
@@ -842,7 +850,8 @@ def run_until_done(
     call's own time is known: what the container returned (or the client's wall time,
     if longer), or else what Modal and the call's mark tell afterwards
     (``settle_calls``, also by the next command after Ctrl+C or a lost line). Until
-    then, and after a hard stop of this computer, the worst case stays.
+    then, and after a hard stop of this computer, the worst case stays. The client's
+    time is wall time, so a computer that slept through a call counts the sleep.
     ``again`` is what the messages tell you to run to carry on. Returns the hours used
     by this command, as far as known."""
     used_here = 0.0
@@ -859,7 +868,8 @@ def run_until_done(
         timeout_s = math.ceil(budget + STOP_GRACE_S + FINISH_SLACK_S)
         worst = float(timeout_s + START_SLACK_S)
         token = uuid.uuid4().hex
-        _open_call(ledger, token, worst, wall())
+        opened = wall()
+        _open_call(ledger, token, worst, opened)
         ids: list[str] = []
         started = clock()
         try:
@@ -871,7 +881,7 @@ def run_until_done(
                 _close_call(ledger, token, 0.0)
             raise
         if res.get("seconds") is not None:
-            _close_call(ledger, token, max(clock() - started, float(res["seconds"])))
+            _close_call(ledger, token, max(wall() - opened, float(res["seconds"])))
             backend.forget(token)
         else:
             settle_calls(backend, ledger, only=token, wall=wall)

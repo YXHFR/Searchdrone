@@ -215,16 +215,20 @@ Det här händer:
    före och startar om från senaste sparningen, tills den är klar. Det som tränats
    sedan senaste sparningen görs om, högst ungefär en kvart. Den ber inte Modal att
    försöka igen. Flyttar Modal ändå anropet till en annan dator slutar den vänta när
-   tiden är slut och stoppar anropet; varje sekund räknas mot `max_hours=`. Innan
-   varje anrop skrivs den längsta tid anropet kan ta upp i räkningen. Den rättas när
-   det är känt hur länge anropet körde: anropet skriver det själv på volymen medan
-   det kör. Efter Ctrl+C, tappat nät eller att datorn stängts av rättar nästa körning
-   det, när Modal säger att anropet har slutat. Då räknas den tid anropet senast
-   skrev, plus högst tio minuter som det kan ha kört efter det. Kan Modal inte säga
-   att anropet har slutat, stannar nästa körning och säger när det senast slutar
-   (Modal stoppar alltid ett anrop när dess tid är slut); då räknas den längsta
-   tiden. Nästa körning startar aldrig medan ett gammalt anrop kanske fortfarande
-   kör, eftersom det annars kunde spara över den nya träningen.
+   tiden är slut och stoppar anropet; varje sekund räknas mot `max_hours=`, också
+   den tid anropet körde innan det flyttades. Innan varje anrop skrivs den längsta
+   tid anropet kan ta upp i räkningen. Den rättas när det är känt hur länge anropet
+   körde: anropet skriver det själv på volymen medan det kör. Tiden mäts med vanlig
+   klocka, så sover din dator medan anropet kör räknas den tiden också, och vaknar
+   datorn efter att tiden är slut stoppar den anropet direkt. Efter Ctrl+C, tappat
+   nät eller att datorn stängts av rättar nästa körning det, när Modal säger att
+   anropet har slutat. Då räknas den tid anropet senast skrev, plus högst tio
+   minuter som det kan ha kört efter det. Kan Modal inte säga att anropet har slutat,
+   stannar nästa körning och säger när det senast slutar. Kör anropet ändå efter
+   den tiden (det flyttades medan datorn sov, till exempel), stoppar nästa körning
+   det; går det inte att veta hur länge det körde, räknas den längsta tiden. Nästa
+   körning startar aldrig medan ett gammalt anrop kanske fortfarande kör, eftersom
+   det annars kunde spara över den nya träningen.
    Får den inget grafikkort från Modal innan tiden är slut, säger den det: då
    tränades inget, och du kan försöka igen senare eller med en annan `gpu=`.
 4. Den gör ONNX-filen och hämtar hem `best.pt`, `person_yolox_s.onnx` och

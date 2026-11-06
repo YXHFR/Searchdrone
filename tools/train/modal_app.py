@@ -62,6 +62,8 @@ CALLS = PurePosixPath(".calls")  # in the volume: <token>.json per call whose co
 # What a call may have run beyond its mark's seconds: since its last commit, and the
 # container's start before the function began.
 UNSEEN_S = COMMIT_EVERY_S + 5 * 60
+# The client waits for a call in steps of this many seconds (see ``ModalBackend.run``).
+WAIT_STEP_S = 60.0
 
 
 def _uv_version(here: Path) -> str | None:
@@ -112,11 +114,19 @@ def train_on_gpu(
 ) -> dict[str, Any]:
     started = time.monotonic()
     mark = Path(REMOTE_DATA / CALLS / f"{token}.json")
+    # A mark already there is an earlier attempt of this call that Modal moved (a
+    # preemption): its seconds count too, with what it may have run after its last mark.
+    before = 0.0
+    if mark.exists():
+        before = float(json.loads(mark.read_text(encoding="utf-8"))["seconds"]) + UNSEEN_S
+
+    def seconds() -> float:
+        return before + time.monotonic() - started
 
     def write_mark(ended: bool) -> None:
         mark.parent.mkdir(parents=True, exist_ok=True)
         tmp = mark.with_name(f".{mark.name}.tmp")
-        body = {"seconds": round(time.monotonic() - started, 1), "ended": ended}
+        body = {"seconds": round(seconds(), 1), "ended": ended}
         tmp.write_text(json.dumps(body) + "\n", encoding="utf-8")
         tmp.replace(mark)
 
@@ -141,7 +151,7 @@ def train_on_gpu(
         keeper.join()
         write_mark(ended=True)
         volume.commit()
-    return {**result, "seconds": time.monotonic() - started}
+    return {**result, "seconds": seconds()}
 
 
 class ModalBackend:
@@ -174,13 +184,19 @@ class ModalBackend:
             fn = train_on_gpu.with_options(gpu=self.gpu, timeout=timeout_s)
             handle = fn.spawn(list(train), list(export), budget_s, token)
             spawned(handle.object_id)
-            try:
-                return handle.get(timeout=timeout_s + START_SLACK_S)
-            except TimeoutError:  # e.g. moved after a preemption: the ceiling holds
-                started = self._mark(token) is not None  # before the cancel ends the call
-                handle.cancel(terminate_containers=True)
-                # no "seconds": the container did not return them (``call_state`` later)
-                return {"status": "stopped" if started else "no_gpu", "code": None}
+            # Wall clock, in short waits: a computer that slept past the deadline (the
+            # monotonic clock stops then) cancels as soon as it wakes.
+            deadline = time.time() + timeout_s + START_SLACK_S
+            while (left := deadline - time.time()) > 0:
+                try:
+                    return handle.get(timeout=min(left, WAIT_STEP_S))
+                except TimeoutError:
+                    continue
+            # past the deadline (moved after a preemption, say): the ceiling holds
+            started = self._mark(token) is not None  # before the cancel ends the call
+            handle.cancel(terminate_containers=True)
+            # no "seconds": the container did not return them (``call_state`` later)
+            return {"status": "stopped" if started else "no_gpu", "code": None}
 
     def _mark(self, token: str) -> dict[str, Any] | None:
         """The call's mark in ``CALLS``, or ``None`` if its container never wrote one. The
@@ -213,6 +229,10 @@ class ModalBackend:
             return {"running": True, "seconds": None}
         # it ended without its last word (cancelled, stopped): at most UNSEEN_S more
         return {"running": False, "seconds": float(mark["seconds"] if mark else 0.0) + UNSEEN_S}
+
+    def cancel(self, call_id: str) -> None:
+        with contextlib.suppress(modal.exception.NotFoundError):
+            modal.FunctionCall.from_id(call_id).cancel(terminate_containers=True)
 
     def forget(self, token: str) -> None:
         with contextlib.suppress(FileNotFoundError, modal.exception.NotFoundError):

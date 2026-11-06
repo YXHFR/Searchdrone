@@ -152,6 +152,7 @@ def fake_modal(local: bool) -> tuple[types.ModuleType, list[Any]]:
     mod.exception = types.SimpleNamespace(NotFoundError=NotFoundError)  # type: ignore[attr-defined]
     mod.images = images  # type: ignore[attr-defined]
     graphs: dict[str, list[Any]] = {}  # Modal's call graph per call id
+    cancelled: list[str] = []
 
     class FunctionCall:
         def __init__(self, call_id: str) -> None:
@@ -166,8 +167,15 @@ def fake_modal(local: bool) -> tuple[types.ModuleType, list[Any]]:
                 raise NotFoundError(self.call_id)
             return graphs[self.call_id]
 
+        def cancel(self, terminate_containers: bool = False) -> None:
+            assert terminate_containers
+            if self.call_id not in graphs:
+                raise NotFoundError(self.call_id)
+            cancelled.append(self.call_id)
+
     mod.FunctionCall = FunctionCall  # type: ignore[attr-defined]
     mod.graphs = graphs  # type: ignore[attr-defined]
+    mod.cancelled = cancelled  # type: ignore[attr-defined]
     return mod, log
 
 
@@ -219,6 +227,17 @@ def _mark(app: Any, token: str, seconds: float, ended: bool) -> None:
     app.volume.files[f"/{app.CALLS}/{token}.json"] = body
 
 
+def _wall(monkeypatch: pytest.MonkeyPatch, app: Any, *now: float) -> None:
+    """modal_app's wall clock reads ``now`` in turn, then stays at the last."""
+    left = list(now)
+
+    def wall() -> float:
+        return left.pop(0) if len(left) > 1 else left[0]
+
+    clock = types.SimpleNamespace(time=wall, monotonic=time.monotonic, sleep=time.sleep)
+    monkeypatch.setattr(app, "time", clock)
+
+
 def _run(app: Any, token: str = "t" * 32) -> tuple[dict[str, Any], list[str]]:
     ids: list[str] = []
     res = app.ModalBackend("H100").run(["a=1"], ["b=2"], 10.0, 60, token, ids.append)
@@ -232,7 +251,7 @@ def test_a_call_uses_the_gpu_timeout_and_budget_given(monkeypatch: pytest.Monkey
     assert res["status"] == "done" and ids == ["fc-1"]  # the id, as soon as it is known
     assert ("options", {"gpu": "H100", "timeout": 3600}) in log
     assert ("spawn", (["a=1"], ["b=2"], 1234.5, "t" * 32)) in log
-    assert ("get", 3600 + cloud.START_SLACK_S) in log
+    assert ("get", app.WAIT_STEP_S) in log  # in short waits, against the wall clock
     assert not any(kind == "cancel" for kind, _ in log)
 
 
@@ -242,6 +261,7 @@ def test_a_call_that_runs_over_is_cancelled(
 ) -> None:
     app, _mod, log = load(monkeypatch, local=True, at=str(SOURCE))
     monkeypatch.setattr(app.train_on_gpu, "late", True)
+    _wall(monkeypatch, app, 0.0, 30.0, 60.0, 90.0, 60 + cloud.START_SLACK_S)
     if started:  # the container left its mark when it ran
         _mark(app, "t" * 32, 30.0, ended=False)
     _mark(app, "o" * 32, 30.0, ended=False)  # another call's mark
@@ -251,6 +271,30 @@ def test_a_call_that_runs_over_is_cancelled(
     assert kinds.index("listdir") < kinds.index("cancel")  # looked before cancelling
     assert ("listdir", f"/{app.CALLS}") in log  # the folder, not the file
     assert len(app.volume.files) == 1 + started  # the client removes marks later, not here
+    assert [kind for kind in kinds if kind == "get"] == ["get"] * 3  # waited, in steps
+
+
+def test_a_computer_that_slept_past_the_deadline_cancels_when_it_wakes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The monotonic clock stops while a laptop sleeps; the wall clock does not."""
+    app, _mod, log = load(monkeypatch, local=True, at=str(SOURCE))
+    monkeypatch.setattr(app.train_on_gpu, "late", True)
+    _wall(monkeypatch, app, 0.0, 10.0, 8 * 3600.0)  # one wait, then a night's sleep
+    _mark(app, "t" * 32, 30.0, ended=False)
+    res, _ids = _run(app)
+    assert res == {"status": "stopped", "code": None}
+    kinds = [kind for kind, _ in log]
+    assert kinds.count("get") == 1 and "cancel" in kinds
+
+
+def test_an_old_call_is_cancelled_with_its_containers(monkeypatch: pytest.MonkeyPatch) -> None:
+    app, mod, _log = load(monkeypatch, local=True, at=str(SOURCE))
+    backend = app.ModalBackend("H100")
+    mod.graphs["fc-1"] = [types.SimpleNamespace(status=InputStatus.PENDING)]
+    backend.cancel("fc-1")
+    backend.cancel("fc-gone")  # Modal no longer knows it: no error
+    assert mod.cancelled == ["fc-1"]
 
 
 def test_what_is_known_of_an_earlier_call(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -308,6 +352,22 @@ def test_the_container_keeps_its_mark_with_its_seconds(
     assert seen[-1]["seconds"] >= 0.3
     assert seen[-1] == json.loads(mark.read_text())  # kept: only the client removes it
     assert not list(mark.parent.glob(".*.tmp"))
+
+
+def test_a_container_moved_after_a_preemption_counts_the_earlier_attempt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app, _mod, _log = load(monkeypatch, local=False, at="/root/modal_app.py")
+    monkeypatch.setattr(app, "REMOTE_DATA", PurePosixPath(tmp_path))
+    monkeypatch.setattr(app.volume, "commit", lambda: None)
+    mark = tmp_path / str(app.CALLS) / f"{'t' * 32}.json"
+    mark.parent.mkdir(parents=True)
+    mark.write_text(json.dumps({"seconds": 1000.0, "ended": False}))  # the first attempt's
+    monkeypatch.setattr(app, "call", lambda *a: {"status": "done", "code": 0})
+    res = app.train_on_gpu.fn(["a=1"], ["b=2"], 99.0, "t" * 32)
+    before = 1000.0 + app.UNSEEN_S  # its mark and what it may have run after it
+    assert before <= res["seconds"] < before + 5
+    assert json.loads(mark.read_text()) == {"seconds": round(res["seconds"], 1), "ended": True}
 
 
 def test_removing_old_files_is_safe_to_repeat(monkeypatch: pytest.MonkeyPatch) -> None:

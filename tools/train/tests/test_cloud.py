@@ -62,7 +62,8 @@ class FakeModal:
     before the container starts and ``lost_late`` after the training has saved;
     ``failed_early`` fails before the first save (out of memory); ``no_gpu`` never
     gets a container. A container that ran leaves a mark (``marks``) with 1800 s, ended
-    unless the line was lost; Modal says a call is still running if it is in ``alive``."""
+    unless the line was lost; Modal says a call is still running if it is in ``alive``,
+    until it is cancelled (``cancelled``), and also after that if it is in ``stuck``."""
 
     def __init__(self, runs: list[str] | None = None) -> None:
         self.volume: dict[str, bytes] = {}
@@ -70,6 +71,8 @@ class FakeModal:
         self.removed: list[list[str]] = []
         self.marks: dict[str, dict[str, Any]] = {}
         self.alive: set[str] = set()
+        self.stuck: set[str] = set()
+        self.cancelled: list[str] = []
         self.tokens: list[str] = []
         self.calls: list[tuple[list[str], list[str], float, int]] = []
         self.resumed: list[bytes | None] = []  # per call: the last.pt carried on from
@@ -97,6 +100,10 @@ class FakeModal:
         if mark and mark["ended"]:
             return {"running": False, "seconds": mark["seconds"]}
         return {"running": False, "seconds": (mark["seconds"] if mark else 0.0) + 600.0}
+
+    def cancel(self, call_id: str) -> None:
+        self.cancelled.append(call_id)
+        self.alive -= {call_id.removeprefix("fc-")} - self.stuck
 
     def forget(self, token: str) -> None:
         self.marks.pop(token, None)
@@ -561,12 +568,31 @@ def test_without_the_containers_own_seconds_the_worst_case_stays(tmp_path: Path)
             return {"status": "stopped", "code": None, "seconds": 100.0}  # less than wall
 
     with pytest.raises(ConnectionError):  # the container's time is not known
-        cloud.run_until_done(FakeModal(["lost"]), [], [], 24, ledger, clock=lambda: 0.0)
+        cloud.run_until_done(FakeModal(["lost"]), [], [], 24, ledger)
     assert cloud.hours_used(ledger) * 3600 == pytest.approx(worst)
     ticks = iter([5000.0, 9000.0])
     with pytest.raises(BenchError, match="max_hours"):
-        cloud.run_until_done(Slow(["stopped"]), [], [], 25, ledger, clock=lambda: next(ticks))
+        cloud.run_until_done(
+            Slow(["stopped"]), [], [], 25, ledger, clock=lambda: 0.0, wall=lambda: next(ticks)
+        )
     assert cloud.hours_used(ledger) * 3600 == pytest.approx(worst + 4000.0)  # the wall's
+
+
+def test_a_computer_that_slept_through_a_call_counts_the_sleep(tmp_path: Path) -> None:
+    """The monotonic clock stops while a laptop sleeps; Modal's GPU does not."""
+    ledger = tmp_path / "hours.json"
+
+    class Slept(FakeModal):
+        def run(self, *a: Any) -> dict[str, Any]:
+            a[-1]("fc-1")  # spawned
+            return {"status": "done", "code": 0, "seconds": 1000.0}  # the container's
+
+    walls = iter([0.0, 7000.0])  # opened, then returned after a 6000 s sleep
+    used = cloud.run_until_done(
+        Slept(), [], [], 24, ledger, clock=lambda: 0.0, wall=lambda: next(walls)
+    )
+    assert used * 3600 == pytest.approx(7000.0)
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(7000.0)
 
 
 def test_a_call_budget_is_never_more_than_what_is_left() -> None:
@@ -788,7 +814,11 @@ def test_nothing_is_removed_while_an_old_call_may_still_run(
     assert later.removed and later.resumed == [None]
 
 
-def test_an_old_call_past_its_timeout_has_ended_but_keeps_its_worst_case(bank: Path) -> None:
+@pytest.mark.parametrize("stuck", [False, True])
+def test_an_old_call_past_its_timeout_is_cancelled(bank: Path, stuck: bool) -> None:
+    """Past its worst case and still running (moved after a preemption while the computer
+    slept, say): cancelled, then counted with its own time, or its worst case if Modal
+    still cannot say."""
     fake, ledger, args, _run = _old_run(bank, ["lost_late"])
     args.append("max_hours=48")
     assert cloud.main(args, backend=lambda gpu: fake) == 1
@@ -799,9 +829,13 @@ def test_an_old_call_past_its_timeout_has_ended_but_keeps_its_worst_case(bank: P
     ledger.write_text(json.dumps(body))
     again = _again(fake, ["done"])
     again.marks = fake.marks
-    again.alive = set(fake.tokens)  # Modal cannot say (or says so wrongly)
+    again.alive = set(fake.tokens)  # Modal: still running
+    if stuck:
+        again.stuck = set(fake.tokens)  # and so after the cancel too
     assert cloud.main(args, backend=lambda gpu: again) == 0
-    assert cloud.hours_used(ledger) * 3600 == pytest.approx(worst + 3600.0)
+    assert again.cancelled == [f"fc-{token}"]
+    old = worst if stuck else 1800.0 + 600.0  # its mark and what it ran after it
+    assert cloud.hours_used(ledger) * 3600 == pytest.approx(old + 3600.0)
     assert json.loads(ledger.read_text())["open"] == {}
 
 
