@@ -391,6 +391,9 @@ class _SoftPass:
     lat: float  # the cylinder then: a cylinder that replaces it takes the pass over
     lon: float
     radius_m: float
+    # Taken over from a cylinder this one replaced (``_handed_over``) while the drone
+    # was outside: on the way in it counts no less than a new cylinder would.
+    handed: bool = False
 
 
 def _earliest(a: float | None, b: float | None) -> float | None:
@@ -415,6 +418,7 @@ def _handed_over(k: Keepout, gone: Sequence[_SoftPass], plane: Plane) -> _SoftPa
         k.lat,
         k.lon,
         k.radius_m,
+        handed=True,
     )
 
 
@@ -2261,8 +2265,9 @@ class Executor:
         the ground's is the same person, and gives no fresh budget). A cylinder that replaces
         one under a new id (the old one no longer in force, the two overlapping) takes its
         pass over, also when the drone had left it less than the gap ago (``_handed_over``);
-        around the drone it takes the earlier of that pass and the one above (unknown if
-        either is), so a handover never gives more time than a new cylinder would get.
+        around the drone, now or when the drone first comes into it, it takes the earlier
+        of that pass and the one above (unknown if either is), so a handover never gives
+        more time than a new cylinder would get.
 
         Unknown time counts as the whole budget used (``KEEPOUT_PASS_MAX_S``): the first
         leg may only leave the cylinder, never go deeper, and not come back in within the
@@ -2306,22 +2311,22 @@ class Executor:
         passes: dict[UUID, _SoftPass] = {}
         for k in soft:
             kid = k.keepout_id
-            was = before.get(kid)
-            handed = None if was is not None else _handed_over(k, gone, plane)
+            was = before.get(kid) or _handed_over(k, gone, plane)
             if kid in inside:
-                if was is not None:
-                    since = was.since
-                elif handed is None:
+                if was is None:
                     since = fresh
-                else:  # new around the drone: never later than ``fresh`` (never looser)
-                    since = _earliest(fresh, handed.since)
+                elif was.handed:  # taken over, the drone in it: never later than ``fresh``
+                    since = _earliest(fresh, was.since)
+                else:
+                    since = was.since
                 passes[kid] = _SoftPass(since, None, k.lat, k.lon, k.radius_m)
                 continue
-            was = was or handed
             if was is not None:
                 left = now if was.left is None else was.left
                 if now - left < KEEPOUT_PASS_GAP_S:  # out for a moment: the same pass
-                    passes[kid] = _SoftPass(was.since, left, k.lat, k.lon, k.radius_m)
+                    passes[kid] = _SoftPass(
+                        was.since, left, k.lat, k.lon, k.radius_m, handed=was.handed
+                    )
         self._soft_pass = passes
         return {
             kid: KEEPOUT_PASS_MAX_S if p.since is None else now - p.since
