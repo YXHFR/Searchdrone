@@ -8,7 +8,10 @@ computer sends no coverage of its own. A search the drone flies on after a close
 drone's report that it flies on until that run ends. After a ground restart (the look's end
 no longer in memory) such runs are rebuilt from the event log (``_restore``): from the
 look's ``inspection.closed`` (``next`` resume) to the run's ``inspection.resume_ended``, or
-to the next order the drone ran that moves it.
+to the next order the drone ran that moves it. A rebuilt run still flown also ends as the
+live one does when that end is lost: when the drone's state no longer names the look's
+resume (once seen, or not within ``inspections.CLOSED_WAIT_S`` of the look's end). Until the
+runs are rebuilt, nothing is counted and no gap is worked out.
 
 When a sector turns done (its search's done, or the end of a search flown on after a look),
 what of it no track point saw is its gap (``gap_m2``): told once to the operator
@@ -97,6 +100,17 @@ class _Ending:
 
 
 @dataclass
+class _Rebuilt:
+    """A run flown on after a look, rebuilt from the event log, whose end has not come:
+    from ``start`` (the look's end), flown by the drone's resume ``resume_id``."""
+
+    start: dt.datetime
+    resume_id: str | None
+    seen: bool = False  # the drone's state named the resume
+    snapshot_ms: int | None = None  # the drone's state last looked at
+
+
+@dataclass
 class _Mission:
     last_tick: float = 0.0
     since: dt.datetime | None = None  # the newest track point counted
@@ -112,8 +126,8 @@ class _Mission:
     gaps_for: object = None
     # Runs flown on after a look were rebuilt from the event log (once per process).
     restored: bool = False
-    # Of those, the runs whose end has not come yet: since when.
-    restored_open: dict[str, dt.datetime] = field(default_factory=dict[str, dt.datetime])
+    # Of those, the runs whose end has not come yet.
+    restored_open: dict[str, _Rebuilt] = field(default_factory=dict[str, _Rebuilt])
     # Per sector, the search whose end was counted last: (its end, its order id).
     last_end: dict[str, tuple[dt.datetime, str]] = field(
         default_factory=dict[str, tuple[dt.datetime, str]]
@@ -217,11 +231,14 @@ async def tick(flow: MissionFlow, mission: Mission) -> None:
         if not state.restored:
             await _restore(flow, mid, state, commands, searches, flown_on, now)
             state.restored = True
-        elif state.restored_open:
-            await _restored_ends(flow, mid, state, commands, searches, flown_on, now)
+        if state.restored_open:
+            await _restored_ends(flow, mission, state, commands, searches, flown_on, now)
     except Exception as exc:  # tried again on the next tick
         log.error("coverage.restore_failed", mission_id=mid, error=type(exc).__name__)
-    _follow(flow, state, searches, {**state.restored_open, **flown_on}, now)
+    if not state.restored:  # a run not rebuilt would count as unsearched: wait for it
+        return
+    rebuilt = {cid: run.start for cid, run in state.restored_open.items()}
+    _follow(flow, state, searches, {**rebuilt, **flown_on}, now)
     plane = Plane(charter.home.lat, charter.home.lon)
     sectors = {s.sector_id: s.area for s in charter.sectors}
     by_id = {str(c.id): c for c in searches}
@@ -242,7 +259,7 @@ async def tick(flow: MissionFlow, mission: Mission) -> None:
             int(now // GAPS_REFRESH_S),
         )
         if key != state.gaps_for:
-            await _gaps(flow, mission, state, sectors, plane, counting)
+            await _gaps(flow, mission, state, sectors, plane, counting, by_id)
             state.gaps_for = key
     except Exception as exc:  # the rest of the vehicle's tick (link loss, looks) goes on
         log.error("coverage.tick_failed", mission_id=mid, error=type(exc).__name__)
@@ -371,7 +388,7 @@ def _run_end(
     ends: list[Any],
     commands: list[Command],
 ) -> dt.datetime | None:
-    """When a run flown on after a look, from ``start``, ended: its ``inspect.resume_ended``
+    """When a run flown on after a look, from ``start``, ended: its ``inspection.resume_ended``
     or the next order the drone ran that moves it, whichever came first; None: not yet."""
     told = [e.t for e in ends if e.payload.get("command_id") == cid and e.t >= start]
     later = [
@@ -411,15 +428,17 @@ async def _restore(
             continue
         until = _run_end(flow, cid, e.t, ends, commands)
         if until is None:
-            state.restored_open[cid] = e.t
+            resume = details.get("resume_command_id")
+            state.restored_open[cid] = _Rebuilt(e.t, None if resume is None else str(resume))
             _reopen(state, str(by_id[cid].params["sector_id"]))
         else:
-            _ended(state, f"{cid}@{e.t.isoformat()}", _Ending(by_id[cid], e.t, until, now))
+            key = f"{cid}@{e.t.isoformat()}"
+            _ended(state, key, _Ending(by_id[cid], e.t, until, now + CATCH_UP_S))
 
 
 async def _restored_ends(
     flow: MissionFlow,
-    mid: str,
+    mission: Mission,
     state: _Mission,
     commands: list[Command],
     searches: list[Command],
@@ -427,21 +446,44 @@ async def _restored_ends(
     now: float,
 ) -> None:
     """A rebuilt run still flown: counted on until its end comes (or the look's end is
-    known in memory again: then it is followed from there)."""
+    known in memory again: then it is followed from there). Its end is its
+    ``inspection.resume_ended`` or the next order that moves the drone (``_run_end``), or,
+    when that is lost, the drone's state as for a run followed live
+    (``inspections.on_snapshot``): no longer naming the look's resume once it was seen, or
+    never naming it within ``CLOSED_WAIT_S`` of the look's end."""
+    from sd_ground.services import inspections as inspections_service
+
     repo = flow.g.repo
     if repo is None:
         return
     await flow.g.flush_events()
-    ends = await repo.events(mid, None, "inspection.resume_ended", 1000)
+    first = min(run.start for run in state.restored_open.values())
+    after = first - dt.timedelta(microseconds=1)  # the events from the earliest run's start
+    ends = await repo.events(str(mission.id), after, "inspection.resume_ended", 1000)
+    snap, snap_ms = flow.snapshot(mission.vehicle_id)
     by_id = {str(c.id): c for c in searches}
-    for cid, start in list(state.restored_open.items()):
-        until = None if cid in flown_on else _run_end(flow, cid, start, ends, commands)
+    for cid, run in list(state.restored_open.items()):
+        until = None if cid in flown_on else _run_end(flow, cid, run.start, ends, commands)
+        if (
+            until is None
+            and cid not in flown_on
+            and snap is not None
+            and snap_ms != run.snapshot_ms
+        ):
+            run.snapshot_ms = snap_ms  # each state report once, as when followed live
+            active = None if snap.active_command_id is None else str(snap.active_command_id)
+            wait = dt.timedelta(seconds=inspections_service.CLOSED_WAIT_S)
+            if inspections_service.flies_resume(run.resume_id, active, snap.active_skill):
+                run.seen = True
+            elif run.seen or flow.now() >= run.start + wait:
+                until = flow.now()
+                log.info("coverage.rebuilt_run_left", command_id=cid, seen=run.seen)
         if cid in flown_on or until is not None:
             del state.restored_open[cid]
         if until is not None and cid in by_id:
             state.open.pop(cid, None)
             state.flying_on.discard(cid)
-            _ended(state, cid, _Ending(by_id[cid], start, until, now + CATCH_UP_S))
+            _ended(state, cid, _Ending(by_id[cid], run.start, until, now + CATCH_UP_S))
 
 
 async def _gaps(
@@ -451,6 +493,7 @@ async def _gaps(
     sectors: dict[str, GeoJsonPolygon],
     plane: Plane,
     counting: set[str],
+    searches: dict[str, Command],
 ) -> None:
     """Each sector that turned done, once no search of it is still being counted: its gap,
     told to the operator when there is one and it was not told already. A sector that is
@@ -474,8 +517,10 @@ async def _gaps(
             state.gaps[sid] = (0.0, 0.0)
             continue
         last = state.last_end.get(sid)
+        search = None if last is None else searches.get(last[1])
         search_id = None if last is None else last[1]
-        told = m2 > 0.0 and await _told(flow, mid, sid, search_id)
+        since = None if search is None else search.created_at
+        told = m2 > 0.0 and await _told(flow, mid, sid, search_id, since)
         state.gaps[sid] = (m2, pct)
         if m2 <= 0.0 or told:
             continue
@@ -499,16 +544,21 @@ async def _gaps(
         )
 
 
-async def _told(flow: MissionFlow, mid: str, sid: str, search_id: str | None) -> bool:
+async def _told(
+    flow: MissionFlow, mid: str, sid: str, search_id: str | None, since: dt.datetime | None
+) -> bool:
     """Whether the gap left by the search whose end made the sector done was told (before a
-    ground restart, say): an ``alarm.SECTOR_GAP`` in the event log naming that search."""
+    ground restart, say): an ``alarm.SECTOR_GAP`` in the event log since that search was
+    ordered (``since``) naming it. An alert written before alerts named their search (no
+    ``command_id``) stands for it when it is of the sector and that recent."""
     repo = flow.g.repo
     if repo is None:
         return False
     await flow.g.flush_events()
-    events = await repo.events(mid, None, f"alarm.{AlertCode.SECTOR_GAP}", 1000)
+    events = await repo.events(mid, since, f"alarm.{AlertCode.SECTOR_GAP}", 1000)
     return any(
-        e.payload.get("sector_id") == sid and e.payload.get("command_id") == search_id
+        e.payload.get("sector_id") == sid
+        and ("command_id" not in e.payload or e.payload["command_id"] == search_id)
         for e in events
     )
 
