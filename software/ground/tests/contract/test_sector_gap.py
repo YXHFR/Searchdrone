@@ -50,12 +50,16 @@ async def r(migrated_db: Db, tmp_path: Path) -> AsyncIterator[Rig]:
         yield built
 
 
-def gap_alerts(r: Rig) -> list[dict[str, Any]]:
+def alerts(r: Rig, code: AlertCode) -> list[dict[str, Any]]:
     return [
         e.data
         for e in r.g.bus.replay(r.g.bus.server_epoch, 0) or []
-        if e.type == "alert" and e.data.get("code") == str(AlertCode.SECTOR_GAP)
+        if e.type == "alert" and e.data.get("code") == str(code)
     ]
+
+
+def gap_alerts(r: Rig) -> list[dict[str, Any]]:
+    return alerts(r, AlertCode.SECTOR_GAP)
 
 
 async def fly(r: Rig, path: list[tuple[float, float]], step_m: float = 4.0) -> None:
@@ -135,11 +139,19 @@ _MEMORY = frozenset({"coverage", "clearances", "rates", "finds", "reports", "lin
 _MEMORY |= {"looks", "resume_told", "_watch", "_status", "_release_waited"}
 
 
-async def restarted(r: Rig) -> None:
+async def restarted(r: Rig, *, crash: bool = False) -> None:
     """The ground restarts: the mission flow's memory (coverage, looks, resumes told,
-    statuses, ...) is that of a new flow, which then starts as at boot."""
+    statuses, ...) is that of a new flow, which then starts as at boot. A clean stop writes
+    the queued events first (as the app's shutdown does), a crash loses them. The drone's
+    last state report is gone either way: the next one comes over the link."""
     names = {f.name for f in dataclasses.fields(MissionFlow)}
     assert names == _WIRING | _MEMORY and not _WIRING & _MEMORY, names ^ (_WIRING | _MEMORY)
+    if crash:
+        r.g._events.clear()  # pyright: ignore[reportPrivateUsage]
+    else:
+        await r.g.flush_events()
+    assert r.flow.link is not None
+    r.flow.link._snapshots.clear()  # pyright: ignore[reportPrivateUsage]
     fresh = MissionFlow(r.g, r.flow.repo)
     for name in _MEMORY:
         setattr(r.flow, name, getattr(fresh, name))
@@ -441,12 +453,96 @@ async def test_a_rebuilt_run_whose_end_is_lost_ends_when_the_drone_leaves_its_re
     # Rebuilt (not merely not yet looked for) and ended.
     await r.until(lambda: state.restored and not state.restored_open, 5, "the rebuilt run ended")
     assert state.last_end["A"][1] == sid
+    end = state.last_end["A"][0]
+    # The leave is in the event log: a second restart ends the run there at once (its
+    # state never names the resume again, and the wait from the look's end is long past
+    # only when it was set to 0).
+    monkeypatch.setattr(inspections, "CLOSED_WAIT_S", 600.0)
+    await restarted(r)
+    state = r.flow.coverage.of(mid)
+    await r.until(lambda: state.restored and not state.restored_open, 5, "ended again")
+    again, again_sid = state.last_end["A"]
+    assert again_sid == sid and abs(again - end) < dt.timedelta(seconds=0.1), (again, end)
     await fly(r, lawnmower((30.0, 90.0), [0.0, 20.0]))
     await asyncio.sleep(BATCH * SAMPLE_S + 2 * coverage.EVERY_S)  # its batches in and counted
     seen_area = state.seen.get("A")
     for north in (0.0, 20.0):
         x, y = r.plane.xy(*r.at(60.0, north))
         assert seen_area is None or not seen_area.contains(Point(x, y)), north
+
+
+@pytest.mark.parametrize("crash", [False, True])
+async def test_a_run_left_while_the_ground_was_up_ends_there_across_a_restart(
+    r: Rig, monkeypatch: pytest.MonkeyPatch, crash: bool
+) -> None:
+    """The drone leaves the resume of a search flown on after a look (home, by hand) and the
+    run's end never comes. The ground sees the leave live and keeps it in the event log
+    (``inspection.resume_left``), then restarts. The rebuilt run ends where the drone left
+    it, so what it flew over the sector after that and before the restart does not count
+    as searched (before, the run counted on until the first state report after the restart
+    that did not name the resume: these legs counted, or the run stayed open for
+    ``CLOSED_WAIT_S``). A crash after the leave was written does not change that."""
+    monkeypatch.setattr(inspections, "CLOSED_WAIT_S", 600.0)
+    mid, sid, sent, _d, _resume = await _flown_on_a(r)
+    await fly(r, lawnmower((30.0, 90.0), [-20.0]))
+    look = r.flow.looks[str(sent.command_id)]
+    await r.until(lambda: look.resume_seen, 5, "the resume named by the drone")
+    r.onboard.idle()  # it flies home
+    await r.until(lambda: look.resume_left_at is not None, 5, "the leave seen")
+    await r.g.flush_events()
+    assert r.g.repo is not None
+    (left,) = await r.g.repo.events(mid, None, "inspection.resume_left", 10)
+    assert left.payload == {"command_id": sid, "look": str(sent.command_id), "seen": True}
+    await fly(r, lawnmower((30.0, 90.0), [0.0, 20.0]))
+    # Its batches in the database: read again from the start after the restart.
+    await asyncio.sleep(BATCH * SAMPLE_S + 1.0)
+    await restarted(r, crash=crash)
+    state = r.flow.coverage.of(mid)
+    await r.until(lambda: state.restored and not state.restored_open, 5, "the run ended")
+    assert state.last_end["A"] == (left.t, sid)
+    await r.until(lambda: not state.ending, coverage.CATCH_UP_S + 5, "counted to its end")
+    seen_area = state.seen.get("A")
+    assert seen_area is not None and seen_area.contains(Point(*r.plane.xy(*r.at(60.0, -20.0))))
+    for north in (0.0, 20.0):
+        x, y = r.plane.xy(*r.at(60.0, north))
+        assert not seen_area.contains(Point(x, y)), north
+
+
+async def test_a_rebuild_that_keeps_failing_is_logged_once_and_told_once(
+    r: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After a restart the event log cannot be read: the failure is logged once (not every
+    second), tried again less and less often, and the operator told once that coverage is
+    not counted; and told again once it is."""
+    mid, sid, sent, _d, _resume = await _flown_on_a(r)
+    await fly(r, lawnmower((30.0, 90.0), [-20.0, 0.0, 20.0]))
+    await _resume_ended(r, sent, sid)
+    restore = coverage._restore  # pyright: ignore[reportPrivateUsage]
+    calls: list[float] = []
+
+    async def unreadable(*_: Any) -> None:
+        calls.append(r.g.clock.monotonic())
+        raise RuntimeError("db")
+
+    monkeypatch.setattr(coverage, "_restore", unreadable)
+    monkeypatch.setattr(coverage, "RESTORE_TELL_S", 2.0)
+    with capture_logs() as logs:
+        await restarted(r)
+        unavailable = AlertCode.COVERAGE_UNAVAILABLE
+        await r.until(lambda: alerts(r, unavailable), 10, "the operator told")
+        await asyncio.sleep(3.0)
+        assert len(alerts(r, unavailable)) == 1
+        (told,) = alerts(r, unavailable)
+        assert told["severity"] == "warning" and "räknas inte" in told["message_sv"]
+        assert all(b - a >= 1.9 for a, b in itertools.pairwise(calls)), calls
+        monkeypatch.setattr(coverage, "_restore", restore)
+        await r.until(lambda: len(alerts(r, unavailable)) == 2, 15, "told it is counted again")
+    again = alerts(r, unavailable)[1]
+    assert again["severity"] == "info" and again["recovered"] is True
+    failed = [e for e in logs if e["event"] == "coverage.restore_failed"]
+    assert len(failed) == 1 and len(calls) >= 2, (failed, calls)
+    assert [e for e in logs if e["event"] == "coverage.restore_recovered"]
+    assert await decided(r, mid, "A") == (0.0, 0.0)
 
 
 async def test_no_gap_is_worked_out_until_the_runs_flown_on_are_rebuilt(

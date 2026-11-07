@@ -139,6 +139,9 @@ class AlertCode(StrEnum):
     KEEPOUT_HOLD = "KEEPOUT_HOLD"
     # A sector turned done with a part no search saw (sd_ground.services.coverage.gap_m2)
     SECTOR_GAP = "SECTOR_GAP"
+    # The sectors' coverage is not counted: the runs flown on after a look could not be
+    # rebuilt from the event log for a while after a ground restart (and when they are again)
+    COVERAGE_UNAVAILABLE = "COVERAGE_UNAVAILABLE"
     # The flight controller flies the search mission's built-in end (hover, then straight
     # home in AUTO) because the onboard computer stopped steering: the ground's MAVLink
     MISSION_FALLBACK = "MISSION_FALLBACK"

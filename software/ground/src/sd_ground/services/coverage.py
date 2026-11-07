@@ -10,8 +10,21 @@ no longer in memory) such runs are rebuilt from the event log (``_restore``): fr
 look's ``inspection.closed`` (``next`` resume) to the run's ``inspection.resume_ended``, or
 to the next order the drone ran that moves it. A rebuilt run still flown also ends as the
 live one does when that end is lost: when the drone's state no longer names the look's
-resume (once seen, or not within ``inspections.CLOSED_WAIT_S`` of the look's end). Until the
-runs are rebuilt, nothing is counted and no gap is worked out.
+resume (once seen, or not within ``inspections.CLOSED_WAIT_S`` of the look's end). That
+moment, seen live or in a rebuilt run, is kept in the event log too
+(``inspection.resume_left``), so a later restart ends the run there. Until the runs are
+rebuilt, nothing is counted and no gap is worked out. While the event log cannot be read,
+this is logged once, tried again less and less often (up to every ``RESTORE_RETRY_MAX_S``),
+and the operator is told once after ``RESTORE_TELL_S`` (``COVERAGE_UNAVAILABLE``), and
+again when it is read.
+
+The rebuild's limits: when both the run's end and the moment the drone left its resume
+never reached the event log (lost on the link while the ground was down, or not yet written
+when it stopped), the run ends at the first state report after the restart that no longer
+names the resume, and the points flown in between at search height over the sector count
+as searched. A leave is only as exact as the drone's state reports. Each event read takes
+at most 1000 events, oldest first: on a mission with more looks than that, the newest runs
+are not rebuilt and count as unsearched (a larger gap, never a smaller one).
 
 When a sector turns done (its search's done, or the end of a search flown on after a look),
 what of it no track point saw is its gap (``gap_m2``): told once to the operator
@@ -64,6 +77,8 @@ __all__ = [
     "EVERY_S",
     "GAP_MIN_M2",
     "GAP_MIN_WIDTH_M",
+    "RESTORE_RETRY_MAX_S",
+    "RESTORE_TELL_S",
     "Coverage",
     "covered_area",
     "gap_m2",
@@ -84,6 +99,10 @@ CATCH_UP_S: Final = 12.0
 # The sectors' statuses are read when a search's state changed, else this often: a status
 # written just after the order's (the same report) is never missed for long.
 GAPS_REFRESH_S: Final = 10.0
+# A rebuild that failed is tried again after 2, 4, 8 ... s, at most this long apart.
+RESTORE_RETRY_MAX_S: Final = 10.0
+# The operator is told once when the rebuild has failed for this long (nothing is counted).
+RESTORE_TELL_S: Final = 60.0
 log = get_logger("sd_ground.coverage")
 
 
@@ -106,6 +125,7 @@ class _Rebuilt:
 
     start: dt.datetime
     resume_id: str | None
+    look_id: str | None = None  # the look's order
     seen: bool = False  # the drone's state named the resume
     snapshot_ms: int | None = None  # the drone's state last looked at
 
@@ -128,6 +148,12 @@ class _Mission:
     restored: bool = False
     # Of those, the runs whose end has not come yet.
     restored_open: dict[str, _Rebuilt] = field(default_factory=dict[str, _Rebuilt])
+    # The rebuild failed: since when (monotonic), how often, when it is tried again, and
+    # whether the operator was told.
+    restore_failed_at: float | None = None
+    restore_failures: int = 0
+    restore_retry_at: float = 0.0
+    restore_told: bool = False
     # Per sector, the search whose end was counted last: (its end, its order id).
     last_end: dict[str, tuple[dt.datetime, str]] = field(
         default_factory=dict[str, tuple[dt.datetime, str]]
@@ -227,16 +253,21 @@ async def tick(flow: MissionFlow, mission: Mission) -> None:
     flown_on = {f.command_id: f.since for f in inspections_service.flown_on(flow, mid)}
     commands = await flow.repo.commands(mid, None)
     searches = [c for c in commands if c.skill == "survey_sector" and c.params.get("sector_id")]
-    try:
-        if not state.restored:
+    if not state.restored and now >= state.restore_retry_at:
+        try:
             await _restore(flow, mid, state, commands, searches, flown_on, now)
+        except Exception as exc:  # tried again later (``restore_retry_at``)
+            _restore_failed(flow, mission, state, now, exc)
+        else:
             state.restored = True
+            _restore_recovered(flow, mission, state)
+    if not state.restored:  # a run not rebuilt would count as unsearched: wait for it
+        return
+    try:
         if state.restored_open:
             await _restored_ends(flow, mission, state, commands, searches, flown_on, now)
     except Exception as exc:  # tried again on the next tick
-        log.error("coverage.restore_failed", mission_id=mid, error=type(exc).__name__)
-    if not state.restored:  # a run not rebuilt would count as unsearched: wait for it
-        return
+        log.error("coverage.restored_ends_failed", mission_id=mid, error=type(exc).__name__)
     rebuilt = {cid: run.start for cid, run in state.restored_open.items()}
     _follow(flow, state, searches, {**rebuilt, **flown_on}, now)
     plane = Plane(charter.home.lat, charter.home.lon)
@@ -263,6 +294,50 @@ async def tick(flow: MissionFlow, mission: Mission) -> None:
             state.gaps_for = key
     except Exception as exc:  # the rest of the vehicle's tick (link loss, looks) goes on
         log.error("coverage.tick_failed", mission_id=mid, error=type(exc).__name__)
+
+
+def _restore_failed(
+    flow: MissionFlow, mission: Mission, state: _Mission, now: float, exc: Exception
+) -> None:
+    """The runs flown on after a look could not be rebuilt: logged at the first failure,
+    tried again after 2, 4, 8 ... s (at most ``RESTORE_RETRY_MAX_S``), and the operator told
+    once when nothing has been counted for ``RESTORE_TELL_S``."""
+    mid = str(mission.id)
+    if state.restore_failed_at is None:
+        state.restore_failed_at = now
+        log.error("coverage.restore_failed", mission_id=mid, error=type(exc).__name__)
+    state.restore_failures += 1
+    wait = min(RESTORE_RETRY_MAX_S, EVERY_S * 2.0**state.restore_failures)
+    state.restore_retry_at = now + wait
+    if state.restore_told or now - state.restore_failed_at < RESTORE_TELL_S:
+        return
+    state.restore_told = True
+    flow.alert(
+        str(AlertCode.COVERAGE_UNAVAILABLE),
+        "warning",
+        "Täckningen av sektorerna räknas inte: händelseloggen kan inte läsas efter "
+        "omstarten. Luckor i sökta sektorer meddelas inte förrän den kan läsas igen.",
+        vehicle_id=mission.vehicle_id,
+        mission_id=mid,
+        details={"failures": state.restore_failures},
+    )
+
+
+def _restore_recovered(flow: MissionFlow, mission: Mission, state: _Mission) -> None:
+    """The runs were rebuilt after failing: logged, and told when the failure was."""
+    if state.restore_failed_at is None:
+        return
+    mid = str(mission.id)
+    log.info("coverage.restore_recovered", mission_id=mid, failures=state.restore_failures)
+    if state.restore_told:
+        flow.alert(
+            str(AlertCode.COVERAGE_UNAVAILABLE),
+            "info",
+            "Täckningen av sektorerna räknas igen.",
+            vehicle_id=mission.vehicle_id,
+            mission_id=mid,
+            details={"recovered": True, "failures": state.restore_failures},
+        )
 
 
 def _follow(
@@ -389,7 +464,8 @@ def _run_end(
     commands: list[Command],
 ) -> dt.datetime | None:
     """When a run flown on after a look, from ``start``, ended: its ``inspection.resume_ended``
-    or the next order the drone ran that moves it, whichever came first; None: not yet."""
+    or ``inspection.resume_left`` (``ends``), or the next order the drone ran that moves it,
+    whichever came first; None: not yet."""
     told = [e.t for e in ends if e.payload.get("command_id") == cid and e.t >= start]
     later = [
         c.created_at
@@ -419,7 +495,7 @@ async def _restore(
         return
     await flow.g.flush_events()
     closed = await repo.events(mid, None, "inspection.closed", 1000)
-    ends = await repo.events(mid, None, "inspection.resume_ended", 1000)
+    ends = await _ends(flow, mid, None)
     by_id = {str(c.id): c for c in searches}
     for e in closed:
         details = e.payload.get("details") or {}
@@ -429,7 +505,10 @@ async def _restore(
         until = _run_end(flow, cid, e.t, ends, commands)
         if until is None:
             resume = details.get("resume_command_id")
-            state.restored_open[cid] = _Rebuilt(e.t, None if resume is None else str(resume))
+            look = e.payload.get("command_id")
+            state.restored_open[cid] = _Rebuilt(
+                e.t, None if resume is None else str(resume), None if look is None else str(look)
+            )
             _reopen(state, str(by_id[cid].params["sector_id"]))
         else:
             key = f"{cid}@{e.t.isoformat()}"
@@ -447,10 +526,11 @@ async def _restored_ends(
 ) -> None:
     """A rebuilt run still flown: counted on until its end comes (or the look's end is
     known in memory again: then it is followed from there). Its end is its
-    ``inspection.resume_ended`` or the next order that moves the drone (``_run_end``), or,
-    when that is lost, the drone's state as for a run followed live
-    (``inspections.on_snapshot``): no longer naming the look's resume once it was seen, or
-    never naming it within ``CLOSED_WAIT_S`` of the look's end."""
+    ``inspection.resume_ended`` or ``inspection.resume_left``, or the next order that moves
+    the drone (``_run_end``), or, when those are lost, the drone's state as for a run
+    followed live (``inspections.on_snapshot``): no longer naming the look's resume once it
+    was seen, or never naming it within ``CLOSED_WAIT_S`` of the look's end. That leave is
+    kept in the event log as a live one is (``inspection.resume_left``)."""
     from sd_ground.services import inspections as inspections_service
 
     repo = flow.g.repo
@@ -459,7 +539,7 @@ async def _restored_ends(
     await flow.g.flush_events()
     first = min(run.start for run in state.restored_open.values())
     after = first - dt.timedelta(microseconds=1)  # the events from the earliest run's start
-    ends = await repo.events(str(mission.id), after, "inspection.resume_ended", 1000)
+    ends = await _ends(flow, str(mission.id), after)
     snap, snap_ms = flow.snapshot(mission.vehicle_id)
     by_id = {str(c.id): c for c in searches}
     for cid, run in list(state.restored_open.items()):
@@ -478,12 +558,26 @@ async def _restored_ends(
             elif run.seen or flow.now() >= run.start + wait:
                 until = flow.now()
                 log.info("coverage.rebuilt_run_left", command_id=cid, seen=run.seen)
+                inspections_service.record_resume_left(
+                    flow, str(mission.id), cid, run.look_id, run.seen
+                )
         if cid in flown_on or until is not None:
             del state.restored_open[cid]
         if until is not None and cid in by_id:
             state.open.pop(cid, None)
             state.flying_on.discard(cid)
             _ended(state, cid, _Ending(by_id[cid], run.start, until, now + CATCH_UP_S))
+
+
+async def _ends(flow: MissionFlow, mid: str, after: dt.datetime | None) -> list[Any]:
+    """The runs' ends in the event log after ``after``: the drone's (``resume_ended``) and
+    the ground's (``resume_left``), each read at most 1000, oldest first."""
+    repo = flow.g.repo
+    if repo is None:
+        return []
+    ended = await repo.events(mid, after, "inspection.resume_ended", 1000)
+    left = await repo.events(mid, after, "inspection.resume_left", 1000)
+    return [*ended, *left]
 
 
 async def _gaps(
@@ -550,9 +644,11 @@ async def _told(
     """Whether the gap left by the search whose end made the sector done was told (before a
     ground restart, say): an ``alarm.SECTOR_GAP`` in the event log since that search was
     ordered (``since``) naming it. An alert written before alerts named their search (no
-    ``command_id``) stands for it when it is of the sector and that recent."""
+    ``command_id``) stands for it when it is of the sector and that recent. With no known
+    search (a sector done with no end counted here) nothing stands for it: told, at most
+    once more after each ground restart, rather than hidden by an older alert."""
     repo = flow.g.repo
-    if repo is None:
+    if repo is None or search_id is None:
         return False
     await flow.g.flush_events()
     events = await repo.events(mid, since, f"alarm.{AlertCode.SECTOR_GAP}", 1000)
