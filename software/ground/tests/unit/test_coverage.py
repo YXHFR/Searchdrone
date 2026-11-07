@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
 from shapely.geometry import box
+from structlog.testing import capture_logs
 
 from sd_geo.coverage import REACH_EXTRA_M
 from sd_ground.services import coverage
@@ -111,3 +116,77 @@ def test_the_floor_is_the_width_and_the_area_both() -> None:
 
 def test_nothing_seen_is_all_gap() -> None:
     assert coverage.gap_m2(SECTOR, None) == SECTOR.area
+
+
+MISSION: Any = SimpleNamespace(id="m", vehicle_id="v")
+
+
+class _Clock:
+    t = 100.0
+
+    def monotonic(self) -> float:
+        return self.t
+
+
+def _flow(statuses: Any) -> Any:
+    """Just enough of a mission flow for ``coverage.tick``: one done sector, no searches."""
+    ring = [[lon, lat] for lat, lon in (PLANE.latlon(x, y) for x, y in SECTOR.exterior.coords)]
+    area = {"type": "Polygon", "coordinates": [ring]}
+    charter = SimpleNamespace(
+        home=SimpleNamespace(lat=PLANE.lat0, lon=PLANE.lon0),
+        sectors=[SimpleNamespace(sector_id="A", area=area)],
+    )
+    alerts: list[Any] = []
+
+    async def active_charter(_: Any) -> Any:
+        return charter
+
+    async def commands(*_: Any) -> list[Any]:
+        return []
+
+    return SimpleNamespace(
+        coverage=coverage.Coverage(),
+        g=SimpleNamespace(clock=_Clock(), repo=None),
+        looks={},
+        active_charter=active_charter,
+        repo=SimpleNamespace(commands=commands, sector_statuses=statuses),
+        alert=lambda *a, **kw: alerts.append((a, kw)),
+        alerts=alerts,
+    )
+
+
+async def test_a_failing_status_read_never_leaves_the_tick() -> None:
+    """The rest of the vehicle's ground tick (link loss, looks) still runs: the error is
+    logged and the gaps are tried again on the next tick."""
+
+    async def broken(_: str) -> dict[str, str]:
+        raise RuntimeError("db")
+
+    flow = _flow(broken)
+    with capture_logs() as logs:
+        await coverage.tick(flow, MISSION)
+    assert [e["event"] for e in logs] == ["coverage.tick_failed"]
+    assert flow.coverage.of("m").gaps_for is None  # tried again
+
+
+async def test_a_gap_that_cannot_be_worked_out_is_none_and_not_tried_every_second(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    async def statuses(_: str) -> dict[str, str]:
+        calls.append("read")
+        return {"A": "done"}
+
+    def broken(*_: Any) -> float:
+        raise ValueError("geometry")
+
+    monkeypatch.setattr(coverage, "gap_m2", broken)
+    flow = _flow(statuses)
+    with capture_logs() as logs:
+        await coverage.tick(flow, MISSION)
+        flow.g.clock.t += coverage.EVERY_S
+        await coverage.tick(flow, MISSION)
+    assert [e["event"] for e in logs] == ["coverage.gap_failed"]
+    assert flow.coverage.of("m").gaps == {"A": (0.0, 0.0)} and not flow.alerts
+    assert calls == ["read"]  # nothing changed: not read again on the next tick

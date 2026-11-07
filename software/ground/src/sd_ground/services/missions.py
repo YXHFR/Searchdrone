@@ -1092,7 +1092,7 @@ class MissionFlow:
             sdlink_up=self.sdlink_up(mission.vehicle_id),
             active_command=await commands_service.active_command(self, mission),
             sectors=await self.repo.sectors(mission_id),
-            gaps=self.coverage.of(mission_id).gaps,
+            gaps=None if (cov := self.coverage.missions.get(mission_id)) is None else cov.gaps,
             annotations=annotations,
             recent_events=events[-20:],
             probability_line=await map_service.probability_line(self, mission_id),
