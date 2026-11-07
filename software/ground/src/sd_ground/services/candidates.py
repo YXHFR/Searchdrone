@@ -29,6 +29,7 @@ import math
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Final
+from uuid import UUID
 from xml.sax.saxutils import escape
 
 from pydantic import ValidationError
@@ -228,11 +229,17 @@ async def on_survey_blocked(
     the operator and the AI see that a possible person keeps part of the area unsearched.
     Nothing flies because of it.
 
-    A ``skipped_m`` that is not a finite number of metres >= 0 (or is a bool) is left out
-    (logged). A
-    candidate already marked with as many metres or more gets no new mark and its card
-    does not go out again: the same reroute planned again (each resume, each tick of a
-    pass) must not wake the AI for nothing."""
+    A ``skipped_m`` that is not a finite number of metres >= 0 (or is a bool), or a
+    ``source_id`` that is not a UUID, is left out (logged). A candidate already marked
+    with as many metres or more gets no new mark and its card does not go out again:
+    the same reroute planned again (each resume, each tick of a pass) must not wake the
+    AI for nothing.
+
+    The drone's own cylinder is made the moment it sees a person, so the search can go
+    around it before the search service has put that detection in a candidate. Such a
+    block is kept by its detection (``candidate.blocks_survey_pending``) and counts for
+    the candidate the detection joins (``CandidateRepo.survey_blocks``): that card is
+    first in the queue from its first version, though this event is not sent again."""
     r = repo(flow)
     stored = await r.survey_blocks(mission_id)
     touched: set[str] = set()
@@ -256,7 +263,21 @@ async def on_survey_blocked(
                 skipped_m=repr(skipped),
             )
             continue
-        for cid in await r.blocked_candidates(mission_id, source, source_id):
+        try:
+            source_id = str(UUID(source_id))
+        except ValueError:
+            # no candidate or detection can have it (and the query would fail on it)
+            log.warning(
+                "candidate.survey_blocked_invalid",
+                mission_id=mission_id,
+                source=source,
+                source_id=source_id,
+            )
+            continue
+        cids = await r.blocked_candidates(mission_id, source, source_id)
+        if not cids and source == "detection":
+            await _block_pending(flow, r, mission_id, vehicle_id, b, source_id, skipped, data)
+        for cid in cids:
             if cid in stored and stored[cid] >= skipped:
                 continue  # nothing new: no row, no card
             stored[cid] = skipped
@@ -285,6 +306,36 @@ async def on_survey_blocked(
             vehicle_id=vehicle_id,
             mission_id=mission_id,
         )
+
+
+async def _block_pending(
+    flow: MissionFlow,
+    r: CandidateRepo,
+    mission_id: str,
+    vehicle_id: str,
+    b: Mapping[str, Any],
+    detection_id: str,
+    skipped: float,
+    data: Mapping[str, Any],
+) -> None:
+    """Keep a block named by a detection no candidate holds yet (``on_survey_blocked``;
+    ``detection_id`` a canonical UUID), unless as many metres or more are kept for it
+    already."""
+    kept = (await r.pending_blocks(mission_id)).get(detection_id)
+    if kept is not None and kept >= skipped:
+        return
+    await flow.repo.add_event(
+        "candidate.blocks_survey_pending",
+        now=flow.now(),
+        mission_id=mission_id,
+        vehicle_id=vehicle_id,
+        payload={
+            "detection_id": detection_id,
+            "skipped_m": skipped,
+            "keepout_id": b.get("keepout_id"),
+            "command_id": data.get("command_id"),
+        },
+    )
 
 
 def _near(c: dict[str, Any], decided: list[dict[str, Any]]) -> dict[str, Any] | None:
