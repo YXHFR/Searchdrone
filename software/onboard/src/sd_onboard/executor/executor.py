@@ -589,10 +589,12 @@ class Executor:
         self.gps_health = GpsHealth()
         self.keepouts: tuple[Keepout, ...] = ()
         self.keepout_seq = -1  # the highest KeepoutInstall.install_seq taken
-        # Candidates the pilot rejected in their look whose ground cylinder is still in the
-        # last install: candidate_id -> until (``REJECTED_RELEASE_WAIT_MS``). Not in force
-        # onboard: the return and its resume are planned at once, without waiting for the
-        # ground's install that releases it (``keepouts_in_force``).
+        # Candidates the pilot rejected in their look whose ground cylinder (``source =
+        # "candidate"``) is still in every install since: candidate_id -> until
+        # (``REJECTED_RELEASE_WAIT_MS``). Not in force onboard: the return and its resume
+        # are planned at once, without waiting for the ground's install that releases it
+        # (``keepouts_in_force``). An install without it, or with it under another source
+        # (confirmed), ends the entry; so does the deadline (``_rejected_expire``).
         self._rejected: dict[UUID, int] = {}
         # Cylinders from the drone's own detections: detection_id -> (cylinder, created).
         self.local_keepouts: dict[UUID, tuple[Keepout, int]] = {}
@@ -1747,8 +1749,9 @@ class Executor:
             return
         self.keepout_seq = install.install_seq
         self.keepouts = tuple(install.keepouts)
-        sources = {k.source_id for k in self.keepouts}
-        self._rejected = {c: t for c, t in self._rejected.items() if c in sources}
+        held = {k.source_id for k in self.keepouts if k.source == "candidate"}
+        other = {k.source_id for k in self.keepouts if k.source != "candidate"}
+        self._rejected = {c: t for c, t in self._rejected.items() if c in held - other}
         # Our own cylinders give way to the ground's once one of those covers them (the
         # ground has had time to include them as candidates). One it never covers stays,
         # until a person rejects a candidate one of its detections belongs to (spec
@@ -1774,6 +1777,18 @@ class Executor:
         self._save()
         self._ack(ref_id, "done")
 
+    def _rejected_expire(self, now: int) -> None:
+        """A rejected candidate's cylinder whose wait is over is in force again: the flight
+        under way is checked against it on this tick (the reflex reroutes or holds), as
+        for a new install."""
+        ended = [c for c, until in self._rejected.items() if now >= until]
+        if not ended:
+            return
+        for c in ended:
+            del self._rejected[c]
+            self.emit("keepout_rejected_expired", {"candidate_id": str(c)})
+        self._keepouts_changed = True
+
     def keepouts_in_force(self) -> tuple[Keepout, ...]:
         """The ground's cylinders and the drone's own: what the gate and the plans use.
         During a closer look over the candidate (and while its order is checked) not the
@@ -1784,7 +1799,9 @@ class Executor:
         plane, s, pending = self.plane(), self._inspect, self._inspect_pending
         now = self.now_ms()
         rejected = {c for c, until in self._rejected.items() if now < until}
-        ground = tuple(k for k in self.keepouts if k.source_id not in rejected)
+        ground = tuple(
+            k for k in self.keepouts if k.source != "candidate" or k.source_id not in rejected
+        )
         if plane is None or (s is None and pending is None):
             return (*ground, *local)
 
@@ -2086,6 +2103,7 @@ class Executor:
         t = self.vehicle.telemetry
         self._finish_active()
         self._keepout_inside_s()  # the time inside counts from the tick it came inside
+        self._rejected_expire(now)
         # A leg flown one at a time is checked from where the drone is on every tick.
         replans = self.active is not None and isinstance(self.active.handler, Replans)
         if self._keepouts_changed or self._keepout_watch or replans:
@@ -3713,7 +3731,9 @@ class Executor:
         s = self._inspect
         if s is None:
             return
-        if outcome == "rejected" and any(k.source_id == s.candidate_id for k in self.keepouts):
+        if outcome == "rejected" and any(
+            k.source == "candidate" and k.source_id == s.candidate_id for k in self.keepouts
+        ):
             self._rejected[s.candidate_id] = self.now_ms() + REJECTED_RELEASE_WAIT_MS
             self._keepouts_changed = True
             self.emit("keepout_rejected", {"candidate_id": str(s.candidate_id)})
