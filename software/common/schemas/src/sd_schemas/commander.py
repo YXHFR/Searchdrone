@@ -5,7 +5,7 @@ Nothing here lets the AI approve, stop, change limits, autonomy mode or the fenc
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Final, Literal
 
 from pydantic import AwareDatetime, Field
 
@@ -42,6 +42,7 @@ from sd_schemas.mission import MissionState, OperatorLatch, PausedBy, ReturningC
 from sd_schemas.safety import SafetyLimits
 
 __all__ = [
+    "GROUND_HTTP_KEEPALIVE_S",
     "Backend",
     "BrainMessage",
     "CharterProposalResult",
@@ -56,6 +57,11 @@ __all__ = [
     "SkillSubmitResult",
     "VehicleSummary",
 ]
+
+GROUND_HTTP_KEEPALIVE_S: Final = 5  # whole seconds: uvicorn takes an int
+"""How long the ground's HTTP servers keep an idle connection (uvicorn's
+``timeout_keep_alive``). A client of the ground drops its idle connections well before
+this (``sd_brain.ground_http``), so it never sends on one the server is closing."""
 
 
 # Size caps on what the AI process sends; it is the least trusted caller.

@@ -4,12 +4,14 @@ The ground's server closes a connection idle for 5 s; httpx kept one as long, so
 request could go out on a connection the server was closing and fail with no answer
 (``RemoteProtocolError``): the turn was lost (SK09 seed 3 in CI). A small server here does
 the same with a short delay: a request on a connection idle for at least ``CLOSE_AFTER_S``
-is met by the connection closing without an answer.
+is met by the connection closing without an answer, or by a reset (``ReadError``).
 """
 
 from __future__ import annotations
 
 import asyncio
+import socket
+import struct
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -18,9 +20,10 @@ import pytest
 
 from sd_brain.ground_client import GroundClient, GroundError
 from sd_brain.ground_http import GROUND_KEEPALIVE_S, ground_http
+from sd_schemas.commander import GROUND_HTTP_KEEPALIVE_S
 
 CLOSE_AFTER_S = 0.3
-UVICORN_KEEPALIVE_S = 5.0  # uvicorn's default ``timeout_keep_alive``, which the ground keeps
+IDLE_S = 3 * CLOSE_AFTER_S  # a wait well past the server's idle limit, on a slow runner too
 
 
 @dataclass
@@ -30,6 +33,7 @@ class Server:
     answered: int = 0
     stale: int = 0  # requests met by a close: the server was closing the idle connection
     methods: list[str] | None = None
+    reset: bool = False  # a stale request is met by a reset (RST), not a plain close
 
     @property
     def url(self) -> str:
@@ -67,6 +71,11 @@ async def server() -> AsyncIterator[Server]:
                     return
                 if last is not None and loop.time() - last >= CLOSE_AFTER_S:
                     state.stale += 1  # closed as it was reused: no answer at all
+                    if state.reset:
+                        sock = writer.get_extra_info("socket")
+                        sock.setsockopt(
+                            socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0)
+                        )
                     return
                 assert state.methods is not None
                 state.methods.append(method)
@@ -92,7 +101,7 @@ async def test_a_reused_connection_the_server_is_closing_gets_no_answer(server: 
     """The failure itself: httpx's own idle limit (5 s) reuses the connection."""
     async with httpx.AsyncClient(trust_env=False) as client:
         assert (await client.get(server.url + "/a")).status_code == 200
-        await asyncio.sleep(CLOSE_AFTER_S + 0.1)
+        await asyncio.sleep(IDLE_S)
         with pytest.raises(httpx.RemoteProtocolError):
             await client.get(server.url + "/a")
     assert server.stale == 1
@@ -103,7 +112,7 @@ async def test_a_get_on_a_stale_connection_is_asked_again(server: Server) -> Non
     g = GroundClient(server.url, "t", httpx.AsyncClient(trust_env=False))
     try:
         assert await g.skills() == []
-        await asyncio.sleep(CLOSE_AFTER_S + 0.1)
+        await asyncio.sleep(IDLE_S)
         assert await g.skills() == []
     finally:
         await g.aclose()
@@ -115,7 +124,7 @@ async def test_a_post_on_a_stale_connection_is_not_sent_twice(server: Server) ->
     g = GroundClient(server.url, "t", httpx.AsyncClient(trust_env=False))
     try:
         assert await g.skills() == []
-        await asyncio.sleep(CLOSE_AFTER_S + 0.1)
+        await asyncio.sleep(IDLE_S)
         with pytest.raises(GroundError):
             await g._request("POST", "/missions/m/decisions", json={})  # pyright: ignore[reportPrivateUsage]
     finally:
@@ -126,9 +135,65 @@ async def test_a_post_on_a_stale_connection_is_not_sent_twice(server: Server) ->
 async def test_idle_connections_are_dropped_before_the_server_drops_them(server: Server) -> None:
     """The ground's client keeps an idle connection shorter than the server: the next
     request opens a new one and nothing is lost (here with the delays scaled down)."""
-    assert GROUND_KEEPALIVE_S <= UVICORN_KEEPALIVE_S / 2
+    assert GROUND_KEEPALIVE_S <= GROUND_HTTP_KEEPALIVE_S / 2
     async with ground_http(keepalive_s=CLOSE_AFTER_S / 2, trust_env=False) as client:
         assert (await client.get(server.url + "/a")).status_code == 200
-        await asyncio.sleep(CLOSE_AFTER_S + 0.1)
+        await asyncio.sleep(IDLE_S)
         assert (await client.get(server.url + "/a")).status_code == 200
     assert server.stale == 0 and server.connections == 2
+
+
+async def test_a_get_on_a_reset_connection_is_asked_again(server: Server) -> None:
+    """A connection reset under a GET (``ReadError``) is as stale as one closed."""
+    server.reset = True
+    g = GroundClient(server.url, "t", httpx.AsyncClient(trust_env=False))
+    try:
+        assert await g.skills() == []
+        await asyncio.sleep(IDLE_S)
+        assert await g.skills() == []
+    finally:
+        await g.aclose()
+    assert server.stale == 1 and server.connections == 2 and server.answered == 2
+
+
+async def test_a_post_on_a_reset_connection_is_not_sent_twice(server: Server) -> None:
+    server.reset = True
+    g = GroundClient(server.url, "t", httpx.AsyncClient(trust_env=False))
+    try:
+        assert await g.skills() == []
+        await asyncio.sleep(IDLE_S)
+        with pytest.raises(GroundError):
+            await g._request("POST", "/missions/m/decisions", json={})  # pyright: ignore[reportPrivateUsage]
+    finally:
+        await g.aclose()
+    assert server.stale == 1 and server.methods == ["GET"]
+
+
+async def test_a_get_named_in_lower_case_is_asked_again(server: Server) -> None:
+    g = GroundClient(server.url, "t", httpx.AsyncClient(trust_env=False))
+    try:
+        await g._request("get", "/skills")  # pyright: ignore[reportPrivateUsage]
+        await asyncio.sleep(IDLE_S)
+        assert (await g._request("get", "/skills")).status_code == 200  # pyright: ignore[reportPrivateUsage]
+    finally:
+        await g.aclose()
+    assert server.stale == 1 and server.answered == 2
+
+
+async def test_a_stale_get_asked_again_is_logged_with_its_method_and_path(
+    server: Server, caplog: pytest.LogCaptureFixture
+) -> None:
+    g = GroundClient(server.url, "t", httpx.AsyncClient(trust_env=False))
+    try:
+        await g.skills()
+        await asyncio.sleep(IDLE_S)
+        with caplog.at_level("INFO", logger="sd_brain.ground"):
+            await g.skills()
+    finally:
+        await g.aclose()
+    assert "GET /skills: RemoteProtocolError, frågar igen" in caplog.text
+
+
+async def test_the_ground_client_never_goes_through_a_proxy_from_the_environment() -> None:
+    async with ground_http() as client:
+        assert client.trust_env is False
