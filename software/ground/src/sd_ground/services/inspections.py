@@ -103,6 +103,7 @@ __all__ = [
     "Look",
     "candidate_ref",
     "decided",
+    "flies_resume",
     "flown_on",
     "gate_facts",
     "lower",
@@ -776,6 +777,9 @@ async def _tell_closed(flow: MissionFlow, look: Look) -> None:
             "breakpoint": None if c is None else c.breakpoint,
             "resumed_command_id": None if resumed is None else str(resumed.id),
             "resumed_skill": None if resumed is None else resumed.skill,
+            "resume_command_id": (
+                None if c is None or c.resume_command_id is None else str(c.resume_command_id)
+            ),
             "sector_id": sector_id,
         },
         "issuer_kind": "brain" if brain else "operator",
@@ -905,8 +909,16 @@ def _flies_resume(
     executor never answers for its own resume (no acks), so its state names it by skill
     only: ``active_command_id`` is None and ``active_skill`` "resume" (one resume at a
     time onboard). A resume acked as an order is named by its id."""
+    resume = None if c.resume_command_id is None else str(c.resume_command_id)
+    return flies_resume(resume, active_command_id, active_skill)
+
+
+def flies_resume(
+    resume_command_id: str | None, active_command_id: str | None, active_skill: str | None
+) -> bool:
+    """``_flies_resume`` by the resume's id (a look's end rebuilt from the event log)."""
     if active_command_id is not None:
-        return active_command_id == str(c.resume_command_id)
+        return active_command_id == resume_command_id
     return active_skill == "resume"
 
 
