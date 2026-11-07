@@ -118,7 +118,9 @@ class Situation(SdModel):
     override: OperatorLatch | None
     vehicle: VehicleSummary
     active_command: Command | None
-    sectors: list[dict[str, Any]]  # {sector_id, name, area_m2, status, progress}
+    # {sector_id, name, area_m2, status, progress}; a done sector with a part no search saw
+    # also has unsearched_m2 and unsearched_pct (sd_ground.services.coverage)
+    sectors: list[dict[str, Any]]
     pins: list[MapPin]
     areas: list[Annotation]
     paths: list[Annotation] = Field(default_factory=list[Annotation])  # drawn paths pa-<n>

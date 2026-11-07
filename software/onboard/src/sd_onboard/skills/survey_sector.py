@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
 from dataclasses import replace
 from itertools import pairwise
 from typing import Any, ClassVar, Final
@@ -86,6 +86,37 @@ log = logging.getLogger("sd_onboard.survey")
 def _inside_m(route: list[Xy], c: Circle) -> float:
     """How much of the route lies inside the circle."""
     return sum(chord_m(a, b, c[0], c[1]) for a, b in pairwise(route))
+
+
+def _span(a: Xy, b: Xy, c: Circle) -> tuple[float, float] | None:
+    """The part of the leg ``a``-``b`` inside the circle, as fractions of the leg."""
+    (cx, cy), r = c
+    dx, dy, fx, fy = b[0] - a[0], b[1] - a[1], a[0] - cx, a[1] - cy
+    qa = dx * dx + dy * dy
+    qb, qc = 2 * (fx * dx + fy * dy), fx * fx + fy * fy - r * r
+    if qa == 0.0:
+        return None
+    disc = qb * qb - 4 * qa * qc
+    if disc <= 0.0:
+        return None
+    root = math.sqrt(disc)
+    t0, t1 = max(0.0, (-qb - root) / (2 * qa)), min(1.0, (-qb + root) / (2 * qa))
+    return (t0, t1) if t1 > t0 else None
+
+
+def _inside_any_m(route: list[Xy], cs: Sequence[Circle]) -> float:
+    """How much of the route lies inside at least one of the circles: a stretch inside two
+    that overlap counts once."""
+    total = 0.0
+    for a, b in pairwise(route):
+        spans = sorted(s for c in cs if (s := _span(a, b, c)) is not None)
+        covered, end = 0.0, 0.0
+        for t0, t1 in spans:
+            if t1 > end:
+                covered += t1 - max(t0, end)
+                end = t1
+        total += covered * math.dist(a, b)
+    return total
 
 
 def next_index(seq: int, base_index: int, seq_offset: int) -> int:
@@ -224,19 +255,22 @@ class SurveyRun:
         return found
 
     def regained_m(
-        self, in_force: Collection[Id], plane: Plane, old: list[Xy], new: list[Xy]
+        self, keepouts: Sequence[Keepout], plane: Plane, old: list[Xy], new: list[Xy]
     ) -> float:
         """How much more of the search inside the cylinders the last plan went around
-        (``blocked``) and that are no longer ``in_force`` the route ``new`` flies than
-        ``old`` does: a rejected candidate's area searched again. A cylinder handed over
-        under another id is gone around by ``new`` too, and regains nothing."""
-        regained = 0.0
-        for k, _ in self.blocked:
-            if k.keepout_id in in_force:
-                continue
-            c = (plane.xy(k.lat, k.lon), k.radius_m)
-            regained += max(0.0, _inside_m(new, c) - _inside_m(old, c))
-        return regained
+        (``blocked``) and that are no longer among ``keepouts`` (those in force) the route
+        ``new`` flies than ``old`` does: a rejected candidate's area searched again. Where
+        lifted cylinders overlap, a stretch counts once. A cylinder handed over under
+        another id is gone around by ``new`` too, and regains nothing."""
+        in_force = {k.keepout_id for k in keepouts}
+        lifted = [
+            (plane.xy(k.lat, k.lon), k.radius_m)
+            for k, _ in self.blocked
+            if k.keepout_id not in in_force
+        ]
+        if not lifted:
+            return 0.0
+        return max(0.0, _inside_any_m(new, lifted) - _inside_any_m(old, lifted))
 
     def plan(self, ctx: PlanContext) -> SkillPlan:
         self.around_keepouts(ctx)

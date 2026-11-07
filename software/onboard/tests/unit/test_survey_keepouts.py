@@ -14,7 +14,7 @@ from onboard_helpers import ONBOARD_SKILLS, PLANE, Rig, at, charter, rig, square
 from sd_mav.mission import MISSION
 from sd_mav.modes import CopterMode
 from sd_onboard.executor import executor as executor_module
-from sd_onboard.executor.keepout_reflex import stop_m, survey_run
+from sd_onboard.executor.keepout_reflex import path_clear, stop_m, survey_run
 from sd_onboard.skills.survey_sector import BLOCKED_MIN_M, SurveyRun
 from sd_safety import evaluate
 from sd_safety.keepout import circles, xy_route_violation
@@ -222,6 +222,132 @@ async def test_a_straighten_the_gate_refuses_is_not_flown(
         assert [d["codes"] for d in refusals] == [["ROUTE_BATTERY"]], refusals
         assert run_of(r).waypoints == before
         assert r.ex.state == S.SURVEY and "superseded" not in r.up.stages(cmd.command_id)
+
+
+@pytest.mark.parametrize("why", ["gate", "path"])
+async def test_a_refused_straighten_is_tried_again_and_told_once(
+    monkeypatch: pytest.MonkeyPatch, why: str
+) -> None:
+    """A straighten refused by the gate or by ``path_clear`` is not given up on: tried
+    again while the way around is flown, told once for the same reason, and flown once
+    allowed, so the lifted area is still searched."""
+    async with rig() as r:
+        cmd, _ = await _search_around(r, keepout(0, 120, 40))
+        before = list(run_of(r).waypoints)
+        refuse = True
+        code = "ROUTE_BATTERY" if why == "gate" else "KEEPOUT_VIOLATION"
+        real_evaluate, real_clear = evaluate, path_clear
+
+        def gate(req: GateRequest, ctx: GateContext) -> GateDecision:
+            d = real_evaluate(req, ctx)
+            if refuse and why == "gate":
+                return d.model_copy(update={"decision": "REJECT", "reason_codes": [code]})
+            return d
+
+        def clear(*a: object, **kw: object) -> bool:
+            return False if refuse and why == "path" else real_clear(*a, **kw)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(executor_module, "evaluate", gate)
+        monkeypatch.setattr(executor_module, "path_clear", clear)
+        install(r)
+        await r.run(executor_module._STRAIGHTEN_RETRY_MS / 1000 * 2.5)  # several tries
+        refusals = [d for t, _, d in r.up.events if t == "executor.keepout_straighten_refused"]
+        assert [d["codes"] for d in refusals] == [[code]], refusals
+        assert "executor.keepout_straighten" not in r.up.kinds()
+        assert run_of(r).waypoints == before and r.ex.state == S.SURVEY
+        refuse = False
+        await r.run(executor_module._STRAIGHTEN_RETRY_MS / 1000 + 0.5)
+        assert r.up.kinds().count("executor.keepout_straighten") == 1, r.up.kinds()
+        assert not run_of(r).detours()
+        assert len([t for t, _, _ in r.up.events if t.endswith("straighten_refused")]) == 1
+        assert "superseded" not in r.up.stages(cmd.command_id)
+
+
+async def test_two_refusal_reasons_that_take_turns_are_told_once_each() -> None:
+    """A straighten refused by turns for a cylinder on the way and by the gate: each
+    reason is told once, not again on every retry."""
+    async with rig() as r:
+        await _search_around(r, keepout(0, 120, 40))
+        turns = [("KEEPOUT_VIOLATION",), ("ROUTE_BATTERY",)]
+        tries: list[tuple[str, ...]] = []
+
+        def refusal(*_: object, **__: object) -> tuple[str, ...]:
+            tries.append(turns[len(tries) % 2])
+            return tries[-1]
+
+        r.ex._route_refusal = refusal  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
+        install(r)
+        await r.run(executor_module._STRAIGHTEN_RETRY_MS / 1000 * 4.5)
+        assert len(tries) >= 4, tries
+        refusals = [d for t, _, d in r.up.events if t == "executor.keepout_straighten_refused"]
+        assert [d["codes"] for d in refusals] == [list(c) for c in turns], refusals
+
+
+async def test_a_refused_straighten_does_not_carry_over_to_the_next_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A search whose straighten was refused is replaced by a new order: the refusal's
+    retry time and the reasons told belong to the old order. The new order's own refused
+    straighten is tried at once and told, though for the same reason."""
+    async with rig() as r:
+        first, _ = await _search_around(r, keepout(0, 120, 40))
+
+        def refused(req: GateRequest, ctx: GateContext) -> GateDecision:
+            return evaluate(req, ctx).model_copy(
+                update={"decision": "REJECT", "reason_codes": ["ROUTE_BATTERY"]}
+            )
+
+        monkeypatch.setattr(executor_module, "evaluate", refused)
+        install(r)
+        await r.run(0.5)
+        assert r.up.kinds().count("executor.keepout_straighten_refused") == 1, r.up.kinds()
+        monkeypatch.setattr(executor_module, "evaluate", evaluate)
+        second = await r.send(
+            r.order("survey_sector", {"polygon": BOX, "spacing_m": 30, "speed_ms": 8}), 0.0
+        )
+        # Gone as the new order starts, not only once the reflex next runs for it.
+        assert r.ex.active is not None and r.ex.active.command_id == second.command_id
+        assert r.ex._lift_retry_ms is None  # pyright: ignore[reportPrivateUsage]
+        assert not r.ex._lift_refused  # pyright: ignore[reportPrivateUsage]
+        assert "superseded" in r.up.stages(first.command_id)
+        install(r, keepout(0, 120, 40))
+        await r.run(_GAP_S)
+        assert r.up.kinds().count("executor.keepout_reroute") == 2, r.up.kinds()
+        monkeypatch.setattr(executor_module, "evaluate", refused)
+        install(r)
+        await r.run(0.5)
+        refusals = [d for t, _, d in r.up.events if t == "executor.keepout_straighten_refused"]
+        assert [d["command_id"] for d in refusals] == [
+            str(first.command_id),
+            str(second.command_id),
+        ], refusals
+
+
+def _run_blocked_by(*ks: Keepout) -> SurveyRun:
+    ends = [LatLon(lat=lat, lon=lon) for lat, lon in (at(-100, 0), at(100, 0))]
+    run = SurveyRun(new_id(), ends, 40.0, 8.0, skill="survey_sector")
+    run.blocked = [(k, 0.0) for k in ks]
+    return run
+
+
+def test_regained_m_counts_only_lifted_cylinders_and_never_below_zero() -> None:
+    """``regained_m``: a cylinder still in force regains nothing; a route that searches
+    less of a lifted one than before counts zero, not less."""
+    lifted, kept = keepout(-40, 0, 10), keepout(40, 0, 10)
+    run = _run_blocked_by(lifted, kept)
+    around: list[Xy] = [(-100, 0), (-60, 0), (-40, 20), (-20, 0), (20, 0), (40, 20), (60, 0)]
+    straight: list[Xy] = [(-100, 0), (100, 0)]
+    assert run.regained_m([kept], PLANE, around, straight) == pytest.approx(20.0, abs=0.1)
+    assert run.regained_m([lifted, kept], PLANE, around, straight) == 0.0
+    assert run.regained_m([kept], PLANE, straight, around) == 0.0
+
+
+def test_regained_m_counts_a_stretch_inside_two_lifted_cylinders_once() -> None:
+    """Two lifted cylinders that overlap: the search inside both counts once."""
+    run = _run_blocked_by(keepout(-5, 0, 10), keepout(5, 0, 10))
+    around: list[Xy] = [(-100, 0), (-30, 0), (-20, 30), (20, 30), (30, 0), (100, 0)]
+    straight: list[Xy] = [(-100, 0), (100, 0)]
+    assert run.regained_m([], PLANE, around, straight) == pytest.approx(30.0, abs=0.1)
 
 
 async def test_a_lift_with_a_new_cylinder_on_the_pattern_rest_goes_around_the_new_one() -> None:

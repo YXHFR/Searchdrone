@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
 from shapely.geometry import box
+from structlog.testing import capture_logs
 
 from sd_geo.coverage import REACH_EXTRA_M
 from sd_ground.services import coverage
@@ -54,3 +59,134 @@ def test_state_is_per_mission() -> None:
     assert state.of("b").finished == set()
     state.forget("a")
     assert state.of("a").finished == set()
+
+
+SPACING = 30.0
+
+
+def _lawnmower(skip: tuple[float, float, float] | None = None) -> list[tuple[float, float, float]]:
+    """Track points every 4 m (8 m/s at 2 Hz) along a lawnmower over ``SECTOR`` at 30 m
+    spacing. ``skip`` (north of the leg, from east, to east): that stretch of the leg is
+    flown 40 m north of it instead, as a way around a cylinder there would."""
+    points: list[tuple[float, float, float]] = []
+    for i, north in enumerate(range(15, 200, 30)):
+        east = list(range(15, 186, 4))
+        for e in east if i % 2 == 0 else reversed(east):
+            n = float(north)
+            if skip is not None and skip[0] == north and skip[1] <= e <= skip[2]:
+                n += 40.0
+            points.append(at(e, n, 40.0))
+    return points
+
+
+def _gap(points: list[tuple[float, float, float]]) -> float:
+    seen = coverage.covered_area(points, SECTOR, PLANE, alt_m=40, spacing_m=SPACING)
+    return coverage.gap_m2(SECTOR, seen)
+
+
+def test_a_full_search_leaves_no_gap() -> None:
+    """The slivers a full search leaves at the edges and corners are below the floor."""
+    assert _gap(_lawnmower()) == 0.0
+
+
+def test_a_leg_skipped_for_90_m_behind_the_drone_is_a_gap() -> None:
+    """The #234 case: the way around a cylinder cut 90 m of a leg; the cylinder was lifted
+    after the drone had passed, so nothing searched it again. The part the neighbouring
+    legs do not reach is about 26 m wide."""
+    m2 = _gap(_lawnmower(skip=(105, 60, 150)))
+    width = 2 * SPACING - 2 * (SPACING / 2 + REACH_EXTRA_M)
+    assert 0.6 * 90 * width < m2 < 1.2 * 90 * width, m2
+
+
+def test_the_floor_is_the_width_and_the_area_both() -> None:
+    """A part counts when a disc ``GAP_MIN_WIDTH_M`` wide fits and it is at least
+    ``GAP_MIN_M2``: tested on both sides of each."""
+    w, a = coverage.GAP_MIN_WIDTH_M, coverage.GAP_MIN_M2
+
+    def left(hole: object) -> float:
+        return coverage.gap_m2(SECTOR, SECTOR.difference(hole))  # type: ignore[arg-type]
+
+    side = a**0.5
+    assert left(box(50, 50, 50 + side + 0.5, 50 + side + 0.5)) > 0  # just over the area
+    assert left(box(50, 50, 50 + side - 0.5, 50 + side - 0.5)) == 0  # just under it
+    long = 2 * a / w
+    assert left(box(50, 50, 50 + long, 50 + w + 0.2)) > 0  # just wider than the floor
+    assert left(box(50, 50, 50 + long, 50 + w - 0.2)) == 0  # a sliver: just narrower
+
+
+def test_nothing_seen_is_all_gap() -> None:
+    assert coverage.gap_m2(SECTOR, None) == SECTOR.area
+
+
+MISSION: Any = SimpleNamespace(id="m", vehicle_id="v")
+
+
+class _Clock:
+    t = 100.0
+
+    def monotonic(self) -> float:
+        return self.t
+
+
+def _flow(statuses: Any) -> Any:
+    """Just enough of a mission flow for ``coverage.tick``: one done sector, no searches."""
+    ring = [[lon, lat] for lat, lon in (PLANE.latlon(x, y) for x, y in SECTOR.exterior.coords)]
+    area = {"type": "Polygon", "coordinates": [ring]}
+    charter = SimpleNamespace(
+        home=SimpleNamespace(lat=PLANE.lat0, lon=PLANE.lon0),
+        sectors=[SimpleNamespace(sector_id="A", area=area)],
+    )
+    alerts: list[Any] = []
+
+    async def active_charter(_: Any) -> Any:
+        return charter
+
+    async def commands(*_: Any) -> list[Any]:
+        return []
+
+    return SimpleNamespace(
+        coverage=coverage.Coverage(),
+        g=SimpleNamespace(clock=_Clock(), repo=None),
+        looks={},
+        active_charter=active_charter,
+        repo=SimpleNamespace(commands=commands, sector_statuses=statuses),
+        alert=lambda *a, **kw: alerts.append((a, kw)),
+        alerts=alerts,
+    )
+
+
+async def test_a_failing_status_read_never_leaves_the_tick() -> None:
+    """The rest of the vehicle's ground tick (link loss, looks) still runs: the error is
+    logged and the gaps are tried again on the next tick."""
+
+    async def broken(_: str) -> dict[str, str]:
+        raise RuntimeError("db")
+
+    flow = _flow(broken)
+    with capture_logs() as logs:
+        await coverage.tick(flow, MISSION)
+    assert [e["event"] for e in logs] == ["coverage.tick_failed"]
+    assert flow.coverage.of("m").gaps_for is None  # tried again
+
+
+async def test_a_gap_that_cannot_be_worked_out_is_none_and_not_tried_every_second(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    async def statuses(_: str) -> dict[str, str]:
+        calls.append("read")
+        return {"A": "done"}
+
+    def broken(*_: Any) -> float:
+        raise ValueError("geometry")
+
+    monkeypatch.setattr(coverage, "gap_m2", broken)
+    flow = _flow(statuses)
+    with capture_logs() as logs:
+        await coverage.tick(flow, MISSION)
+        flow.g.clock.t += coverage.EVERY_S
+        await coverage.tick(flow, MISSION)
+    assert [e["event"] for e in logs] == ["coverage.gap_failed"]
+    assert flow.coverage.of("m").gaps == {"A": (0.0, 0.0)} and not flow.alerts
+    assert calls == ["read"]  # nothing changed: not read again on the next tick

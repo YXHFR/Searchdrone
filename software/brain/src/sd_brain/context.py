@@ -158,7 +158,12 @@ def situation_text(s: Situation, now: dt.datetime) -> str:
         parts = []
         for sec in s.sectors:
             pct = round(100 * float(sec.get("progress") or 0))
-            parts.append(f"{sec.get('sector_id')} {pct} %")
+            text = f"{sec.get('sector_id')} {pct} %"
+            gap = sec.get("unsearched_m2")
+            if isinstance(gap, int | float) and gap > 0:
+                share = float(sec.get("unsearched_pct") or 0)
+                text += f" (klar men ca {round(gap, -2):.0f} m² ej sökt, {share:.0f} %)"
+            parts.append(text)
         lines.append("Sektorer: " + ", ".join(parts))
     elif s.charter is not None and s.charter.sectors:
         lines.append("Sektorer: " + ", ".join(f"{x.sector_id} 0 %" for x in s.charter.sectors))
