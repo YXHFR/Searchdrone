@@ -154,7 +154,12 @@ async def test_cloud_sends_reasoning_provider_and_tools() -> None:
     assert body["model"] == "z-ai/glm-5.3-flash"
     assert body["reasoning"] == {"effort": "low", "exclude": True}
     # no ground station has said its profile: zero data retention
-    assert body["provider"] == {"data_collection": "deny", "require_parameters": True, "zdr": True}
+    assert body["provider"] == {
+        "data_collection": "deny",
+        "require_parameters": True,
+        "zdr": True,
+        "order": ["deepinfra", "fireworks", "together"],
+    }
     assert body["tool_choice"] == "auto" and body["tools"] == [{"type": "function"}]
     assert seen[0].headers["authorization"] == f"Bearer {KEY}"
 
@@ -173,6 +178,7 @@ async def test_real_flight_profile_sends_zdr_to_the_cloud(profile: str) -> None:
         "data_collection": "deny",
         "require_parameters": True,
         "zdr": True,
+        "order": ["deepinfra", "fireworks", "together"],
     }
 
 
