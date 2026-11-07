@@ -658,6 +658,61 @@ async def test_a_drones_own_cylinder_blocks_through_its_detections_candidate(r: 
         await client.aclose()
 
 
+async def test_a_cylinder_gone_around_before_its_detection_has_a_candidate_blocks_it(
+    r: Rig,
+) -> None:
+    """The drone's own cylinder is made the moment it sees a person; the search can go
+    around it before the search service has put that detection in a candidate (SK09
+    seed 2: 370 ms between the two). The event is not sent again, so the block is kept by
+    its detection: the candidate it joins is first in the queue and high from its very
+    first card, ahead of a candidate with a higher priority. The same block again keeps
+    no second row; a larger one does; a block of a detection id no detection can have is
+    left out."""
+    mid = await r.open_mission()
+    other = revision(r, priority=0.5, state="ready")
+    assert (await post(r, mid, other)).status_code == 200
+    service, client = search_service(r, red_profile(r))
+    try:
+        seen = person(r, 0, 100)
+        await send(r, seen)
+        did = str(seen.detection_id)
+
+        def blocked(m: float, source_id: str = did) -> dict[str, Any]:
+            return {
+                "command_id": str(new_id()),
+                "skill": "resume",
+                "blocked": [{"keepout_id": str(new_id()), "source": "detection",
+                             "source_id": source_id, "skipped_m": m}],
+            }  # fmt: skip
+
+        await candidates_service.on_survey_blocked(r.flow, mid, VID, blocked(74.6))
+        await candidates_service.on_survey_blocked(r.flow, mid, VID, blocked(74.6))
+        await candidates_service.on_survey_blocked(r.flow, mid, VID, blocked(60.0))
+        await candidates_service.on_survey_blocked(r.flow, mid, VID, blocked(80.0, "not-a-uuid"))
+        assert await candidates_service.repo(r.flow).pending_blocks(mid) == {did: 74.6}
+        assert (await queue(r, mid))["items"][0]["candidate_id"] == other["candidate_id"]
+
+        assert await service.step() == 1
+        top = (await queue(r, mid))["items"][0]
+        detail = (await r.panel.get(f"/api/v1/candidates/{top['candidate_id']}")).json()
+        assert [o["detection_id"] for o in detail["observations"]] == [did]
+        assert (top["blocks_survey_m"], top["priority_class"]) == (74.6, "high")
+        new = [
+            e.data
+            for e in r.g.bus.replay(r.g.bus.server_epoch, 0) or []
+            if e.topic == "candidates"
+            and e.type == "candidate.new"
+            and e.data["candidate_id"] == top["candidate_id"]
+        ]
+        assert [d["blocks_survey_m"] for d in new] == [74.6]  # the first card says so
+
+        await candidates_service.on_survey_blocked(r.flow, mid, VID, blocked(90.0))
+        assert (await queue(r, mid))["items"][0]["blocks_survey_m"] == 90.0
+        assert await _marks(r, mid) == [(top["candidate_id"], 90.0)]
+    finally:
+        await client.aclose()
+
+
 # --- executor.survey_blocked: merges, bad numbers, the same news again (review of #215) --
 
 
