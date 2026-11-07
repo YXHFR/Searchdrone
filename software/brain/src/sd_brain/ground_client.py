@@ -19,6 +19,7 @@ import websockets
 from pydantic import TypeAdapter, ValidationError
 
 from sd_brain.charter_draft import CharterError, CharterProposalOutcome
+from sd_brain.ground_http import ground_http
 from sd_schemas.api import ChatMessage
 from sd_schemas.charter import CharterProposal
 from sd_schemas.commander import (
@@ -124,7 +125,7 @@ class GroundClient:
     ) -> None:
         self.base = commander_url.rstrip("/")
         self._token = token
-        self._client = client or httpx.AsyncClient(timeout=5.0)
+        self._client = client or ground_http()
         self.stream = StreamState()
         self._ws: Any = None
 
@@ -137,7 +138,19 @@ class GroundClient:
 
     async def _request(self, method: str, path: str, **kw: Any) -> httpx.Response:
         try:
-            resp = await self._client.request(method, self.base + path, headers=self._headers, **kw)
+            try:
+                resp = await self._client.request(
+                    method, self.base + path, headers=self._headers, **kw
+                )
+            except httpx.RemoteProtocolError:
+                # The server closed the connection without an answer (a stale pooled
+                # connection): a GET changes nothing, so it is asked once more on a new
+                # one. An order or a post is not sent twice: its caller hears of it.
+                if method != "GET":
+                    raise
+                resp = await self._client.request(
+                    method, self.base + path, headers=self._headers, **kw
+                )
         except httpx.HTTPError as exc:
             raise GroundError(f"sd-ground svarar inte ({type(exc).__name__})") from None
         if resp.status_code == 401:
