@@ -741,10 +741,47 @@ async def test_stop_during_the_search_flown_on_reports_it_replaced() -> None:
         assert states == [S.HELD]  # sent once HELD is set, never before
 
 
-@pytest.mark.parametrize("kind", ["stop", "takeover"])
+@pytest.mark.parametrize(
+    ("cause", "held_by"), [("fc_silent", "fc_silent"), ("mode_change", "external")]
+)
+async def test_the_search_flown_on_is_reported_replaced_once_held(cause: str, held_by: str) -> None:
+    """The flight controller's failsafe and a mode change no one ordered set HELD first and
+    report the search flown on as replaced after, the same as STOP."""
+    async with rig() as r:
+        survey, cmd = await _looking_from_a_search(r)
+        r.ex.on_inspect_outcome(
+            InspectOutcome(command_id=cmd.command_id, outcome="resume"), new_id()
+        )
+        await r.until(lambda: bool(events(r, "inspect.closed")), 60)
+        sent = r.up.event
+        states: list[S] = []
+
+        def event(kind: str, severity: str, data: dict[str, Any]) -> None:
+            if kind == "inspect.resume_ended":
+                states.append(r.ex.state)
+            sent(kind, severity, data)
+
+        r.up.event = event  # type: ignore[method-assign]
+        if cause == "fc_silent":
+            r.fc.silent = True
+            await r.run(4)
+        else:
+            await r.until(lambda: r.fc.mode == CopterMode.AUTO, 5)  # the search flies on
+            await r.run(1)  # and the executor has seen it
+            r.fc.set_mode_external(CopterMode.LOITER)
+            await r.run(OVERRIDE_NOTICE_WINDOW_S + 0.5)
+        assert r.ex.state == S.HELD and r.ex.held_by == held_by
+        (end,) = events(r, "inspect.resume_ended")
+        assert end["status"] == "superseded"
+        assert end["resumed_command_id"] == str(survey.command_id)
+        assert states == [S.HELD]  # sent once HELD is set, never before
+
+
+@pytest.mark.parametrize("kind", ["stop", "takeover", "return_home"])
 async def test_a_report_that_cannot_be_sent_never_stands_in_the_way_of_stop(kind: str) -> None:
-    """``inspect.resume_ended`` is only a report: STOP (and a takeover) reach HELD and the
-    rest of the way goes on even when it cannot be sent."""
+    """``inspect.resume_ended`` is only a report: STOP, FLY HOME and a takeover reach HELD
+    (FLY HOME's flight home is the flight controller's own) and the rest of the way goes on
+    even when it cannot be sent."""
     async with rig() as r:
         _, cmd = await _looking_from_a_search(r)
         r.ex.on_inspect_outcome(
@@ -759,8 +796,8 @@ async def test_a_report_that_cannot_be_sent_never_stands_in_the_way_of_stop(kind
             sent(kind_, severity, data)
 
         r.up.event = event  # type: ignore[method-assign]
-        if kind == "stop":
-            r.ex.on_override(r.notice("stop"))
+        if kind in ("stop", "return_home"):
+            r.ex.on_override(r.notice(kind))
             assert "executor.control_taken" in r.up.kinds()
         else:
             take = ManualTakeover(

@@ -393,6 +393,11 @@ class _SoftPass:
     radius_m: float
 
 
+def _earliest(a: float | None, b: float | None) -> float | None:
+    """The earlier of two pass starts; unknown (None) if either is."""
+    return None if a is None or b is None else min(a, b)
+
+
 def _handed_over(k: Keepout, gone: Sequence[_SoftPass], plane: Plane) -> _SoftPass | None:
     """The pass a new cylinder ``k`` takes over from cylinders no longer in force that
     it overlaps (grown, merged or handed over to the ground's under a new id: the same
@@ -901,8 +906,10 @@ class Executor:
         """Stop the running order without sending anything; the order dropped, if any.
 
         ``report=False`` leaves ``inspect.resume_ended`` to the caller
-        (:meth:`_report_dropped`), which sends it once the new state is set: STOP, FLY HOME
-        and a takeover set HELD first."""
+        (:meth:`_report_dropped`), which sends it once the new state is set: STOP, FLY HOME,
+        a takeover, an unexpected mode change and an FC failsafe set HELD or FAILSAFE
+        first. The order's own ``superseded`` ack is only a report too: a failure to send it
+        is logged and never stops the drop."""
         active = self.active
         if active is None:
             return None
@@ -916,7 +923,10 @@ class Executor:
         if stage is not None and report:
             self._report_dropped(active, stage, codes)
         if stage is not None and active.ack_done:
-            self._ack(active.command_id, stage, codes)
+            try:
+                self._ack(active.command_id, stage, codes)
+            except Exception:
+                log.exception("executor: the dropped order's ack not sent")
         return active
 
     def _report_dropped(
@@ -2073,7 +2083,10 @@ class Executor:
         self._inspect_tick(now)
         self._inspect_watch()
         self._inspect_abort_later()
-        self._inspect_resume_watch()
+        try:
+            self._inspect_resume_watch()  # only a report: never in the way of the tick
+        except Exception:
+            log.exception("executor: inspect.resume_ended not sent")
         self._find_watch_tick(now)
         if self._gcs_continue and self.state == S.HELD and t.fc_connected:
             self._gcs_home_from_hold()
@@ -2242,12 +2255,14 @@ class Executor:
         keepout_id: a search route continues that pass and counts that time
         (``sd_safety.keepout.passes``). A break outside shorter than the gap is no new pass
         (owner decision 2026-11-04): the time counts on from when the drone came in. A
-        cylinder that comes around the drone starts at 0, unless the drone was inside
-        unconfirmed cylinders already: then it takes the longest of their times (a cylinder
-        grown, merged or handed over to the ground's is the same person, and gives no fresh
-        budget). A cylinder that replaces one under a new id (the old one no longer in force,
-        the two overlapping) takes its pass over, also when the drone had left it less than
-        the gap ago (``_handed_over``).
+        cylinder that comes around the drone starts at 0, unless the drone was on a pass
+        through unconfirmed cylinders already (inside, or out of one less than the gap ago):
+        then it takes the longest of their times (a cylinder grown, merged or handed over to
+        the ground's is the same person, and gives no fresh budget). A cylinder that replaces
+        one under a new id (the old one no longer in force, the two overlapping) takes its
+        pass over, also when the drone had left it less than the gap ago (``_handed_over``);
+        around the drone it takes the earlier of that pass and the one above (unknown if
+        either is), so a handover never gives more time than a new cylinder would get.
 
         Unknown time counts as the whole budget used (``KEEPOUT_PASS_MAX_S``): the first
         leg may only leave the cylinder, never go deeper, and not come back in within the
@@ -2275,7 +2290,10 @@ class Executor:
             k.keepout_id for k in soft if math.dist(here, plane.xy(k.lat, k.lon)) < k.radius_m
         }
         before = self._soft_pass
-        came = [p.since for p in before.values() if p.left is None]  # in at the last look
+        # On a pass at the last look: inside, or out less than the gap (the same pass).
+        came = [
+            p.since for p in before.values() if p.left is None or now - p.left < KEEPOUT_PASS_GAP_S
+        ]
         first, self._soft_primed = not self._soft_primed, True
         careful = (
             self._restarted_at is not None and now - self._restarted_at < KEEPOUT_RESTART_CAUTION_S
@@ -2288,11 +2306,19 @@ class Executor:
         passes: dict[UUID, _SoftPass] = {}
         for k in soft:
             kid = k.keepout_id
-            was = before.get(kid) or _handed_over(k, gone, plane)
+            was = before.get(kid)
+            handed = None if was is not None else _handed_over(k, gone, plane)
             if kid in inside:
-                since = fresh if was is None else was.since
+                if was is not None:
+                    since = was.since
+                elif handed is None:
+                    since = fresh
+                else:  # new around the drone: never later than ``fresh`` (never looser)
+                    since = _earliest(fresh, handed.since)
                 passes[kid] = _SoftPass(since, None, k.lat, k.lon, k.radius_m)
-            elif was is not None:
+                continue
+            was = was or handed
+            if was is not None:
                 left = now if was.left is None else was.left
                 if now - left < KEEPOUT_PASS_GAP_S:  # out for a moment: the same pass
                     passes[kid] = _SoftPass(was.since, left, k.lat, k.lon, k.radius_m)
@@ -2649,10 +2675,12 @@ class Executor:
         target = self.target_of(key)
         if isinstance(target, Refusal):
             return
-        self._drop_active(stage="superseded", codes=("ONB_CONTROL_HELD",))
+        codes = ("ONB_CONTROL_HELD",)
+        dropped = self._drop_active(stage="superseded", codes=codes, report=False)
         self.auth.drop_ours()  # a mode of ours that shows after this is not taken as ours
         self._taken_by = "fc_failsafe"
         self._enter(target, held_by=held_by, cause=str(key))
+        self._report_dropped(dropped, "superseded", codes)  # once the new state is set
         self.emit(event, {})
 
     def _watch_landing(self) -> None:
@@ -2708,8 +2736,10 @@ class Executor:
                 if not isinstance(target, Refusal):
                     self.control_suspended = True  # first, so nothing more goes out
                     self._taken_by = "fc_failsafe" if self.auth.failsafe_near_change(t) else "human"
-                    self._drop_active(stage="superseded", codes=("ONB_CONTROL_HELD",))
+                    codes = ("ONB_CONTROL_HELD",)
+                    dropped = self._drop_active(stage="superseded", codes=codes, report=False)
                     self._enter(target, held_by=held_by, cause=f"mode {change.mode}")
+                    self._report_dropped(dropped, "superseded", codes)  # once HELD is set
                     self.emit("control_taken", {"fc_mode": change.mode, "held_by": held_by})
         if self.state == S.HELD and self.auth.change is not None:
             if self.auth.in_window(now):
