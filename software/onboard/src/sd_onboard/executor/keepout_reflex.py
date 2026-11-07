@@ -100,6 +100,10 @@ __all__ = [
 # ring is the order itself: a ring a cylinder now crosses is held, not bent.
 REROUTABLE: Final = frozenset({"survey_sector", "follow_path", "resume"})
 LOCAL_KEEPOUT_HANDOVER_MS: Final = 60_000  # a ground install this much later replaces it
+# A candidate the pilot rejected in its look: the ground's cylinder around it is no longer
+# in force onboard (the ground releases it, ``KeepoutInstall``), at most this long while no
+# install without it has come; after that it is in force again until one does.
+REJECTED_RELEASE_WAIT_MS: Final = 30_000
 LOCAL_KEEPOUTS_MAX: Final = 100
 # The way out of any other order (not ``Replans``) boxed in over a person: an internal goto
 # along the shortest way out at its height (``exit_point``), then the keep-out hover.

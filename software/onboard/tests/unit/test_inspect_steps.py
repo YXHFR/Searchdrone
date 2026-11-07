@@ -14,6 +14,7 @@ from onboard_helpers import ONBOARD_SKILLS, PLANE, Rig, at, charter, rig, square
 
 from sd_mav.modes import CopterMode
 from sd_onboard.executor.inspect import INTERNAL_INSPECT_CLIMB, abort_reason
+from sd_onboard.executor.keepout_reflex import REJECTED_RELEASE_WAIT_MS
 from sd_onboard.executor.limits import LimitAction
 from sd_onboard.executor.link_loss import LinkLossInput, LinkLossRule
 from sd_onboard.skills import inspect_steps
@@ -24,7 +25,12 @@ from sd_safety.floor import FloorPack, floor_at
 from sd_schemas.base import LatLon, new_id
 from sd_schemas.executor import ExecutorState as S
 from sd_schemas.executor import LinkLossPhase
-from sd_schemas.inspect import AWAIT_DECISION_S, DESCENT_MAX_MS, LOWER_OFFER_S
+from sd_schemas.inspect import (
+    AWAIT_DECISION_S,
+    DESCENT_MAX_MS,
+    LOWER_OFFER_S,
+    InspectOutcomeKind,
+)
 from sd_schemas.keepout import Keepout
 from sd_schemas.link import (
     BBox,
@@ -300,7 +306,12 @@ async def test_without_a_map_it_looks_from_its_height_then_waits_and_flies_back(
         assert back["command_id"] == str(cmd.command_id)
 
 
-async def test_the_candidates_own_cylinder_is_suspended_until_the_return() -> None:
+@pytest.mark.parametrize("outcome", ["unsure", "resume", "rejected"])
+async def test_the_candidates_own_cylinder_is_suspended_until_the_return(
+    outcome: InspectOutcomeKind,
+) -> None:
+    """Back in force for the return, unless the pilot rejected the candidate: then it is
+    not in force onboard while the ground releases it (``Executor._rejected``)."""
     async with rig() as r:
         await r.install(over())
         await r.takeoff(40)
@@ -319,9 +330,9 @@ async def test_the_candidates_own_cylinder_is_suspended_until_the_return() -> No
         assert len(r.ex.local_keepouts) == 1
         await awaiting(r)
         r.ex.on_inspect_outcome(
-            InspectOutcome(command_id=cmd.command_id, outcome="rejected"), new_id()
+            InspectOutcome(command_id=cmd.command_id, outcome=outcome), new_id()
         )
-        assert own in r.ex.keepouts_in_force()
+        assert (own in r.ex.keepouts_in_force()) == (outcome != "rejected")
 
 
 async def test_meadow_steps_down_to_30_m_and_asks_then_stays_when_no_answer() -> None:
@@ -649,6 +660,59 @@ async def test_stills_while_waiting_keep_the_wait() -> None:
         stills = await r.send(r.order("capture_stills", {"count": 1}), 2)
         assert "done" in r.up.stages(stills.command_id)
         assert r.ex.hold_reason == "inspect_await" and r.ex.snapshot().inspect is not None
+
+
+async def test_a_rejected_candidates_cylinder_is_not_gone_around_on_the_way_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pilot rejects the candidate: the drone's way back and the search it flies on are
+    planned at once, before the ground's install that releases its cylinder comes. That
+    cylinder is not in force onboard from the decision, so the search is not flown around
+    it (SITL SK10[3], #240: the resume left out 72 m around the rejected candidate). An
+    install that still holds it (sent before the ground heard) keeps it out of force, at
+    most ``REJECTED_RELEASE_WAIT_MS``; one without it ends that."""
+    async with rig() as r:
+        # As in SK10: no permit to fly over an unconfirmed person, so the search goes
+        # around the candidate's cylinder.
+        await r.install(charter(allowed_skills=SKILLS, operation_mode="sim"))
+        await r.takeoff(40)
+        r.ex.camera = _camera()  # a look from the side of the cylinder
+        cid = new_id()
+        lat, lon = at(0.0, 110.0)  # where the ground puts the candidate: on the search
+        own = Keepout(
+            keepout_id=new_id(), lat=lat, lon=lon, radius_m=32, source="candidate", source_id=cid
+        )
+        r.ex.on_keepouts(KeepoutInstall(install_seq=1, keepouts=[own]), new_id())
+        box = square(50, east=0, north=100)
+        survey = await r.send(
+            r.order("survey_sector", {"polygon": box, "spacing_m": 30, "speed_ms": 8}), 3
+        )
+        assert r.ex.state == S.SURVEY, r.up.codes(survey.command_id)
+        cmd = await r.send(order(r, candidate_id=cid, lat=lat, lon=lon), 0.5)
+        assert r.ex.state == S.INSPECT, r.up.acks[-2:]
+        await awaiting(r)
+        r.ex.on_inspect_outcome(
+            InspectOutcome(command_id=cmd.command_id, outcome="rejected"), new_id()
+        )
+        await r.until(lambda: bool(events(r, "inspect.closed")), 60)
+        await r.run(5)  # the search flown on, under way
+        assert r.ex.state == S.SURVEY and r.ex.active is not None
+        assert r.ex.active.skill == "resume"
+        blocked = [d for d in events(r, "executor.survey_blocked") if d["skill"] == "resume"]
+        assert not blocked, blocked
+        assert own not in r.ex.keepouts_in_force()
+        assert [d["candidate_id"] for d in events(r, "executor.keepout_rejected")] == [str(cid)]
+        # An install sent before the ground heard: still not in force, until the wait ends.
+        r.ex.on_keepouts(KeepoutInstall(install_seq=2, keepouts=[own]), new_id())
+        assert own not in r.ex.keepouts_in_force()
+        later = r.ex.now_ms() + REJECTED_RELEASE_WAIT_MS
+        monkeypatch.setattr(r.ex, "now_ms", lambda: later)
+        assert own in r.ex.keepouts_in_force()
+        monkeypatch.undo()
+        # The ground's install without it ends the matter.
+        r.ex.on_keepouts(KeepoutInstall(install_seq=3, keepouts=[]), new_id())
+        r.ex.on_keepouts(KeepoutInstall(install_seq=4, keepouts=[own]), new_id())
+        assert own in r.ex.keepouts_in_force()  # put back by the ground: in force
 
 
 async def _looking_from_a_search(r: Rig) -> tuple[Any, Any]:
