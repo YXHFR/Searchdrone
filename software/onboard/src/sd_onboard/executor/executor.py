@@ -623,10 +623,10 @@ class Executor:
         # A lift a reroute that stops first held back, or whose straighten was refused:
         # the order it is for (tried again).
         self._lift_pending: UUID | None = None
-        # A refused straighten: not before this (``_STRAIGHTEN_RETRY_MS``), and why it was
-        # refused last, so the same refusal is told once.
+        # A refused straighten: not before this (``_STRAIGHTEN_RETRY_MS``), and the reasons
+        # already told for this lift, so each refusal is told once.
         self._lift_retry_ms: int | None = None
-        self._lift_refused: tuple[str, ...] = ()
+        self._lift_refused: set[tuple[str, ...]] = set()
         # Takes one still for an order (perception, ``PerceptionLoop.capture``).
         self.camera: Callable[[UUID], Awaitable[UUID | None]] | None = None
         # The downward laser (``LaserReader.state(now)`` for the height floor); None: none
@@ -903,6 +903,8 @@ class Executor:
 
     def _start_active(self, active: _Active) -> None:
         self.active = active
+        if self._lift_pending != active.command_id:
+            self._lift_reset()  # a pending lift and its retry belong to the order before
 
         async def body() -> None:
             await active.handler.start(active.plan, self._io(active.origin, active.command_id))
@@ -2169,9 +2171,11 @@ class Executor:
             if entry is None:
                 stopping = isinstance(active.handler, SurveyHandler) and active.handler.stopping
                 if lifted:
+                    if self._lift_pending != active.command_id:
+                        self._lift_reset()
                     self._lift_pending = active.command_id
                 if self._lift_pending != active.command_id or not run.detours():
-                    self._lift_pending, self._lift_retry_ms, self._lift_refused = None, None, ()
+                    self._lift_reset()
                 elif stopping:
                     # Never while a reroute stops first: its route was judged from where
                     # the drone was, not where it stops. The stop's own plan takes the
@@ -2652,12 +2656,12 @@ class Executor:
                 log.exception("executor: regained search not worked out")
                 regained = False
             if not shorter and not regained:
-                self._lift_retry_ms, self._lift_refused = None, ()
+                self._lift_retry_ms, self._lift_refused = None, set()
                 return False
             codes = self._route_refusal(active, ctx, plan, refused=None)
             if codes:
                 return self._straighten_refused(active, codes)
-            self._lift_retry_ms, self._lift_refused = None, ()
+            self._lift_retry_ms, self._lift_refused = None, set()
         elif self._route_refusal(active, ctx, plan, refused="keepout_reroute_refused"):
             return False
         handler = SurveyHandler.rerouted(
@@ -2682,18 +2686,23 @@ class Executor:
         """A straighten after a lift that may not be flown (a cylinder on the way, or the
         gate): the way around is flown on as it is, and the straighten is tried again in
         ``_STRAIGHTEN_RETRY_MS`` while the lift stays pending. Told as
-        ``keepout_straighten_refused`` the first time, and again only for another reason,
-        so the ground and the AI hear that the lifted area is not searched yet."""
+        ``keepout_straighten_refused`` once for each reason (two reasons that take turns
+        are told once each), so the ground and the AI hear that the lifted area is not
+        searched yet."""
         self._lift_pending = active.command_id
         self._lift_retry_ms = self.now_ms() + _STRAIGHTEN_RETRY_MS
         self._keepout_watch = True
-        if codes != self._lift_refused:
-            self._lift_refused = codes
+        if codes not in self._lift_refused:
+            self._lift_refused.add(codes)
             self.emit(
                 "keepout_straighten_refused",
                 {"command_id": str(active.command_id), "codes": list(codes)},
             )
         return False
+
+    def _lift_reset(self) -> None:
+        """No lift pending: its order, retry time and told reasons are gone."""
+        self._lift_pending, self._lift_retry_ms, self._lift_refused = None, None, set()
 
     def _flying_home(self) -> bool:
         t = self.vehicle.telemetry

@@ -263,6 +263,66 @@ async def test_a_refused_straighten_is_tried_again_and_told_once(
         assert "superseded" not in r.up.stages(cmd.command_id)
 
 
+async def test_two_refusal_reasons_that_take_turns_are_told_once_each() -> None:
+    """A straighten refused by turns for a cylinder on the way and by the gate: each
+    reason is told once, not again on every retry."""
+    async with rig() as r:
+        await _search_around(r, keepout(0, 120, 40))
+        turns = [("KEEPOUT_VIOLATION",), ("ROUTE_BATTERY",)]
+        tries: list[tuple[str, ...]] = []
+
+        def refusal(*_: object, **__: object) -> tuple[str, ...]:
+            tries.append(turns[len(tries) % 2])
+            return tries[-1]
+
+        r.ex._route_refusal = refusal  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
+        install(r)
+        await r.run(executor_module._STRAIGHTEN_RETRY_MS / 1000 * 4.5)
+        assert len(tries) >= 4, tries
+        refusals = [d for t, _, d in r.up.events if t == "executor.keepout_straighten_refused"]
+        assert [d["codes"] for d in refusals] == [list(c) for c in turns], refusals
+
+
+async def test_a_refused_straighten_does_not_carry_over_to_the_next_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A search whose straighten was refused is replaced by a new order: the refusal's
+    retry time and the reasons told belong to the old order. The new order's own refused
+    straighten is tried at once and told, though for the same reason."""
+    async with rig() as r:
+        first, _ = await _search_around(r, keepout(0, 120, 40))
+
+        def refused(req: GateRequest, ctx: GateContext) -> GateDecision:
+            return evaluate(req, ctx).model_copy(
+                update={"decision": "REJECT", "reason_codes": ["ROUTE_BATTERY"]}
+            )
+
+        monkeypatch.setattr(executor_module, "evaluate", refused)
+        install(r)
+        await r.run(0.5)
+        assert r.up.kinds().count("executor.keepout_straighten_refused") == 1, r.up.kinds()
+        monkeypatch.setattr(executor_module, "evaluate", evaluate)
+        second = await r.send(
+            r.order("survey_sector", {"polygon": BOX, "spacing_m": 30, "speed_ms": 8}), 0.0
+        )
+        # Gone as the new order starts, not only once the reflex next runs for it.
+        assert r.ex.active is not None and r.ex.active.command_id == second.command_id
+        assert r.ex._lift_retry_ms is None  # pyright: ignore[reportPrivateUsage]
+        assert not r.ex._lift_refused  # pyright: ignore[reportPrivateUsage]
+        assert "superseded" in r.up.stages(first.command_id)
+        install(r, keepout(0, 120, 40))
+        await r.run(_GAP_S)
+        assert r.up.kinds().count("executor.keepout_reroute") == 2, r.up.kinds()
+        monkeypatch.setattr(executor_module, "evaluate", refused)
+        install(r)
+        await r.run(0.5)
+        refusals = [d for t, _, d in r.up.events if t == "executor.keepout_straighten_refused"]
+        assert [d["command_id"] for d in refusals] == [
+            str(first.command_id),
+            str(second.command_id),
+        ], refusals
+
+
 def _run_blocked_by(*ks: Keepout) -> SurveyRun:
     ends = [LatLon(lat=lat, lon=lon) for lat, lon in (at(-100, 0), at(100, 0))]
     run = SurveyRun(new_id(), ends, 40.0, 8.0, skill="survey_sector")
