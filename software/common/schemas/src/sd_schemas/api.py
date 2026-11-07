@@ -137,6 +137,8 @@ class AlertCode(StrEnum):
     # The drone hovers short of a keep-out cylinder, or inside one over a person (climbing
     # first when it can): onboard executor.keepout_hold
     KEEPOUT_HOLD = "KEEPOUT_HOLD"
+    # A sector turned done with a part no search saw (sd_ground.services.coverage.gap_m2)
+    SECTOR_GAP = "SECTOR_GAP"
     # The flight controller flies the search mission's built-in end (hover, then straight
     # home in AUTO) because the onboard computer stopped steering: the ground's MAVLink
     MISSION_FALLBACK = "MISSION_FALLBACK"
