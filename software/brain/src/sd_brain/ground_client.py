@@ -47,6 +47,9 @@ __all__ = [
 ]
 
 log = logging.getLogger("sd_brain.ground")
+
+# A connection the server closed or reset without an answer.
+_STALE = (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError)
 RECONNECT_DELAYS_S = (1.0, 2.0, 5.0)
 BYE_TIMEOUT_S = 2.0
 _CHAT = TypeAdapter(list[ChatMessage])
@@ -137,22 +140,23 @@ class GroundClient:
         await self._client.aclose()
 
     async def _request(self, method: str, path: str, **kw: Any) -> httpx.Response:
-        try:
+        # A GET changes nothing on the ground, so one that met a connection the server
+        # closed or reset (a stale pooled one) is asked once more on a new one. An order
+        # or a post is never sent twice: it may have reached the ground, so its caller
+        # hears of the failure.
+        again = method.upper() == "GET"
+        while True:
             try:
                 resp = await self._client.request(
                     method, self.base + path, headers=self._headers, **kw
                 )
-            except httpx.RemoteProtocolError:
-                # The server closed the connection without an answer (a stale pooled
-                # connection): a GET changes nothing, so it is asked once more on a new
-                # one. An order or a post is not sent twice: its caller hears of it.
-                if method != "GET":
-                    raise
-                resp = await self._client.request(
-                    method, self.base + path, headers=self._headers, **kw
-                )
-        except httpx.HTTPError as exc:
-            raise GroundError(f"sd-ground svarar inte ({type(exc).__name__})") from None
+            except httpx.HTTPError as exc:
+                if again and isinstance(exc, _STALE):
+                    again = False
+                    log.info("%s %s: %s, frågar igen", method, path, type(exc).__name__)
+                    continue
+                raise GroundError(f"sd-ground svarar inte ({type(exc).__name__})") from None
+            break
         if resp.status_code == 401:
             raise GroundError("sd-ground godtar inte befälhavartokenet", 401)
         return resp
