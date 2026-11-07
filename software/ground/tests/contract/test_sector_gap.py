@@ -438,7 +438,9 @@ async def test_a_rebuilt_run_whose_end_is_lost_ends_when_the_drone_leaves_its_re
             "the resume named by the drone",
         )
         r.onboard.idle()  # it flies home
-    await r.until(lambda: not state.restored_open, 5, "the rebuilt run ended")
+    # Rebuilt (not merely not yet looked for) and ended.
+    await r.until(lambda: state.restored and not state.restored_open, 5, "the rebuilt run ended")
+    assert state.last_end["A"][1] == sid
     await fly(r, lawnmower((30.0, 90.0), [0.0, 20.0]))
     await asyncio.sleep(BATCH * SAMPLE_S + 2 * coverage.EVERY_S)  # its batches in and counted
     seen_area = state.seen.get("A")
