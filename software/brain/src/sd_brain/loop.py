@@ -184,6 +184,9 @@ SKILL_WAKE = frozenset(
         "closed",  # a look's end (inspect_detection): what the drone does next
     }
 )
+# Waking skill events that do not end their order: a look's "done" (the drone may still
+# wait for the operator; its "closed" event, what comes next, is on its way).
+NOT_FINAL = frozenset({("inspect_detection", "done")})
 
 
 class LoopClock:
@@ -400,11 +403,8 @@ class CommanderLoop:
                 self._start_stop_check(evt)
         elif kind == "event.skill":
             cid = str(body.get("command_id"))
-            if body.get("status") in SKILL_WAKE and not (
-                body.get("skill") == "inspect_detection" and body.get("status") == "done"
-            ):
-                # A look's "done" is not its end: the drone may still wait for the
-                # operator, and its "closed" event (what comes next) is on its way.
+            status = body.get("status")
+            if status in SKILL_WAKE and (body.get("skill"), status) not in NOT_FINAL:
                 self._unended.pop(cid, None)
             if body.get("status") == "rejected_by_gate" and cid in self._sync_rejects:
                 return  # already handled by the retry turn

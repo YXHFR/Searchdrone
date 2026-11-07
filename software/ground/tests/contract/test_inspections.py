@@ -416,7 +416,7 @@ async def test_during_a_look_the_ai_does_not_move_the_drone(r: Rig) -> None:
     """Owner decision: during a look only the pilot moves the drone. The ground refuses
     the AI's orders that would take the drone from the look (``INSPECT_BUSY``), in the
     estimate too; flying home and the skills on the ground still pass. Once the pilot has
-    decided, the AI's orders go again."""
+    decided and the drone has said the look is closed, the AI's orders go again."""
     mid, cid, sent = await started(r)
     await event(r, "inspect.done", **done(sent))
     d = driver(r, mid)
@@ -452,6 +452,9 @@ async def test_during_a_look_the_ai_does_not_move_the_drone(r: Rig) -> None:
         res = await decide(pilot, cid, "reject")
         assert res.status_code == 200, res.text
     assert (await looks(r, mid))[0]["outcome"] == "rejected"
+    await order(r, d, "goto", goto, want="REJECT")  # the drone may still be in the look
+    closed = {"command_id": str(sent.command_id), "candidate_id": cid, "next": "hold"}
+    await event(r, "inspect.closed", **closed, cause="returned")
     await order(r, d, "goto", goto)
 
 

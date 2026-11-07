@@ -852,7 +852,13 @@ def test_the_prompt_has_one_candidate_path_that_keeps_searching() -> None:
     assert "flies back to where the search broke off by itself" in rule
     assert '"done" is not its end: wait for its skill event with status "closed"' in rule
     assert 'With next "resume" the interrupted search flies on by itself: order nothing' in rule
-    assert "order the interrupted search again" in rule
+    assert 'With next "hold" and an outcome other than "confirmed", order the interrupted' in rule
+    # On "new_order" and "link_loss" another order or the link rules fly the drone: only
+    # tell. Without a next (the drone's report never came) the AI looks or asks first.
+    assert 'With next "home", "held", "new_order" or "link_loss", only tell the operator' in rule
+    assert "With no next given" in rule and "order nothing at once" in rule
+    assert "its executor state there is HOLD" in rule and "otherwise ask" not in rule
+    assert "in any other state (SURVEY, for one" in rule and "(or none given)" not in rule
     # The AI names the candidate by its number, one look at a time, most important first.
     assert 'candidate_id "K3"' in rule and "detection_id" not in rule
     assert "propose only one at a time" in rule and "the nearest" in rule

@@ -11,7 +11,7 @@ import pytest
 from brain_helpers import REG, make_loop, situation
 
 from sd_brain.backends import LlmCommander
-from sd_brain.config import BehaviourConfig
+from sd_brain.config import BehaviourConfig, LlmConfig
 from sd_brain.context import ContextBuilder
 from sd_brain.profile_draft import ProfileArgsError, profile_proposal
 from sd_brain.runtime.base import ModelReply, RawToolCall, Sampling
@@ -20,6 +20,9 @@ from sd_brain.tools import PROFILE_TOOL, profile_tool
 
 NOW = dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC)
 MARKER = "Fiktivmarkör-blåbärsskog-4711"
+# The configured context window: room for the system prompt, a turn of tool calls and
+# the reply (a smaller one would end the turn on its size, not on what is tested here).
+CONTEXT = LlmConfig().context_tokens
 
 
 def _args(**over: Any) -> dict[str, Any]:
@@ -108,7 +111,7 @@ async def test_loop_proposes_and_logs_no_profile_text(caplog: pytest.LogCaptureF
         ]
     )
     ctx = ContextBuilder(REG, takeoff_policy="request_then_clearance", prompt_budget_tokens=6000)
-    backend = LlmCommander(rt, ctx, REG, BehaviourConfig(), Sampling(), context_tokens=8192)
+    backend = LlmCommander(rt, ctx, REG, BehaviourConfig(), Sampling(), context_tokens=CONTEXT)
     loop, fg, _ = make_loop(backend, "draft_p1.json")
     caplog.set_level(logging.DEBUG)
     loop.handle_event(fg.operator_message("Hon har röd jacka, kanske blå byxor, sågs vid P1"))
@@ -135,7 +138,7 @@ async def test_one_proposal_per_turn() -> None:
         ]
     )
     ctx = ContextBuilder(REG, takeoff_policy="request_then_clearance", prompt_budget_tokens=6000)
-    backend = LlmCommander(rt, ctx, REG, BehaviourConfig(), Sampling(), context_tokens=8192)
+    backend = LlmCommander(rt, ctx, REG, BehaviourConfig(), Sampling(), context_tokens=CONTEXT)
     loop, fg, _ = make_loop(backend, "draft_p1.json")
     loop.handle_event(fg.operator_message("röd jacka vid P1 för två timmar sedan"))
     await loop.settle()
@@ -147,7 +150,7 @@ async def test_one_proposal_per_turn() -> None:
 async def test_not_offered_to_a_non_pilot() -> None:
     rt = ReplayRuntime([_reply("Okej.")])
     ctx = ContextBuilder(REG, takeoff_policy="request_then_clearance", prompt_budget_tokens=6000)
-    backend = LlmCommander(rt, ctx, REG, BehaviourConfig(), Sampling(), context_tokens=8192)
+    backend = LlmCommander(rt, ctx, REG, BehaviourConfig(), Sampling(), context_tokens=CONTEXT)
     loop, fg, _ = make_loop(backend, "draft_p1.json")
     loop.handle_event(fg.operator_message("röd jacka", author_role="system"))
     await loop.settle()
