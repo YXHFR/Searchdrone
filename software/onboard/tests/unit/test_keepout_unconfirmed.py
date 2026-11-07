@@ -12,6 +12,7 @@ import asyncio
 import datetime as dt
 import json
 import math
+import random
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -51,6 +52,7 @@ from sd_safety.constants import (
     KEEPOUT_RESTART_CAUTION_S,
     KEEPOUT_SCORE_SURE,
 )
+from sd_safety.keepout import unconfirmed
 from sd_schemas.base import LatLon, LatLonAlt, new_id
 from sd_schemas.executor import ExecutorState as S
 from sd_schemas.executor import SurveyResumePoint
@@ -674,3 +676,311 @@ async def test_a_short_break_outside_a_cylinder_is_the_same_pass() -> None:
         install(r, person)
         await r.run(1.0)
         assert _inside_s(r)[person.keepout_id] == pytest.approx(1.0, abs=0.3)
+
+
+async def test_a_cylinder_that_replaces_one_the_drone_just_left_takes_its_pass_over() -> None:
+    """A pass the drone left less than KEEPOUT_PASS_GAP_S ago goes on in a cylinder that
+    replaces that one under a new id (grown, merged, handed over: the same person). Back
+    in within the gap, the pass goes on, no fresh budget. A new cylinder that overlaps no
+    cylinder the drone was on a pass through starts nothing."""
+    async with rig() as r:
+        await r.install(_sim_charter())  # type: ignore[arg-type]
+        await r.takeoff()
+        here = xy(r)
+        person = keepout(here[0] + 20.0, here[1], 40.0, source="candidate")
+        away_at = (here[0] + 200.0, here[1])
+        away = person.model_copy(update=dict(zip(("lat", "lon"), at(*away_at), strict=True)))
+        install(r, person)
+        await r.run(3.0)
+        install(r, away)  # the drone is outside it now
+        await r.run(2.0)
+        grown = keepout(away_at[0] + 2.0, away_at[1], 45.0, source="detection")  # a new id
+        far = keepout(here[0] - 300.0, here[1], 40.0, source="candidate")
+        install(r, grown, far)
+        await r.run(1.0)
+        inside = _inside_s(r)
+        assert set(inside) == {grown.keepout_id}  # nothing for one it was never in
+        assert inside[grown.keepout_id] == pytest.approx(6.0, abs=0.3)
+        back = grown.model_copy(
+            update=dict(zip(("lat", "lon"), at(here[0] + 20.0, here[1]), strict=True))
+        )
+        install(r, back, far)  # back in within the gap: the same pass goes on
+        await r.run(1.0)
+        assert _inside_s(r)[grown.keepout_id] == pytest.approx(7.0, abs=0.3)
+
+
+async def test_after_a_restart_a_cylinder_the_drone_flies_into_is_unknown_time_too(
+    tmp_path: Path,
+) -> None:
+    """On purpose (KEEPOUT_RESTART_CAUTION_S): for the minute after a restart in the air
+    a cylinder the drone comes into from outside is unknown time too, though that time is
+    measured: the drone may have been in the same cylinder before the restart and left it
+    less than the gap ago. After the minute it counts from when the drone came in."""
+    async with _restarted_in_the_air(tmp_path) as r:
+        here = xy(r)
+        person = keepout(here[0] + 200.0, here[1], 40.0, source="candidate")
+        install(r, person)
+        await r.run(1.0)
+        assert _inside_s(r) == {}  # in force, the drone outside it
+        over = person.model_copy(
+            update=dict(zip(("lat", "lon"), at(here[0] + 20.0, here[1]), strict=True))
+        )
+        install(r, over)  # the drone is in it now
+        await r.run(0.5)
+        assert _inside_s(r) == {person.keepout_id: UNKNOWN}
+    async with _restarted_in_the_air(tmp_path) as r:
+        started = r.ex._restarted_at  # pyright: ignore[reportPrivateUsage]
+        assert started is not None
+        here = xy(r)
+        person = keepout(here[0] + 200.0, here[1], 40.0, source="candidate")
+        install(r, person)
+        await r.run(KEEPOUT_RESTART_CAUTION_S + 1.0 - (r.clock.monotonic() - started))
+        over = person.model_copy(
+            update=dict(zip(("lat", "lon"), at(here[0] + 20.0, here[1]), strict=True))
+        )
+        install(r, over)
+        await r.run(0.5)
+        assert _inside_s(r)[person.keepout_id] == pytest.approx(0.5, abs=0.2)
+
+
+def _put(k: Keepout, east: float, north: float) -> Keepout:
+    """``k`` (the same id) moved so its middle is at ``(east, north)``."""
+    return k.model_copy(update=dict(zip(("lat", "lon"), at(east, north), strict=True)))
+
+
+async def test_a_cylinder_that_replaces_one_around_the_drone_never_counts_less_than_a_new_one() -> (
+    None
+):
+    """The drone has been in A longer than in B (it stepped out of A for a moment and came
+    into B then). B is replaced by an overlapping C around the drone: C counts at least as
+    long as a new cylinder would (the earlier of B's pass and A's), never only B's time."""
+    async with rig() as r:
+        await r.install(_sim_charter())  # type: ignore[arg-type]
+        await r.takeoff()
+        e, n = xy(r)
+        a = keepout(e + 20.0, n, 40.0, source="candidate")
+        b = keepout(e - 20.0, n, 40.0, source="candidate")
+        install(r, a)
+        await r.run(3.0)
+        install(r, _put(a, e + 200.0, n))  # out of A for a moment
+        await r.run(0.5)
+        install(r, _put(a, e + 200.0, n), b)  # B comes around the drone then
+        await r.run(0.5)
+        install(r, a, b)  # back in A within the gap
+        await r.run(1.0)
+        in_a = _inside_s(r)[a.keepout_id]
+        assert in_a == pytest.approx(5.0, abs=0.3)
+        c = keepout(e - 22.0, n, 45.0, source="detection")  # replaces B under a new id
+        install(r, a, c)
+        await r.run(0.5)
+        inside = _inside_s(r)
+        assert inside[c.keepout_id] >= inside[a.keepout_id] - 0.2
+
+
+async def test_a_cylinder_that_replaces_one_around_the_drone_in_one_of_unknown_time_is_unknown(
+    tmp_path: Path,
+) -> None:
+    """The same with A's time unknown (the drone was in it at a restart in the air): B,
+    come in during a moment out of A after the caution, is replaced by C around the drone.
+    C is unknown time (the whole budget used), as a new cylinder would be, never B's
+    measured time."""
+    a = keepout(20.0, 0.0, 40.0, source="candidate")
+    async with _restarted_in_the_air(tmp_path, a) as r:
+        install(r, a)
+        started = r.ex._restarted_at  # pyright: ignore[reportPrivateUsage]
+        assert started is not None
+        await r.run(KEEPOUT_RESTART_CAUTION_S + 1.0 - (r.clock.monotonic() - started))
+        assert _inside_s(r) == {a.keepout_id: UNKNOWN}
+        e, n = xy(r)
+        b = keepout(e - 20.0, n, 40.0, source="candidate")
+        install(r, _put(a, e + 200.0, n))  # out of A for a moment
+        await r.run(0.5)
+        install(r, _put(a, e + 200.0, n), b)
+        await r.run(0.5)
+        install(r, a, b)
+        await r.run(1.0)
+        c = keepout(e - 22.0, n, 45.0, source="detection")
+        install(r, a, c)
+        await r.run(0.5)
+        assert _inside_s(r) == {a.keepout_id: UNKNOWN, c.keepout_id: UNKNOWN}
+
+
+async def test_a_cylinder_that_comes_during_a_moment_out_of_another_takes_that_pass() -> None:
+    """Out of A for less than the gap is still A's pass (owner decision 2026-11-04): a new
+    cylinder that comes around the drone then counts from when the drone came into A, not
+    from 0."""
+    async with rig() as r:
+        await r.install(_sim_charter())  # type: ignore[arg-type]
+        await r.takeoff()
+        e, n = xy(r)
+        a = keepout(e + 20.0, n, 40.0, source="candidate")
+        install(r, a)
+        await r.run(3.0)
+        install(r, _put(a, e + 200.0, n))  # out of A for a moment
+        await r.run(0.5)
+        c = keepout(e - 20.0, n, 40.0, source="candidate")
+        install(r, _put(a, e + 200.0, n), c)
+        await r.run(0.5)
+        assert _inside_s(r)[c.keepout_id] == pytest.approx(4.0, abs=0.3)
+
+
+async def _handed_over_outside_then_entered(
+    r: Rig, a: Keepout, gap_off_s: float
+) -> tuple[Keepout, Keepout]:
+    """The drone is in A. Out of A for the gap (``gap_off_s`` past it), it is back in A
+    at the look that also sees B come around it: B starts a pass of its own, A goes on
+    with its old one. Out of B, B is replaced by an overlapping C (a new id) while the
+    drone is outside; then the drone comes into C. Returns (A as installed, C)."""
+    e, n = xy(r)
+    b = keepout(e - 20.0, n, 40.0, source="candidate")
+    install(r, _put(a, e + 200.0, n))  # out of A
+    await r.run(KEEPOUT_PASS_GAP_S + gap_off_s)
+    back = _put(a, e + 20.0, n)
+    install(r, back, b)  # back in A at the gap's end, and B comes around the drone
+    await r.run(1.0)
+    install(r, back, _put(b, e - 200.0, n))  # out of B
+    await r.run(0.5)
+    c = keepout(e - 202.0, n, 45.0, source="detection")  # replaces B, the drone outside
+    install(r, back, c)
+    await r.run(0.5)
+    install(r, back, _put(c, e - 20.0, n))  # into C
+    await r.run(0.5)
+    return back, c
+
+
+@pytest.mark.parametrize("gap_off_s", [0.05, 0.1])  # B's first look is A's last of the gap
+async def test_a_pass_handed_over_outside_counts_no_less_than_a_new_one_on_the_way_in(
+    gap_off_s: float,
+) -> None:
+    """Review round 2 (flight safety): a pass a replacing cylinder takes over while the
+    drone is outside it counts, once the drone comes in, at least as long as a new
+    cylinder around the drone would (the pass it is on: A's), never only the handed-over
+    pass (B's). Before, C counted 2.4 s where main counted A's 15 s."""
+    async with rig() as r:
+        await r.install(_sim_charter())  # type: ignore[arg-type]
+        await r.takeoff()
+        e, n = xy(r)
+        a = keepout(e + 20.0, n, 40.0, source="candidate")
+        install(r, a)
+        await r.run(3.0)
+        a, c = await _handed_over_outside_then_entered(r, a, gap_off_s)
+        inside = _inside_s(r)
+        assert inside[c.keepout_id] >= inside[a.keepout_id] - 0.2, inside
+
+
+@pytest.mark.parametrize("gap_off_s", [0.05, 0.1])
+async def test_a_pass_handed_over_outside_is_unknown_on_the_way_in_from_one_of_unknown_time(
+    tmp_path: Path, gap_off_s: float
+) -> None:
+    """Review round 2 (security): the same with A's time unknown (the drone was in it at
+    a restart in the air): C is unknown time on the way in, as a new cylinder would be,
+    never B's measured time."""
+    a = keepout(20.0, 0.0, 40.0, source="candidate")
+    async with _restarted_in_the_air(tmp_path, a) as r:
+        install(r, a)
+        started = r.ex._restarted_at  # pyright: ignore[reportPrivateUsage]
+        assert started is not None
+        await r.run(KEEPOUT_RESTART_CAUTION_S + 1.0 - (r.clock.monotonic() - started))
+        assert _inside_s(r) == {a.keepout_id: UNKNOWN}
+        a, c = await _handed_over_outside_then_entered(r, a, gap_off_s)
+        assert _inside_s(r) == {a.keepout_id: UNKNOWN, c.keepout_id: UNKNOWN}
+
+
+def _main_keepout_inside_s(self: Any) -> dict[UUID, float]:
+    """main's ``Executor._keepout_inside_s`` (00a7233e), frozen as the reference the
+    property test compares with: no handover, and ``came`` only the passes the drone was
+    inside at the last look."""
+    plane = self.plane()
+    if plane is None:
+        self._soft_pass, self._soft_primed = {}, False
+        return {}
+    now = self.clock.monotonic()
+    v = self.vehicle_state()
+    here = plane.xy(v.lat, v.lon)
+    soft = [k for k in self.keepouts_in_force() if unconfirmed(k)]
+    inside = {k.keepout_id for k in soft if math.dist(here, plane.xy(k.lat, k.lon)) < k.radius_m}
+    before = self._soft_pass
+    came = [since for since, left in before.values() if left is None]
+    first, self._soft_primed = not self._soft_primed, True
+    careful = (
+        self._restarted_at is not None and now - self._restarted_at < KEEPOUT_RESTART_CAUTION_S
+    )
+    fresh: float | None = None
+    if not (first or careful or None in came):
+        fresh = min((t for t in came if t is not None), default=now)
+    passes: dict[UUID, tuple[float | None, float | None]] = {}
+    for k in soft:
+        kid = k.keepout_id
+        was = before.get(kid)
+        if kid in inside:
+            passes[kid] = (fresh if was is None else was[0], None)
+        elif was is not None:
+            left = now if was[1] is None else was[1]
+            if now - left < KEEPOUT_PASS_GAP_S:
+                passes[kid] = (was[0], left)
+    self._soft_pass = passes
+    return {
+        kid: KEEPOUT_PASS_MAX_S if since is None else now - since
+        for kid, (since, _) in passes.items()
+    }
+
+
+# How long between two installs: often short, and at the gap's end (a look on each side).
+_STEPS_S = (0.3, 0.6, 1.5, KEEPOUT_PASS_GAP_S - 0.1, KEEPOUT_PASS_GAP_S, KEEPOUT_PASS_GAP_S + 0.1)
+
+
+async def _times_along(seed: int) -> list[dict[int, float]]:
+    """The time inside (s) of each cylinder the drone is in, by slot, at each step of a
+    random track of installs (``seed``): cylinders in two slots come around the drone,
+    move off it for a moment or for longer (just outside or far), are lifted, and are
+    replaced by overlapping ones under new ids, the drone inside or outside them."""
+    rnd = random.Random(seed)  # noqa: S311  # a test track, not a secret
+    out: list[dict[int, float]] = []
+    async with rig() as r:
+        await r.install(_sim_charter())  # type: ignore[arg-type]
+        await r.takeoff()
+        e, n = xy(r)
+        spots = [(e + 20.0, n), (e - 20.0, n)]
+        side = [1.0, -1.0]
+        slots: dict[int, Keepout] = {}
+        off: dict[int, float | None] = {}  # how far out of the drone's way, None: around it
+        for _ in range(40):
+            for i in range(len(spots)):  # each slot on its own: often none around the drone
+                act = rnd.choice(("in", "out", "out", "replace", "lift"))
+                if i not in slots:
+                    if act == "in":
+                        slots[i] = keepout(*spots[i], 40.0, source="candidate")
+                        off[i] = None
+                elif act == "in":
+                    off[i] = None
+                elif act == "out":
+                    off[i] = rnd.choice((26.0, 300.0))  # just outside (r 40-42) or far
+                elif act == "replace":
+                    slots[i] = keepout(*spots[i], 42.0, source="detection")
+                else:
+                    del slots[i], off[i]
+            placed = []
+            for j, k in slots.items():
+                d = off[j]
+                placed.append(k if d is None else _put(k, spots[j][0] + side[j] * d, spots[j][1]))
+            install(r, *placed)
+            await r.run(rnd.choice(_STEPS_S))
+            inside = _inside_s(r)
+            ids = {k.keepout_id: j for j, k in slots.items() if off[j] is None}
+            out.append({ids[kid]: s for kid, s in inside.items() if kid in ids})
+    return out
+
+
+@pytest.mark.parametrize("seed", range(17))
+async def test_a_cylinder_around_the_drone_never_has_more_time_left_than_on_main(
+    seed: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """For the same track of installs, every cylinder the drone is in has used at least as
+    much of its budget as with main's rule (``_main_keepout_inside_s``): the handover and
+    the step-out rule may only make the drone leave sooner, never later."""
+    here = await _times_along(seed)
+    monkeypatch.setattr(executor_module.Executor, "_keepout_inside_s", _main_keepout_inside_s)
+    main = await _times_along(seed)
+    for step, (a, b) in enumerate(zip(here, main, strict=True)):
+        for slot, s in b.items():
+            assert a[slot] >= s - 0.2, (step, slot, a, b)

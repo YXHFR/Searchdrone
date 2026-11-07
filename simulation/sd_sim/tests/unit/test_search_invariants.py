@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+import random
 from dataclasses import replace
 
 import pytest
@@ -138,18 +139,20 @@ def test_inside_since_it_came_braking_may_take_it_its_stop_deeper() -> None:
     assert keepout_never_entered([_cyl()], turned)
 
 
-def _turning_in(brake_after_s: float | None, decel_ms2: float = 2.7) -> list[Sample]:
+def _turning_in(
+    brake_after_s: float | None, decel_ms2: float = 2.7, every: int = 4
+) -> list[Sample]:
     """A cylinder comes 10 m around a drone at a survey corner: it flies north-east at
     3 m/s, 1 m/s of it towards the middle, and turns east (2.6 m/s² east), as in SK03 seed
     2 (CI run 42166655395: 1.35 m/s deeper when the cylinder came, 2.86 m/s 0.65 s later).
     With ``brake_after_s`` it then brakes at ``decel_ms2`` to a stop. Flown in 0.05 s steps
-    and sampled at 5 Hz, as the rig streams."""
+    and sampled every ``every`` steps (5 Hz, as the rig streams)."""
     e, n, ve, vn = 80.0, 0.0, 1.0, 2.8
     out: list[tuple[float, float, float, float]] = []
     dt_s = 0.05
     for i in range(121):
         t = i * dt_s
-        if i % 4 == 0:
+        if i % every == 0:
             out.append((round(t, 2), e, n, math.hypot(ve, vn)))
         if brake_after_s is None or t < brake_after_s - 1e-9:
             ve += 2.6 * dt_s
@@ -201,6 +204,26 @@ def test_a_turn_towards_a_cylinder_braking_late_or_weakly_breaks_e8(
     assert broken and broken[0].startswith("E8") and "djupare" in broken[0]
 
 
+@pytest.mark.parametrize("came_s", [0.1, 0.15])
+def test_half_a_second_late_is_under_what_e8_can_tell_when_the_cylinder_comes_between_samples(
+    came_s: float,
+) -> None:
+    """Pins a limit of E8 (from #213): sampled at 10 Hz with the cylinder coming 0.1 s
+    after a sample, the turn braking at 1.15 s is only 1.0 s after the cylinder, about
+    0.4 s later than SK03's on-time 0.65 s. The fastest it went deeper within the reaction
+    window is then the turn's top speed, whose stop covers the depth, so it passes. A
+    limit on when a movement may start would catch it, but the samples' receive times are
+    off by up to 0.3 s, and every such limit tried (0.75 s, 0.8 s) failed compliant
+    flights with that jitter (``RATE_JITTER_S``), so E8 does not tell these apart. A
+    second late, half the braking or none is still caught in the same phase."""
+    late = _turning_in(1.15, every=2)
+    assert keepout_never_entered([_cyl(since=came_s)], late) == []
+    for brake_after_s, decel_ms2 in [(1.65, 2.7), (0.65, 1.35), (None, 2.7)]:
+        track = _turning_in(brake_after_s, decel_ms2, every=2)
+        broken = keepout_never_entered([_cyl(since=came_s)], track)
+        assert broken and broken[0].startswith("E8") and "djupare" in broken[0]
+
+
 @pytest.mark.parametrize("bunch", [False, True], ids=["even", "bunched"])
 def test_bunched_samples_do_not_make_a_sideways_drone_fast_inwards(bunch: bool) -> None:
     """10 m inside, flying sideways at 5 m/s when the cylinder comes, then 2 m/s straight
@@ -214,6 +237,161 @@ def test_bunched_samples_do_not_make_a_sideways_drone_fast_inwards(bunch: bool) 
     track = _flown(pts)
     broken = keepout_never_entered([_cyl()], _bunched(track) if bunch else track)
     assert broken and broken[0].startswith("E8") and "djupare" in broken[0]
+
+
+@pytest.mark.parametrize("bunch", [False, True], ids=["even", "bunched"])
+def test_a_reported_ground_speed_the_track_does_not_bear_out_allows_no_longer_stop(
+    bunch: bool,
+) -> None:
+    """10 m inside when the cylinder comes, flying straight in at 3 m/s without braking to
+    16.6 m deep, while two samples report 9 m/s: the stop from 9 m/s (20.7 m) would let it
+    pass, the stop from what its positions show (3 m/s) does not."""
+    pts = [(i * 0.2, 80.0 + i * 0.6, 0.0, 9.0 if i < 2 else 3.0) for i in range(12)]
+    pts += [(2.4 + i * 0.2, 86.6, 0.0, 0.0) for i in range(1, 6)]
+    pts += [(3.4 + i * 0.2, 86.6 - i * 2.0, 0.0, 10.0) for i in range(1, 12)]
+    track = _flown(pts)
+    broken = keepout_never_entered([_cyl()], _bunched(track) if bunch else track)
+    assert broken and broken[0].startswith("E8") and "djupare" in broken[0]
+    # The same reports with positions that bear them out: the stop from 9 m/s holds.
+    fast = [(i * 0.2, 80.0 + i * 1.8, 0.0, 9.0) for i in range(4)]
+    fast += [(0.6 + i * 0.2, 85.4 + i * 1.3, 0.0, 6.5 - i * 0.5) for i in range(1, 6)]
+    fast += [(1.6 + i * 0.2, 91.9, 0.0, 0.0) for i in range(1, 6)]
+    fast += [(2.6 + i * 0.2, 91.9 - i * 2.0, 0.0, 10.0) for i in range(1, 15)]
+    assert keepout_never_entered([_cyl()], _flown(fast)) == []
+
+
+def _straight_braking(
+    e0: float, speed: float, react_s: float = si.STOP_REACT_S, dt_s: float = 0.01
+) -> list[tuple[float, float, float]]:
+    """The true flight (t, east, speed) of a drone flying east at ``speed`` when a
+    cylinder comes at t=0, braking as E8's stop model has it (``stop_distance_m``):
+    ``react_s``, then ``STOP_DECEL_MS2`` until it stands; it hovers, then flies out west at
+    3 m/s."""
+    e, v, t, out = e0, speed, 0.0, []
+    stood: float | None = None
+    while t <= 14.0:
+        out.append((round(t, 2), e, abs(v)))
+        if t >= react_s and stood is None:
+            v = max(0.0, v - si.STOP_DECEL_MS2 * dt_s)
+            stood = t if v == 0.0 else None
+        elif stood is not None and t > stood + 3.0:
+            v = -3.0
+        e += v * dt_s
+        t += dt_s
+    return out
+
+
+def _sampled(
+    flight: list[tuple[float, float, float]],
+    rate_hz: float,
+    rnd: random.Random | None = None,
+    jitter_s: float = 0.0,
+    gap: tuple[float, float] | None = None,
+) -> list[Sample]:
+    """``flight`` as the rig receives it: at ``rate_hz``, each time off by up to
+    ``jitter_s`` (in order), none within ``gap`` (start, length), the speed as flown."""
+    pts: list[tuple[float, float, float, float]] = []
+    last, t = -math.inf, 0.0
+    while t <= flight[-1][0]:
+        if gap is None or not gap[0] <= t < gap[0] + gap[1]:
+            _, e, v = flight[min(len(flight) - 1, round(t / 0.01))]
+            got = t + (rnd.uniform(-jitter_s, jitter_s) if rnd else 0.0)
+            last = max(got, last + 0.001)
+            pts.append((last, e, 0.0, v))
+        t += 1.0 / rate_hz
+    return _flown(pts)
+
+
+def _as_main(monkeypatch: pytest.MonkeyPatch) -> None:
+    """E8 as on main: every reported ground speed counts as reported."""
+    monkeypatch.setattr(si, "_track_ms", lambda *_: math.inf)
+
+
+@pytest.mark.parametrize("gap_s", [1.0, 2.0])
+def test_a_gap_in_the_track_after_the_cylinder_came_never_shortens_the_stop(
+    gap_s: float, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """8 m/s straight in, the edge 5 m ahead, braking exactly as the model has it and
+    sampled at 5 Hz with no sample for ``gap_s`` after the second: the path over the gap
+    takes the braking in, so it is no measure of the speed when the cylinder came. The
+    reported speed counts, as on main, and the stop (17.5 m) is allowed."""
+    track = _sampled(_straight_braking(65.0, 8.0), 5.0, gap=(0.3, gap_s))
+    assert keepout_never_entered([_cyl()], track) == []
+    _as_main(monkeypatch)
+    assert keepout_never_entered([_cyl()], track) == []
+
+
+def _compliant(seed: int) -> list[Sample]:
+    """A flight that brakes as E8's model has it (or sooner, or harder), straight in from
+    ahead of the edge or from inside it, at 1 to 10 Hz with receive times off by up to
+    0.3 s, bunched or with a gap."""
+    rnd = random.Random(seed)  # noqa: S311  # a test flight, not a secret
+    speed = rnd.uniform(1.5, 14.0)
+    if rnd.random() < 0.5:
+        e0 = 70.0 - rnd.uniform(0.3, stop_distance_m(speed) * 1.2)  # ahead of the edge
+    else:
+        e0 = 70.0 + rnd.uniform(0.5, 15.0)  # came around the drone
+    flight = _straight_braking(e0, speed, si.STOP_REACT_S * rnd.uniform(0.6, 1.0))
+    rate = rnd.choice((1.0, 2.0, 3.0, 4.0, 5.0, 10.0))
+    gap = (rnd.uniform(0.0, 1.5), rnd.uniform(0.5, 3.0)) if rnd.random() < 0.3 else None
+    track = _sampled(flight, rate, rnd, rnd.choice((0.0, 0.1, 0.2, 0.3)), gap)
+    return _bunched(track) if rnd.random() < 0.3 else track
+
+
+@pytest.mark.parametrize("rate_hz", [1.0, 2.0, 3.0, 4.0])
+@pytest.mark.parametrize("jitter_s", [0.0, 0.2, 0.3])
+def test_a_compliant_flight_at_a_low_rate_fails_nowhere_main_passes_it(
+    rate_hz: float, jitter_s: float, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At 1 to 4 Hz, with receive times off by up to 0.3 s, a flight braking as the model
+    has it gets what main gives it: a reported speed counts unless the track cannot bear
+    it out, and a compliant flight's track always can."""
+    rnd = random.Random(int(rate_hz * 10 + jitter_s * 100))  # noqa: S311  # a test flight
+    tracks = [
+        _sampled(_straight_braking(e0, speed), rate_hz, rnd, jitter_s)
+        for speed in (3.0, 5.0, 8.0, 12.0)
+        for e0 in (65.0, 70.0 - stop_distance_m(speed) * 0.9, 75.0, 82.0)
+    ]
+    here = [keepout_never_entered([_cyl()], t) for t in tracks]
+    _as_main(monkeypatch)
+    on_main = [keepout_never_entered([_cyl()], t) for t in tracks]
+    assert [(n, h) for n, (h, m) in enumerate(zip(here, on_main, strict=True)) if h and not m] == []
+
+
+@pytest.mark.parametrize("seed", range(0, 400, 40))
+def test_a_compliant_flight_never_fails_where_main_passes_it(
+    seed: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Property: for compliant flights, E8 here says what main says (every reported
+    speed taken as reported). 40 flights per case, 400 in all."""
+    tracks = [_compliant(s) for s in range(seed, seed + 40)]
+    here = [keepout_never_entered([_cyl()], t) for t in tracks]
+    _as_main(monkeypatch)
+    on_main = [keepout_never_entered([_cyl()], t) for t in tracks]
+    assert [(s, h) for s, (h, m) in enumerate(zip(here, on_main, strict=True)) if h and not m] == []
+
+
+def test_a_report_the_track_does_not_bear_out_does_not_stretch_the_braking_window() -> None:
+    """Flight safety's case: at 3 m/s, 1.3 m ahead of the edge, braking into the cylinder
+    by its stop (2 m, standing at 1.7 s), out again, and back 2 m deep at 3 m/s at t=4 s.
+    Its first two samples report 9 m/s. Braking from 3 m/s is over by 2.7 s, so the way
+    back in is an entry; 9 m/s would stretch that window to 5.1 s and let it pass."""
+    flight = _straight_braking(68.7, 3.0)
+    pts: list[tuple[float, float, float, float]] = []
+    for i in range(int(6.0 / 0.2) + 1):
+        t = round(i * 0.2, 2)
+        if t < 1.8:
+            _, e, v = flight[round(t / 0.01)]
+        elif t < 2.6:
+            e, v = 72.0 - (t - 1.8) * 4.5 / 0.8, 5.6  # out, 2.5 m past the edge by 2.6 s
+        else:
+            e, v = min(72.0, 67.5 + (t - 2.6) * 3.0), 3.0  # back in at 3 m/s
+        pts.append((t, e, 0.0, 9.0 if i < 2 else v))
+    track = _flown(pts)
+    broken = keepout_never_entered([_cyl()], track)
+    assert broken and broken[0].startswith("E8"), broken
+    honest = _flown([(t, e, n, v if i >= 2 else 3.0) for i, (t, e, n, v) in enumerate(pts)])
+    assert keepout_never_entered([_cyl()], honest)
 
 
 def test_a_new_shape_of_a_cylinder_is_no_new_grace() -> None:
@@ -424,3 +602,31 @@ def test_stays_with_a_short_break_outside_are_one_passage() -> None:
     broken = keepout_never_entered([_soft()], there + back(2.0))
     assert broken and "korta avbrott" in broken[0], broken
     assert keepout_never_entered([_soft()], there + back(KEEPOUT_PASS_GAP_S + 2.0)) == []
+
+
+def test_the_way_out_counts_in_the_pass_when_the_drone_comes_back_soon() -> None:
+    """Came around the drone: the way out keeps the full rules, but its time is the pass's
+    first stay (as the executor counts it). Back in less than KEEPOUT_PASS_GAP_S later, the
+    passage straight through adds to it (20 s + 8.6 s, over the 15 s); a short way out
+    with the same passage stays under it (5 s + 8.6 s)."""
+    out = _line(0.0, 100.0, 136.0, 1.5)  # 20 s inside, out at 130 m
+    end = out[-1].t
+
+    def through(after: float, start: float = end) -> list[Sample]:
+        return _line(start + after, 140.0, 0.0, 7.0, n=10.0)
+
+    broken = keepout_never_entered([_soft()], out + through(2.0))
+    assert broken and "korta avbrott" in broken[0], broken
+    short = _line(0.0, 120.0, 140.0, 2.0)  # 5 s inside
+    assert keepout_never_entered([_soft()], short + through(2.0, short[-1].t)) == []
+
+
+def test_a_long_way_out_and_a_later_passage_are_two_passes() -> None:
+    """The way out alone may take longer than a passage (20 s here). A passage more than
+    KEEPOUT_PASS_GAP_S after it is a new pass: the way out's time is not held against it,
+    as in the executor, where a pass ends after the gap."""
+    out = _line(0.0, 100.0, 136.0, 1.5)  # 20 s inside
+    assert keepout_never_entered([_soft()], out) == []
+    later = _line(out[-1].t + 30.0, 140.0, 0.0, 7.0, n=10.0)
+    assert keepout_never_entered([_soft()], later) == []
+    assert keepout_never_entered([_soft()], out + later) == []
