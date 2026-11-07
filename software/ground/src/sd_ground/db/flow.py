@@ -564,6 +564,14 @@ class FlowRepo:
             for r in rows
         ]
 
+    async def sector_statuses(self, mission_id: str) -> dict[str, str]:
+        """Each sector's status (``pending``, ``active``, ``done``, ``skipped``)."""
+        rows = await self._all(
+            "SELECT sector_id, status FROM mission_sectors WHERE mission_id = :m",
+            m=mission_id,
+        )
+        return {str(r["sector_id"]): str(r["status"]) for r in rows}
+
     async def set_sector_progress(
         self, mission_id: str, sector_id: str, status: str, progress: float, now: dt.datetime
     ) -> None:

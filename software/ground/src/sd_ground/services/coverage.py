@@ -7,6 +7,14 @@ computer sends no coverage of its own. A search the drone flies on after a close
 (``inspections.flown_on``: its order stays ``superseded`` on the ground) counts from the
 drone's report that it flies on until that run ends.
 
+When a sector turns done (its search's done, or the end of a search flown on after a look),
+what of it no track point saw is its gap (``gap_m2``): told once to the operator
+(``SECTOR_GAP``) and kept for the AI's situation (``_Mission.gaps``). A gap behind the
+drone (a cylinder lifted after the legs it cut were passed), a straighten refused, wind or a
+lost stretch of track all show here, whatever the cause. Only the parts at least
+``GAP_MIN_WIDTH_M`` wide and ``GAP_MIN_M2`` large count: the thin edges every search leaves
+do not.
+
 The work is incremental: each tick reads only the track points newer than the last one
 counted and adds their discs to what each sector already has. The geometry runs in a
 worker thread so the main loop (which the liveness watchdog watches) never waits for it.
@@ -28,14 +36,22 @@ from sd_geo.coverage import ALT_TOLERANCE_M, REACH_EXTRA_M
 from sd_ground.services.charters import geojson_from_xy, polygon_xy
 from sd_safety.constants import DEFAULT_SURVEY_SPACING_M
 from sd_safety.targets import Plane
-from sd_schemas.api import Mission
+from sd_schemas.api import AlertCode, Command, Mission
+from sd_schemas.base import GeoJsonPolygon
+from sd_schemas.charter import MissionCharter
 
 if TYPE_CHECKING:
     from sd_ground.services.missions import MissionFlow
 
-__all__ = ["EVERY_S", "Coverage", "covered_area", "tick"]
+__all__ = ["EVERY_S", "GAP_MIN_M2", "GAP_MIN_WIDTH_M", "Coverage", "covered_area", "gap_m2", "tick"]
 
 EVERY_S: Final = 1.0
+# A part of a done sector no track point saw is a gap when it is at least this wide (it
+# holds a disc this wide) and this large. A full search leaves only slivers at the sector's
+# edges and corners (about 850 m² in all, none of it 10 m wide); a search leg skipped for
+# 90 m at 30 m spacing leaves a part about 26 m wide and about 1 600 m².
+GAP_MIN_WIDTH_M: Final = 10.0
+GAP_MIN_M2: Final = 300.0
 
 
 @dataclass
@@ -44,6 +60,11 @@ class _Mission:
     since: dt.datetime | None = None  # the newest track point counted
     seen: dict[str, BaseGeometry] = field(default_factory=dict[str, BaseGeometry])
     finished: set[str] = field(default_factory=set[str])  # surveys counted to their end
+    # Done sectors whose gap was worked out: (m², % of the sector), (0, 0) for none.
+    gaps: dict[str, tuple[float, float]] = field(default_factory=dict[str, tuple[float, float]])
+    # False until the first tick has looked at the sectors: those already done then (the
+    # ground restarted) were told before, so their gaps are kept for the AI, not told again.
+    primed: bool = False
 
 
 @dataclass
@@ -76,6 +97,20 @@ def covered_area(
     swath = shapely.union_all([Point(x, y).buffer(reach, quad_segs=4) for x, y in near])
     seen = swath.intersection(sector)
     return None if seen.is_empty else seen
+
+
+def gap_m2(sector: ShapelyPolygon, seen: BaseGeometry | None) -> float:
+    """How much of ``sector`` (local plane) ``seen`` left out, counting only the parts at
+    least ``GAP_MIN_WIDTH_M`` wide and ``GAP_MIN_M2`` large."""
+    left = sector if seen is None else sector.difference(seen)
+    total = 0.0
+    for part in getattr(left, "geoms", [left]):
+        if not isinstance(part, ShapelyPolygon) or part.area < GAP_MIN_M2:
+            continue
+        if part.buffer(-GAP_MIN_WIDTH_M / 2).is_empty:
+            continue  # a sliver: no disc of that width fits
+        total += part.area
+    return total
 
 
 def _polygons(area: BaseGeometry) -> MultiPolygon | None:
@@ -129,13 +164,28 @@ async def tick(flow: MissionFlow, mission: Mission) -> None:
         and c.params.get("sector_id")
         and str(c.id) not in state.finished
     ]
-    if not surveys:
-        return
+    plane = Plane(charter.home.lat, charter.home.lon)
+    sectors = {s.sector_id: s.area for s in charter.sectors}
+    if surveys:
+        await _count(flow, mid, state, surveys, flown_on, sectors, plane, charter)
+    counting = {str(c.params["sector_id"]) for c in surveys if str(c.id) not in state.finished}
+    await _gaps(flow, mission, state, sectors, plane, counting)
+    state.primed = True
+
+
+async def _count(
+    flow: MissionFlow,
+    mid: str,
+    state: _Mission,
+    surveys: list[Command],
+    flown_on: dict[str, dt.datetime],
+    sectors: dict[str, GeoJsonPolygon],
+    plane: Plane,
+    charter: MissionCharter,
+) -> None:
     new_points = await flow.repo.track(mid, state.since)
     if new_points:
         state.since = new_points[-1]["t"]
-    plane = Plane(charter.home.lat, charter.home.lon)
-    sectors = {s.sector_id: s.area for s in charter.sectors}
     for cmd in surveys:
         if str(cmd.status) == "done":
             state.finished.add(str(cmd.id))  # this tick counts its last points
@@ -169,3 +219,44 @@ async def tick(flow: MissionFlow, mission: Mission) -> None:
         await flow.repo.set_sector_covered(
             mid, sector_id, None if multi is None else _multi_geojson(multi, plane), flow.now()
         )
+
+
+async def _gaps(
+    flow: MissionFlow,
+    mission: Mission,
+    state: _Mission,
+    sectors: dict[str, GeoJsonPolygon],
+    plane: Plane,
+    counting: set[str],
+) -> None:
+    """Each sector that turned done, once no search of it is still being counted: its gap,
+    told to the operator when there is one. A sector that is no longer done (searched
+    again) is worked out again when it is. Sectors already done at the first tick (the
+    ground restarted) are worked out but not told again."""
+    mid = str(mission.id)
+    for sid, status in (await flow.repo.sector_statuses(mid)).items():
+        if status != "done":
+            state.gaps.pop(sid, None)
+            continue
+        area = sectors.get(sid)
+        if sid in state.gaps or sid in counting or area is None:
+            continue
+        poly = polygon_xy(area, plane)
+        m2 = await asyncio.to_thread(gap_m2, poly, state.seen.get(sid))
+        pct = 100.0 * m2 / poly.area if poly.area > 0 else 0.0
+        state.gaps[sid] = (m2, pct)
+        if m2 <= 0.0 or not state.primed:
+            continue
+        flow.alert(
+            str(AlertCode.SECTOR_GAP),
+            "warning",
+            f"Sektor {sid} är klar men cirka {_m2_sv(m2)} m² ({pct:.0f} %) är inte sökt.",
+            vehicle_id=mission.vehicle_id,
+            mission_id=mid,
+            details={"sector_id": sid, "unsearched_m2": round(m2), "unsearched_pct": round(pct, 1)},
+        )
+
+
+def _m2_sv(m2: float) -> str:
+    """Square metres the Swedish way, to the nearest hundred: "2 300"."""
+    return f"{round(m2, -2):,.0f}".replace(",", " ")
