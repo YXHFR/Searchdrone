@@ -127,6 +127,7 @@ def build_situation(
     drain: BatteryDrain | None = None,
     active_command: Command | None,
     sectors: list[dict[str, Any]],
+    gaps: dict[str, tuple[float, float]] | None = None,
     annotations: list[Annotation],
     recent_events: list[Event],
     probability_line: str | None = None,
@@ -176,16 +177,7 @@ def build_situation(
             drain=drain,
         ),
         active_command=active_command,
-        sectors=[
-            {
-                "sector_id": s["sector_id"],
-                "name": s["name"],
-                "area_m2": s["area_m2"],
-                "status": s["status"],
-                "progress": float(s["progress"]),
-            }
-            for s in sectors
-        ],
+        sectors=[_sector(s, (gaps or {}).get(str(s["sector_id"]))) for s in sectors],
         pins=_pins(annotations),
         areas=[a for a in annotations if a.kind == "area"],
         paths=[a for a in annotations if a.kind == "path"],
@@ -197,3 +189,18 @@ def build_situation(
         candidates_line=candidates_line,
         finds_line=finds_line,
     )
+
+
+def _sector(s: dict[str, Any], gap: tuple[float, float] | None) -> dict[str, Any]:
+    """A sector as the AI sees it; a done one with a part no search saw (``coverage``)
+    also says how much: ``unsearched_m2`` and ``unsearched_pct``."""
+    out: dict[str, Any] = {
+        "sector_id": s["sector_id"],
+        "name": s["name"],
+        "area_m2": s["area_m2"],
+        "status": s["status"],
+        "progress": float(s["progress"]),
+    }
+    if gap is not None and gap[0] > 0 and s["status"] == "done":
+        out["unsearched_m2"], out["unsearched_pct"] = round(gap[0]), round(gap[1], 1)
+    return out

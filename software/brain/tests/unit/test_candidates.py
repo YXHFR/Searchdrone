@@ -213,3 +213,21 @@ def test_no_tool_decides_a_candidate() -> None:
     names |= {k.name for k in REG}  # also the skills the AI does not get yet
     pattern = re.compile(r"confirm|reject|decide|decision|approv|priority|verify|bekr|avvis")
     assert names and not {n for n in names if pattern.search(n)}
+
+
+def test_a_done_sector_with_a_gap_says_how_much_was_not_searched() -> None:
+    """The ground's gap on a done sector reaches the AI in square metres and percent; a
+    sector without one keeps its plain line."""
+    rows = [
+        {
+            "sector_id": "A",
+            "status": "done",
+            "progress": 1.0,
+            "unsearched_m2": 1645,
+            "unsearched_pct": 4.1,
+        },
+        {"sector_id": "B", "status": "active", "progress": 0.4},
+    ]
+    text = situation_text(situation(sectors=rows), NOW).splitlines()
+    (line,) = [x for x in text if x.startswith("Sektorer: ")]
+    assert line == "Sektorer: A 100 % (klar men ca 1600 m² ej sökt, 4 %), B 40 %"
