@@ -1,7 +1,7 @@
 # SK10, a decoy a few metres from the person: the same search as SK01 (sector A, a
-# closer look at each HÖG candidate, the operator decides; after a confirmation the AI
-# holds and asks, on "Flyg hem." it flies home and lands). Test data for the scripted
-# commander.
+# closer look at each HÖG candidate, the operator decides, the search goes on after the
+# look; after a confirmation the AI holds and asks, on "Flyg hem." it flies home and
+# lands). Test data for the scripted commander.
 scenario: SK10
 timeout_s: 900
 expected_runtime_s: 420
@@ -26,11 +26,38 @@ turns:
     once: false
     say: ["K{seq} HÖG. Tittar närmare, granska bilden."]
     action: {skill: inspect_detection, params: {candidate_id: "event:candidate_id"}}
+  # The look's "done" (or "failed") is not its end: the drone waits over the candidate,
+  # or stands still, and refuses moves until the look is closed (INSPECT_BUSY). Its
+  # "closed" event says what comes next, as for the real AI (system_v1.md): on "resume"
+  # the drone flies sector A on by itself; on "hold" (a look that failed or was turned
+  # down leaves the drone standing) the AI orders sector A again, unless the person was
+  # confirmed; with no "next" the AI asks and orders nothing (the real AI orders only
+  # when the drone is in HOLD with no active order, which a script cannot see).
   - on: skill_event
     when: {skill: inspect_detection, status: done}
     once: false
-    say: ["Bilderna är tagna. Söker vidare i sektor A."]
+    say: ["Bilderna är tagna. Väntar på operatörens beslut."]
+  - on: skill_event
+    when: {skill: inspect_detection, status: failed}
+    once: false
+    say: ["Titten gick inte att göra. Väntar tills den är stängd."]
+  - on: skill_event
+    when: {skill: inspect_detection, status: closed, next: resume}
+    once: false
+    say: ["Titten är klar. Drönaren söker vidare i sektor A."]
+  - on: skill_event
+    when:
+      skill: inspect_detection
+      status: closed
+      outcome: [rejected, unsure, resume, timeout, failed, aborted]
+      next: hold
+    once: false
+    say: ["Titten är klar. Söker vidare i sektor A."]
     action: {skill: survey_sector, params: {sector_id: "A", alt_m: 50, spacing_m: 45, speed_ms: 7}}
+  - on: skill_event
+    when: {skill: inspect_detection, status: closed, next: null}
+    once: false
+    say: ["Titten är klar men drönaren har inte sagt vad den gör. Ska jag söka vidare i sektor A?"]
   # Only a person confirms: after a confirmation the drone holds and the AI asks.
   - on: candidate_decided
     when: {decision: confirm}

@@ -492,3 +492,31 @@ async def test_scripted_when_reads_a_closed_looks_details(tmp_path: Path) -> Non
     done["sector_id"] = "B"
     out = await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
     assert out.action is not None and out.action.skill == "return_home"
+
+
+SK10 = Path(__file__).resolve().parents[4] / "simulation/scenarios/scripts/SK10.yaml"
+
+
+async def test_sk10_orders_the_search_again_only_after_a_look_that_left_the_drone_standing() -> (
+    None
+):
+    """SK10's script follows the real AI's rule for a closed look (system_v1.md): the
+    search is ordered again on next "hold" unless the person was confirmed, never on
+    "done", "failed" or "resume", and with no next the AI asks instead."""
+    b = ScriptedBackend.from_file(SK10)
+
+    async def answer(status: str, **details: Any) -> Any:
+        body = {"skill": "inspect_detection", "status": status, "details": details}
+        ev = [{"type": "event.skill", "body": body}]
+        return await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
+
+    for status in ("done", "failed"):  # the look is still open: the ground refuses moves
+        assert (await answer(status)).action is None
+    assert (await answer("closed", outcome="rejected", next="resume")).action is None
+    assert (await answer("closed", outcome="confirmed", next="hold")).action is None
+    for outcome in ("failed", "rejected", "timeout"):  # SK10[2]: a failed look in HOLD
+        out = await answer("closed", outcome=outcome, next="hold")
+        assert out.action is not None and out.action.skill == "survey_sector", outcome
+        assert out.action.params["sector_id"] == "A"
+    out = await answer("closed", outcome="rejected", next=None)
+    assert out.action is None and out.messages[0].text.endswith("?")
