@@ -114,7 +114,7 @@ from sd_onboard.skills.inspect_detection import InspectHandler
 from sd_onboard.skills.inspect_steps import look_radius_m
 from sd_onboard.skills.resume import ResumeHandler
 from sd_onboard.skills.return_home import ReturnHomeHandler
-from sd_onboard.skills.survey_sector import SurveyHandler, SurveyRun
+from sd_onboard.skills.survey_sector import BLOCKED_MIN_M, SurveyHandler, SurveyRun
 from sd_safety import evaluate
 from sd_safety.constants import (
     CLEARANCE_VALID_S,
@@ -252,8 +252,10 @@ _EXIT_SPEED_MS: Final = EXECUTOR_DEFAULT_SPEED_MS
 _RTL_RETRY_MS: Final = 3000
 _MODE_CONFIRM_MS: Final = int(MODE_CONFIRM_TIMEOUT_S * 1000)
 # A cylinder lifted (a candidate rejected): the search drops a way around it only when
-# that is at least this much shorter, so a cylinder handed from the drone to the ground
-# (the same person, another id) does not stop the search for nothing.
+# that is at least this much shorter, or searches again what the way around left out of
+# the lifted cylinder (``SurveyRun.regained_m``, at least ``BLOCKED_MIN_M``), so a
+# cylinder handed from the drone to the ground (the same person, another id) does not
+# stop the search for nothing.
 _STRAIGHTEN_GAIN_M: Final = 30.0
 _LOOP_ALIVE_MS: Final = 1500  # our HEARTBEAT stops when the tick has not run for this long
 _MIN_GPS_SATS: Final = 8
@@ -2507,7 +2509,10 @@ class Executor:
         around a cylinder that is gone is not flown on. With ``stop_first`` the drone stops
         before the rest is planned again from there (``SurveyHandler.rerouted``). With
         ``here`` (a cylinder lifted, the route clear) only a rest at least
-        ``_STRAIGHTEN_GAIN_M`` shorter than the waypoints left from ``here`` replaces them."""
+        ``_STRAIGHTEN_GAIN_M`` shorter than the waypoints left from ``here`` replaces them,
+        or one that searches the lifted cylinder's area the way around left out: a way
+        around that cut a corner of the search is often the shorter one (SITL SK10, where
+        the area by a rejected decoy, the person's, was never searched)."""
         rest = run.pattern_rest()
         new = SurveyRun(
             active.command_id,
@@ -2526,7 +2531,10 @@ class Executor:
         if straighten:
             old = [here, *(ctx.plane.point(p) for p in run.waypoints[run.next_index :])]
             route = [ctx.plane.xy(p.lat, p.lon) for p in plan.path]
-            if _length(route) > _length(old) - _STRAIGHTEN_GAIN_M:
+            shorter = _length(route) <= _length(old) - _STRAIGHTEN_GAIN_M
+            in_force = {k.keepout_id for k in ctx.keepouts}
+            regained = run.regained_m(in_force, ctx.plane, old, route) >= BLOCKED_MIN_M
+            if not shorter and not regained:
                 return False
         refused = "keepout_straighten_refused" if straighten else "keepout_reroute_refused"
         if self._route_refusal(active, ctx, plan, refused=refused):

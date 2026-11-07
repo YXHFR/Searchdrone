@@ -15,7 +15,7 @@ from sd_mav.mission import MISSION
 from sd_mav.modes import CopterMode
 from sd_onboard.executor import executor as executor_module
 from sd_onboard.executor.keepout_reflex import stop_m, survey_run
-from sd_onboard.skills.survey_sector import SurveyRun
+from sd_onboard.skills.survey_sector import BLOCKED_MIN_M, SurveyRun
 from sd_safety import evaluate
 from sd_safety.keepout import circles, xy_route_violation
 from sd_safety.targets import Xy
@@ -99,11 +99,41 @@ async def test_a_lifted_cylinder_drops_its_way_around() -> None:
         await r.until(lambda: "done" in r.up.stages(cmd.command_id), 600)
 
 
-async def test_a_cylinder_handed_to_the_ground_keeps_the_way_around() -> None:
-    """The same cylinder under another id (the drone's own handed to the ground): nothing
-    shorter, so the search flies on as it is, no stop."""
+# Cylinders by the side of the search: the way around cuts the corners of the legs in
+# them, and is shorter than the pattern (SITL SK10, #234).
+_CORNER_CUTS = [(55, 120, 30), (45, 150, 25), (55, 95, 35)]
+
+
+@pytest.mark.parametrize(("east", "north", "radius"), _CORNER_CUTS)
+async def test_a_lifted_cylinder_the_way_around_cut_a_corner_of_is_searched_again(
+    east: float, north: float, radius: float
+) -> None:
+    """The candidate is rejected (its cylinder goes) after the way around left out the
+    legs' ends in it: the search flies them after all, though that is the longer way, and
+    ends. Before, only a rest 30 m shorter replaced the way around, so the area by a
+    rejected decoy (in SK10 the person's) was never searched."""
     async with rig() as r:
-        k = keepout(0, 120, 40)
+        k = keepout(east, north, radius)
+        cmd, _ = await _search_around(r, k)
+        assert sum(m for _, m in run_of(r).blocked) >= BLOCKED_MIN_M
+        start = len(r.fc.track)
+        install(r)
+        await r.run(0.5)
+        assert "executor.keepout_straighten" in r.up.kinds(), r.up.kinds()
+        assert not run_of(r).detours() and not corners(run_of(r))
+        await r.until(lambda: "done" in r.up.stages(cmd.command_id), 600)
+        track = [PLANE.xy(lat, lon) for lat, lon, *_ in r.fc.track[start:]]
+        assert any(math.dist(p, centre(k)) < radius - BLOCKED_MIN_M for p in track)
+
+
+@pytest.mark.parametrize(("east", "north", "radius"), [(0, 120, 40), *_CORNER_CUTS])
+async def test_a_cylinder_handed_to_the_ground_keeps_the_way_around(
+    east: float, north: float, radius: float
+) -> None:
+    """The same cylinder under another id (the drone's own handed to the ground): nothing
+    shorter and nothing searched again, so the search flies on as it is, no stop."""
+    async with rig() as r:
+        k = keepout(east, north, radius)
         await _search_around(r, k)
         before = list(run_of(r).waypoints)
         install(r, k.model_copy(update={"keepout_id": new_id()}))

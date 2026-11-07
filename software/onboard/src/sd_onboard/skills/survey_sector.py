@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import replace
 from itertools import pairwise
 from typing import Any, ClassVar, Final
@@ -222,6 +222,21 @@ class SurveyRun:
             if left_out >= BLOCKED_MIN_M:
                 found.append((k, left_out))
         return found
+
+    def regained_m(
+        self, in_force: Collection[Id], plane: Plane, old: list[Xy], new: list[Xy]
+    ) -> float:
+        """How much more of the search inside the cylinders the last plan went around
+        (``blocked``) and that are no longer ``in_force`` the route ``new`` flies than
+        ``old`` does: a rejected candidate's area searched again. A cylinder handed over
+        under another id is gone around by ``new`` too, and regains nothing."""
+        regained = 0.0
+        for k, _ in self.blocked:
+            if k.keepout_id in in_force:
+                continue
+            c = (plane.xy(k.lat, k.lon), k.radius_m)
+            regained += max(0.0, _inside_m(new, c) - _inside_m(old, c))
+        return regained
 
     def plan(self, ctx: PlanContext) -> SkillPlan:
         self.around_keepouts(ctx)
