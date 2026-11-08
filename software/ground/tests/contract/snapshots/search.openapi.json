@@ -321,7 +321,7 @@
       },
       "CandidateRevision": {
         "additionalProperties": false,
-        "description": "A new candidate (``base_rev`` 0) or the next revision of one, from the search\nservice. It may set ``new``, ``assessing``, ``ready`` or ``merged``; ``state`` None keeps\nthe state in force (a candidate a person or the pilot holds). Confirmed and rejected\nare a person's and are refused here (E1).",
+        "description": "A new candidate (``base_rev`` 0) or the next revision of one, from the search\nservice. It may set ``new``, ``assessing``, ``ready`` or ``merged``; ``state`` None keeps\nthe state in force (a candidate a person or the pilot holds). Confirmed and rejected\nare a person's and are refused here (E1). A confirmed candidate takes only new\nobservations (``state`` None, no assessment): the ground keeps its position, radius,\nscores and priority.",
         "properties": {
           "assessment": {
             "anyOf": [
