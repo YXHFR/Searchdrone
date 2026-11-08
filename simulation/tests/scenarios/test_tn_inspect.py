@@ -456,6 +456,8 @@ async def test_tn16_the_ai_proposes_and_the_pilot_clicks_yes(
 ) -> None:
     async with scenario(sim, migrated_db, tmp_path) as sc:
         await exercise_airborne(sc, sim)
+        ex = sc.r.onboard.ex
+        start = (sc.tel.lat, sc.tel.lon)
         first = await a_candidate(sc, sc.at(*target_of(seed, "TN16")))
         other = await a_candidate(sc, sc.at(*target_of(seed, "TN16b", (-40.0, 60.0))))
         # The AI's proposal is a card; nothing flies until the pilot's click.
@@ -483,6 +485,15 @@ async def test_tn16_the_ai_proposes_and_the_pilot_clicks_yes(
             res = await decide(pilot, first, "reject")
             assert res.status_code == 200, res.text
         await ended(sc)
+        # Owner decision (1): a rejected person keeps the cylinder, so the drone does not
+        # fly across them. The next look is asked from where the drone came back to:
+        # from over the person, the way to the other one may lead deeper (seed 2 did).
+        await sc.until(
+            lambda: ex.state == "HOLD" and distance_m(*start, sc.tel.lat, sc.tel.lon) <= 5.0,
+            120,
+            "back where the look started",
+        )
+        assert any(str(k.source_id) == first for k in ex.keepouts), ex.keepouts
         await asyncio.sleep(3.1)
         res = await sc.order("inspect_detection", {"candidate_id": other})
         assert res["decision"] == "PENDING_APPROVAL", res
