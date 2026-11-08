@@ -88,15 +88,19 @@ class LlmConfig(_Section):
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
+FAST_PROVIDERS = ("deepinfra", "fireworks", "together")
+
+
 class ProviderConfig(_Section):
     """OpenRouter's provider routing (``provider`` in the request).
 
     ``data_collection = "deny"`` keeps the calls away from providers that may store or
     train on the data. ``require_parameters`` routes only to providers that support every
-    parameter sent (tools, reasoning). ``zdr`` narrows it to zero-data-retention
-    endpoints; left unset it follows the ground station's profile (``server.hello``):
-    on unless the ground station runs ``sim``, and on until its profile is known. Other
-    OpenAI-compatible APIs ignore or refuse the field: turn it off with ``send = false``.
+    parameter sent (tools, reasoning). ``order`` puts fast providers first. ``zdr``
+    narrows it to zero-data-retention endpoints; left unset it follows the ground
+    station's profile (``server.hello``): on unless the ground station runs ``sim``, and
+    on until its profile is known. Other OpenAI-compatible APIs ignore or refuse the
+    field: turn it off with ``send = false``.
     """
 
     send: bool = True
@@ -116,7 +120,11 @@ class ProviderConfig(_Section):
         return self._ground_profile != "sim"
 
     only: list[str] = Field(default_factory=list[str])
-    order: list[str] = Field(default_factory=list[str])
+    # Tried first; the others stay as fallbacks. OpenRouter's default routing weighs
+    # price and sent this model to providers that took 10-25 s per turn, past the call
+    # timeout, while these answered the same turn in 1-2 s at about the same price
+    # (measured 2026-11-03).
+    order: list[str] = Field(default_factory=lambda: list(FAST_PROVIDERS))
 
     def body(self) -> dict[str, Any] | None:
         if not self.send:

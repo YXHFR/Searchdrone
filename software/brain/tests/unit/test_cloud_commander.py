@@ -52,7 +52,12 @@ async def test_turn_sends_reasoning_and_provider_to_the_cloud() -> None:
     assert body["model"] == MAIN
     assert body["reasoning"] == {"effort": "low", "exclude": True}
     # no ground station has said its profile: zero data retention
-    assert body["provider"] == {"data_collection": "deny", "require_parameters": True, "zdr": True}
+    assert body["provider"] == {
+        "data_collection": "deny",
+        "require_parameters": True,
+        "zdr": True,
+        "order": ["deepinfra", "fireworks", "together"],
+    }
     assert body["tools"] and body["tool_choice"] == "auto"
     assert "seed" not in body
     assert fake.auth[0] == f"Bearer {KEY}"
