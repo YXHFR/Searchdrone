@@ -491,6 +491,23 @@ class CandidateRepo:
         )
 
     @staticmethod
+    async def _only_sightings_since(
+        conn: AsyncConnection, candidate_id: str, subject_rev: int
+    ) -> bool:
+        """Whether the person saw a find at ``subject_rev`` and every revision since only
+        added sightings to it. Confirmed follows confirmed only that way (``_write_one``;
+        a decision writes a revision only when the state changes), so what the person
+        decided on still stands: the same find, in the same place."""
+        res = await conn.execute(  # no such revision: NULL, so False
+            text(
+                "SELECT bool_and(state = 'confirmed') FROM candidates "
+                "WHERE candidate_id = :c AND rev >= :r"
+            ),
+            {"c": candidate_id, "r": subject_rev},
+        )
+        return bool(res.scalar_one())
+
+    @staticmethod
     async def _decided(conn: AsyncConnection, candidate_id: str) -> bool:
         res = await conn.execute(
             text("SELECT 1 FROM candidate_decisions WHERE candidate_id = :c LIMIT 1"),
@@ -518,12 +535,24 @@ class CandidateRepo:
         return out
 
     async def thumbs(self, mission_id: str) -> dict[str, str]:
-        """Per candidate: the observed detection with a crop and the largest px_size."""
+        """Per candidate: the observed detection with a crop and the largest px_size. A
+        find keeps the picture it had when the person confirmed it: a sighting it took
+        after that (``_write_one``) is on its card but never becomes its thumbnail. Ids
+        are ``uuidv7()`` from the database clock, and the sighting is written under the
+        mission's lock after the confirmation's transaction, so its id is the later."""
         rows = await self._all(
+            "WITH found AS (SELECT DISTINCT ON (candidate_id) candidate_id, state "
+            "FROM candidates WHERE mission_id = :m ORDER BY candidate_id, rev DESC), "
+            "confirmed_at AS (SELECT DISTINCT ON (x.candidate_id) x.candidate_id, x.id "
+            "FROM candidate_decisions x JOIN found f ON f.candidate_id = x.candidate_id "
+            "WHERE f.state = 'confirmed' AND x.decision = 'confirm' "
+            "ORDER BY x.candidate_id, x.id DESC) "
             "SELECT DISTINCT ON (o.candidate_id) o.candidate_id::text AS c, "
             "d.detection_id::text AS d FROM candidate_observations o "
             "JOIN detections d ON d.detection_id = o.detection_id "
+            "LEFT JOIN confirmed_at k ON k.candidate_id = o.candidate_id "
             "WHERE d.mission_id = :m AND d.crop_path IS NOT NULL "
+            "AND (k.id IS NULL OR o.id < k.id) "
             "ORDER BY o.candidate_id, d.px_size DESC, d.seq",
             m=mission_id,
         )
@@ -574,7 +603,8 @@ class CandidateRepo:
         """A decision row and, when the state changes, the candidate's next revision, in
         one transaction under the mission's lock. ``next_state`` gets the state in force
         and returns the new one (``None``: unchanged) or raises ``CandidateWriteError``.
-        The rev the person saw must still be in force (``SUPERSEDED`` otherwise). A
+        The rev the person saw must still be in force (``SUPERSEDED`` otherwise), but for
+        a find that has only taken sightings since (``_only_sightings_since``). A
         confirmation sets ``missions.found_candidate_id``; undoing it clears it again."""
         mission_id = await self.candidate_mission(candidate_id)
         if mission_id is None:
@@ -587,13 +617,19 @@ class CandidateRepo:
             prev = await self._latest_one(conn, candidate_id)
             if prev is None:
                 raise CandidateWriteError("CANDIDATE_NOT_FOUND", "Kandidaten finns inte.")
-            if int(prev["rev"]) != subject_rev:
+            newest = int(prev["rev"])
+            # A rev above the newest is no card the person saw (a number that may not even
+            # fit the column): stale, never asked of the database.
+            if subject_rev != newest and (
+                subject_rev > newest
+                or not await self._only_sightings_since(conn, candidate_id, subject_rev)
+            ):
                 raise CandidateWriteError(
                     "SUPERSEDED", "Kandidaten har ändrats sedan du såg den. Titta igen."
                 )
             before = str(prev["state"])
             after = next_state(before)
-            rev = int(prev["rev"])
+            rev = newest
             if after is not None:
                 rev += 1
                 await conn.execute(

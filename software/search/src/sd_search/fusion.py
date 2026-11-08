@@ -11,7 +11,9 @@ stays where the person confirmed it: its position and radius do not move and it 
 reopened. A detection near a find is most likely the same person seen again, so it makes
 no new card to decide. The cost: a second person within the fusion radius of a find
 (4 m + sigma, at most 12 m) gets no card of their own, though they are inside the
-find's keep-out cylinder (30 m + sigma) all the same. Rejected and merged candidates take
+find's keep-out cylinder (30 m + sigma) all the same. That holds for the rest of the
+mission, unless the pilot undoes the find: it is then an open candidate again, with the
+sightings it took, for a person to decide anew. Rejected and merged candidates take
 no new sightings: a detection next to a rejected one starts a new candidate (the panel
 shows it as "near rejected K7"). Two active candidates that end up closer than the
 radius are merged: the older stays, the younger becomes ``merged`` with ``merged_into``
