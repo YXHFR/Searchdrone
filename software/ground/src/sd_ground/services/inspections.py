@@ -1012,7 +1012,9 @@ def forget(flow: MissionFlow, mission_id: str) -> None:
 
 async def decided(flow: MissionFlow, mission: Mission, candidate_id: str, decision: str) -> None:
     """A person decided on the candidate (``candidates.decide``, the state already moved):
-    an open look on it ends, and the drone is told (``InspectOutcome``)."""
+    an open look on it ends, and the drone is told (``InspectOutcome``). A rejection says
+    whether the ground releases the candidate's cylinder (``keepout_released``): only a
+    candidate known not to be a person (``FlowRepo.keepout_candidates``)."""
     outcome = _DECISION_OUTCOME.get(decision)
     if outcome is None:
         return
@@ -1029,7 +1031,10 @@ async def decided(flow: MissionFlow, mission: Mission, candidate_id: str, decisi
         return
     look = await _open(flow, look_row.command_id) or Look(look_row)
     if flow.link is not None:
-        msg = InspectOutcome.model_validate({"command_id": look_row.command_id, "outcome": outcome})
+        released = outcome == "rejected" and await flow.repo.candidate_not_a_person(candidate_id)
+        msg = InspectOutcome.model_validate(
+            {"command_id": look_row.command_id, "outcome": outcome, "keepout_released": released}
+        )
         await flow.link.send_message(mission.vehicle_id, msg, mission_id=mid)
     await _end(flow, look, outcome, to_ready=False)
 

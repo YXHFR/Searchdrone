@@ -589,7 +589,8 @@ class Executor:
         self.gps_health = GpsHealth()
         self.keepouts: tuple[Keepout, ...] = ()
         self.keepout_seq = -1  # the highest KeepoutInstall.install_seq taken
-        # Candidates the pilot rejected in their look whose ground cylinder (``source =
+        # Candidates the pilot rejected in their look, and the ground releases (not a
+        # person: ``InspectOutcome.keepout_released``), whose ground cylinder (``source =
         # "candidate"``) is still in every install since: candidate_id -> until
         # (``REJECTED_RELEASE_WAIT_MS``). Not in force onboard: the return and its resume
         # are planned at once, without waiting for the ground's install that releases it
@@ -3359,7 +3360,8 @@ class Executor:
                 hold = self._inspect_climb_hold
                 self._enter(target, hold_reason=hold, cause="inspect climb done")
             if s is not None and s.phase == "await" and s.outcome is not None:
-                self._inspect_decide(s.outcome)  # decided during the climb: carried out now
+                # decided during the climb: carried out now
+                self._inspect_decide(s.outcome, released=s.keepout_released)
             return True
         if s is None or active.command_id != s.command_id:
             return False
@@ -3394,7 +3396,8 @@ class Executor:
             ).model_dump(mode="json"),
         )
         if s.outcome is not None:
-            self._inspect_decide(s.outcome)  # decided during the look's climb: now
+            # decided during the look's climb: now
+            self._inspect_decide(s.outcome, released=s.keepout_released)
         return True
 
     def _inspect_failed(self, active: _Active, exc: SkillFailedError) -> bool:
@@ -3706,9 +3709,10 @@ class Executor:
         self.emit("inspect_outcome", {"command_id": str(s.command_id), "outcome": o.outcome})
         if self._inspect_climbing_up(s):
             s.outcome = o.outcome  # carried out by ``_inspect_skill_done``
+            s.keepout_released = o.keepout_released
             self.emit("inspect_outcome_after_climb", {"command_id": str(s.command_id)})
             return
-        self._inspect_decide(o.outcome)
+        self._inspect_decide(o.outcome, released=o.keepout_released)
 
     def _inspect_climbing_up(self, s: InspectSession) -> bool:
         """The look climbs straight up now: the laser lost while waiting (``climb``), or
@@ -3724,15 +3728,21 @@ class Executor:
             and a.handler.climbing()
         )
 
-    def _inspect_decide(self, outcome: InspectOutcomeKind) -> None:
+    def _inspect_decide(self, outcome: InspectOutcomeKind, *, released: bool) -> None:
         """Carry out the pilot's decision (``on_inspect_outcome``). A rejected candidate's
-        cylinder is no longer in force from here (``_rejected``): the way back is planned
-        now, before the ground's install that releases it can come."""
+        cylinder the ground releases (``released``: not a person) is no longer in force
+        from here (``_rejected``): the way back is planned now, before the ground's install
+        that releases it can come. A rejected person keeps its cylinder: the way back goes
+        around it."""
         s = self._inspect
         if s is None:
             return
-        if outcome == "rejected" and any(
-            k.source == "candidate" and k.source_id == s.candidate_id for k in self.keepouts
+        if (
+            outcome == "rejected"
+            and released
+            and any(
+                k.source == "candidate" and k.source_id == s.candidate_id for k in self.keepouts
+            )
         ):
             self._rejected[s.candidate_id] = self.now_ms() + REJECTED_RELEASE_WAIT_MS
             self._keepouts_changed = True

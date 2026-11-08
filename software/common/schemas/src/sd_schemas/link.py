@@ -307,10 +307,17 @@ class CommanderStatus(SdModel):
 class InspectOutcome(SdModel):
     """Ground -> onboard, reliable: the pilot's decision on a closer look while the drone
     hovers for it (``hold_reason`` "inspect_await"). The drone flies back to where the
-    search broke off, except after "confirmed": then it hovers over the find."""
+    search broke off, except after "confirmed": then it hovers over the find.
+
+    ``keepout_released`` is true only when the ground releases the candidate's keep-out
+    cylinder with this decision: "rejected", and the candidate is known not to be a
+    person (a rejected person keeps its cylinder). Only then may the drone stop keeping
+    away from it before the ground's next keep-out install comes; false (the default)
+    waits for the install."""
 
     command_id: Id  # the inspect_detection order
     outcome: InspectOutcomeKind
+    keepout_released: bool = False
 
 
 class InspectLower(SdModel):

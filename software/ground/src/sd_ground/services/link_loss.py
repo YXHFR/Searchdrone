@@ -4,11 +4,13 @@ panel should expect while SD-link is down.
 * **Keep-outs:** every confirmed find of the open mission (the newest revision of a
   candidate is ``confirmed``) becomes a ``Keepout`` (``source = "confirmed"``, radius
   ``PERSON_KEEPOUT_M + sigma95_m``), and so does every open candidate the detector or the
-  image model is at least ``KEEPOUT_SCORE_MIN`` sure of (``source = "candidate"``; gone
-  when a person rejects it). Only the confirmed ones count for the link-loss rule. The
-  whole list goes out as ``KeepoutInstall`` when it changes and at every ``Hello``, with
-  the rejected candidates' detections (``released``, newest first): the drone removes its
-  own cylinders made from them.
+  image model is at least ``KEEPOUT_SCORE_MIN`` sure of (``source = "candidate"``). A
+  rejected candidate the AI saw as a person keeps its cylinder (owner decision 1); only
+  one known not to be a person is gone when a person rejects it. Only the confirmed ones
+  count for the link-loss rule. The whole list goes out as ``KeepoutInstall`` when it
+  changes and at every ``Hello``, with the detections of the rejected candidates that
+  are not persons (``released``, newest first): the drone removes its own cylinders made
+  from them.
   ``install_seq`` is at least the wall clock in milliseconds, so a restarted ground
   station still sends a higher one than the onboard computer kept.
 * **Installed or not:** the ground waits for the executor's ``Ack`` on every list. Only
@@ -98,7 +100,7 @@ class LinkWatch:
     not_installed: bool = False  # KEEPOUTS_NOT_INSTALLED is out, not yet followed by "done"
     at_cap_logged: bool = False  # install_seq_at_cap is logged; reset by "done"
     keepouts: list[Keepout] = field(default_factory=list[Keepout])
-    released: list[uuid.UUID] = field(default_factory=list[uuid.UUID])  # rejected detections
+    released: list[uuid.UUID] = field(default_factory=list[uuid.UUID])  # rejected, not persons
     ids: dict[str, uuid.UUID] = field(default_factory=dict[str, uuid.UUID])
     seqs: dict[str, int] = field(default_factory=dict[str, int])  # candidate -> K<n>
     polled_ms: int | None = None

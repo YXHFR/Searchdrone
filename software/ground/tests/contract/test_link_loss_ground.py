@@ -38,9 +38,19 @@ async def r(migrated_db: Db, tmp_path: Path) -> AsyncIterator[Rig]:
 
 
 async def candidate(
-    r: Rig, mission: str, lat: float, lon: float, *, state: str, rev: int, cid: str | None = None
+    r: Rig,
+    mission: str,
+    lat: float,
+    lon: float,
+    *,
+    state: str,
+    rev: int,
+    cid: str | None = None,
+    seq: int = 1,
+    score: float = 0.8,
 ) -> str:
-    """One revision of a candidate, as sd_app writes it."""
+    """One revision of a candidate, as sd_app writes it (``seq``: its display number,
+    ``score``: the detector's best)."""
     async with r.flow.repo.engine.begin() as conn:
         row = (
             await conn.execute(
@@ -48,14 +58,27 @@ async def candidate(
                     "INSERT INTO candidates (candidate_id, rev, mission_id, seq, state, geom, "
                     "sigma95_m, n_seen, n_in_view, best_detector_score, priority, "
                     "first_seen_utc, last_seen_utc) VALUES (COALESCE(CAST(:cid AS uuid), "
-                    "uuidv7()), :rev, CAST(:m AS uuid), 1, :state, "
-                    "ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), 5, 3, 3, 0.8, 0.9, now(), "
+                    "uuidv7()), :rev, CAST(:m AS uuid), :seq, :state, "
+                    "ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), 5, 3, 3, :score, 0.9, now(), "
                     "now()) RETURNING candidate_id::text"
                 ),
-                {"cid": cid, "rev": rev, "m": mission, "state": state, "lon": lon, "lat": lat},
+                {
+                    "cid": cid,
+                    "rev": rev,
+                    "m": mission,
+                    "seq": seq,
+                    "state": state,
+                    "lon": lon,
+                    "lat": lat,
+                    "score": score,
+                },
             )
         ).one()
     return str(row[0])
+
+
+# A class from the register that is not a person (``sd_detect/classes.toml``).
+NOT_A_PERSON = "red_block"
 
 
 def installs(r: Rig) -> list[Any]:
@@ -67,6 +90,7 @@ async def test_keepout_install_confirmed(r: Rig) -> None:
     mid = await rig_.ready_mission()
     lat, lon = rig_.at(60.0, 0.0)
     cid = await candidate(rig_, mid, lat, lon, state="ready", rev=1)
+    await _detection(rig_, mid, cid, lat, lon, 0.8)  # not a person: released when rejected
     await candidate(rig_, mid, lat, lon, state="confirmed", rev=2, cid=cid)
 
     def installed(source: str) -> Callable[[], bool]:
@@ -92,7 +116,7 @@ async def test_keepout_install_confirmed(r: Rig) -> None:
     await candidate(rig_, mid, lat, lon, state="inspecting", rev=3, cid=cid)
     await rig_.until(installed("candidate"), 10, "the reopened find kept as a candidate")
     assert installs(rig_)[-1].install_seq > first.install_seq
-    # Rejected: an empty list.
+    # Rejected (not a person): an empty list.
     await candidate(rig_, mid, lat, lon, state="rejected", rev=4, cid=cid)
     await rig_.until(lambda: installs(rig_)[-1].keepouts == [], 10, "the rejected find gone")
 
@@ -218,8 +242,17 @@ async def test_far_find_is_the_usual_rule(r: Rig) -> None:
     assert (plan.home_at_utc - plan.lost_at_utc).total_seconds() == pytest.approx(53, abs=0.01)
 
 
-async def _detection(r: Rig, mission: str, cid: str, lat: float, lon: float, score: float) -> str:
-    """A detection of the candidate ``cid`` (a still, the detection, the observation)."""
+async def _detection(
+    r: Rig,
+    mission: str,
+    cid: str,
+    lat: float,
+    lon: float,
+    score: float,
+    label: str | None = NOT_A_PERSON,
+) -> str:
+    """A detection of the candidate ``cid`` (a still, the detection, the observation) of
+    the class ``label`` (``None``: a detector without classes)."""
     point = f"POINT({lon} {lat})"
     square = (
         f"POLYGON(({lon - 1e-4} {lat - 1e-4},{lon + 1e-4} {lat - 1e-4},"
@@ -241,11 +274,21 @@ async def _detection(r: Rig, mission: str, cid: str, lat: float, lon: float, sco
             await conn.execute(
                 text(
                     "INSERT INTO detections (mission_id, vehicle_id, detection_id, still_id, "
-                    "score, bbox, geom, sigma95_m, px_size) VALUES (CAST(:m AS uuid), :v, "
-                    "uuidv7(), CAST(:s AS uuid), :score, '{}', ST_GeomFromText(:p, 4326), 4.5, "
-                    "90) RETURNING detection_id::text"
+                    "score, bbox, geom, sigma95_m, px_size, label, kind, source) VALUES "
+                    "(CAST(:m AS uuid), :v, uuidv7(), CAST(:s AS uuid), :score, '{}', "
+                    "ST_GeomFromText(:p, 4326), 4.5, 90, :label, :kind, :source) "
+                    "RETURNING detection_id::text"
                 ),
-                {"m": mission, "v": VID, "s": still, "score": score, "p": point},
+                {
+                    "m": mission,
+                    "v": VID,
+                    "s": still,
+                    "score": score,
+                    "p": point,
+                    "label": label,
+                    "kind": None if label is None else "target",
+                    "source": None if label is None else "model",
+                },
             )
         ).one()[0]
         await conn.execute(
@@ -279,3 +322,52 @@ async def test_a_rejected_candidate_releases_its_detections(r: Rig) -> None:
     # Reopened (a newer revision that is not rejected): kept out again, not released.
     await candidate(r, mid, lat, lon, state="inspecting", rev=3, cid=cid)
     await r.until(lambda: released() == [], 10, "reopened: no longer released")
+
+
+@pytest.mark.parametrize("label", ["person", None])
+async def test_a_rejected_person_keeps_its_cylinder(r: Rig, label: str | None) -> None:
+    """Owner decision (1): a rejected candidate the AI saw as a person keeps its ground
+    cylinder, and its detections are not released. So does one whose class is not known
+    (a detector without classes). Only a candidate known not to be a person is released
+    (``test_a_rejected_candidate_releases_its_detections``)."""
+    mid = await r.ready_mission()
+    lat, lon = r.at(60.0, 0.0)
+    cid = await candidate(r, mid, lat, lon, state="ready", rev=1)
+    await _detection(r, mid, cid, lat, lon, 0.6, label=label)
+    await candidate(r, mid, lat, lon, state="rejected", rev=2, cid=cid)
+
+    def held() -> bool:
+        last = installs(r)[-1] if installs(r) else None
+        return last is not None and [(str(k.source_id), k.source) for k in last.keepouts] == [
+            (cid, "candidate")
+        ]
+
+    await r.until(held, 10, "the rejected person's cylinder")
+    assert list(installs(r)[-1].released) == []
+    assert not await r.flow.repo.candidate_not_a_person(cid)
+    # Below the score a cylinder needs, a rejected person has none, as an open one would not.
+    low = await candidate(r, mid, lat + 1e-3, lon, state="ready", rev=1, seq=2, score=0.1)
+    await _detection(r, mid, low, lat + 1e-3, lon, 0.1, label=label)
+    await candidate(r, mid, lat + 1e-3, lon, state="rejected", rev=2, cid=low, seq=2, score=0.1)
+    seq = installs(r)[-1].install_seq
+    rock = await candidate(r, mid, lat, lon + 1e-3, state="ready", rev=1, seq=3)
+    await _detection(r, mid, rock, lat, lon + 1e-3, 0.6)
+    await r.until(lambda: installs(r)[-1].install_seq > seq, 10, "a later list")
+    await candidate(r, mid, lat, lon + 1e-3, state="rejected", rev=2, cid=rock, seq=3)
+    await r.until(held, 10, "only the sure rejected person")
+    await r.until(lambda: len(installs(r)[-1].released) == 1, 10, "the rejected rock's")
+
+
+async def test_the_ground_says_whether_a_rejection_releases_the_cylinder(r: Rig) -> None:
+    """``candidate_not_a_person``: the class the ground's ``InspectOutcome`` tells the
+    drone with a rejection (``keepout_released``)."""
+    mid = await r.ready_mission()
+    lat, lon = r.at(60.0, 0.0)
+    rock = await candidate(r, mid, lat, lon, state="ready", rev=1)
+    await _detection(r, mid, rock, lat, lon, 0.6)
+    person = await candidate(r, mid, lat, lon, state="ready", rev=1, seq=2)
+    await _detection(r, mid, person, lat, lon, 0.6, label="person")
+    nothing = await candidate(r, mid, lat, lon, state="ready", rev=1, seq=3)
+    assert await r.flow.repo.candidate_not_a_person(rock)
+    assert not await r.flow.repo.candidate_not_a_person(person)
+    assert not await r.flow.repo.candidate_not_a_person(nothing)

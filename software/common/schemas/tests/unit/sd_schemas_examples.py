@@ -397,7 +397,7 @@ def _search_examples() -> list[BaseModel]:
         ),
         keepout,
         s.KeepoutInstall(install_seq=3, keepouts=[keepout]),
-        s.InspectOutcome(command_id=COMMAND, outcome="rejected"),
+        s.InspectOutcome(command_id=COMMAND, outcome="rejected", keepout_released=True),
         s.InspectLower(command_id=COMMAND),
         s.InspectStay(command_id=COMMAND),
         s.InspectProgress(

@@ -307,12 +307,16 @@ async def test_without_a_map_it_looks_from_its_height_then_waits_and_flies_back(
         assert back["command_id"] == str(cmd.command_id)
 
 
-@pytest.mark.parametrize("outcome", ["unsure", "resume", "rejected"])
+@pytest.mark.parametrize(
+    ("outcome", "released"),
+    [("unsure", False), ("resume", False), ("rejected", False), ("rejected", True)],
+)
 async def test_the_candidates_own_cylinder_is_suspended_until_the_return(
-    outcome: InspectOutcomeKind,
+    outcome: InspectOutcomeKind, released: bool
 ) -> None:
-    """Back in force for the return, unless the pilot rejected the candidate: then it is
-    not in force onboard while the ground releases it (``Executor._rejected``)."""
+    """Back in force for the return, unless the pilot rejected the candidate and the
+    ground releases its cylinder (not a person): then it is not in force onboard while the
+    ground's install comes (``Executor._rejected``). A rejected person keeps it."""
     async with rig() as r:
         await r.install(over())
         await r.takeoff(40)
@@ -331,9 +335,10 @@ async def test_the_candidates_own_cylinder_is_suspended_until_the_return(
         assert len(r.ex.local_keepouts) == 1
         await awaiting(r)
         r.ex.on_inspect_outcome(
-            InspectOutcome(command_id=cmd.command_id, outcome=outcome), new_id()
+            InspectOutcome(command_id=cmd.command_id, outcome=outcome, keepout_released=released),
+            new_id(),
         )
-        assert (own in r.ex.keepouts_in_force()) == (outcome != "rejected")
+        assert (own in r.ex.keepouts_in_force()) == (not released)
 
 
 async def test_meadow_steps_down_to_30_m_and_asks_then_stays_when_no_answer() -> None:
@@ -664,13 +669,14 @@ async def test_stills_while_waiting_keep_the_wait() -> None:
 
 
 async def _rejected_on_the_way_back(
-    r: Rig, *, also_confirmed: bool = False
+    r: Rig, *, also_confirmed: bool = False, released: bool = True
 ) -> tuple[UUID, Keepout]:
     """A search, a look at a candidate on it whose ground cylinder is installed, and the
     pilot's rejection: (the candidate, its cylinder). As in SK10: no permit to fly over an
     unconfirmed person, so the search goes around the candidate's cylinder.
     ``also_confirmed``: the ground's list also holds a cylinder with the candidate's id
-    under ``confirmed`` when the pilot decides."""
+    under ``confirmed`` when the pilot decides. ``released``: the ground releases the
+    cylinder with the rejection (not a person); a rejected person keeps it."""
     await r.install(charter(allowed_skills=SKILLS, operation_mode="sim"))
     await r.takeoff(40)
     r.ex.camera = _camera()  # a look from the side of the cylinder
@@ -690,7 +696,10 @@ async def _rejected_on_the_way_back(
     cmd = await r.send(order(r, candidate_id=cid, lat=lat, lon=lon), 0.5)
     assert r.ex.state == S.INSPECT, r.up.acks[-2:]
     await awaiting(r)
-    r.ex.on_inspect_outcome(InspectOutcome(command_id=cmd.command_id, outcome="rejected"), new_id())
+    r.ex.on_inspect_outcome(
+        InspectOutcome(command_id=cmd.command_id, outcome="rejected", keepout_released=released),
+        new_id(),
+    )
     return cid, own
 
 
@@ -718,6 +727,30 @@ async def test_a_rejected_candidates_cylinder_is_not_gone_around_on_the_way_back
         r.ex.on_keepouts(KeepoutInstall(install_seq=3, keepouts=[]), new_id())
         r.ex.on_keepouts(KeepoutInstall(install_seq=4, keepouts=[own]), new_id())
         assert own in r.ex.keepouts_in_force()  # put back by the ground: in force
+
+
+async def test_a_rejected_person_keeps_its_cylinder_and_is_gone_around() -> None:
+    """The owner's rule: a rejected candidate the AI saw as a person keeps its ground
+    cylinder (the ground says so: ``keepout_released`` false). The drone never takes it out
+    of force, and the search flown on goes around it: never inside it."""
+    async with rig() as r:
+        _, own = await _rejected_on_the_way_back(r, released=False)
+        assert own in r.ex.keepouts_in_force()
+        assert not r.ex._rejected  # pyright: ignore[reportPrivateUsage]
+        await r.until(lambda: bool(events(r, "inspect.closed")), 60)
+        inside = 0.0
+        step = 0.1
+        for _ in range(int(60 / step)):
+            await r.run(step)
+            assert own in r.ex.keepouts_in_force()
+            t = r.vehicle.telemetry
+            if plane_distance_m(t.lat, t.lon, own.lat, own.lon) < own.radius_m:
+                inside += step
+        assert not events(r, "executor.keepout_rejected")
+        assert inside == 0.0
+        reacted = [d for d in events(r, "executor.survey_blocked") if d["skill"] == "resume"]
+        reacted += events(r, "executor.keepout_reroute")
+        assert reacted or r.ex.state == S.HELD, r.up.kinds()[-20:]
 
 
 async def test_a_rejected_cylinder_back_in_force_is_gone_around_by_the_flight_under_way() -> None:
@@ -1319,6 +1352,44 @@ async def test_a_decision_during_the_laser_climb_while_waiting_lets_it_finish() 
         assert alt(r) > no_laser - 1.6  # up at the floor, not left below it
         assert r.ex.hold_reason == "skill_done" and r.ex.snapshot().inspect is None
         assert [d["cause"] for d in events(r, "executor.inspect_ended")] == ["confirmed"]
+
+
+@pytest.mark.parametrize("released", [True, False])
+async def test_a_rejection_during_the_climb_keeps_what_the_ground_releases(
+    released: bool,
+) -> None:
+    """A rejection while the drone climbs waits for the climb's end, with whether the
+    ground releases the candidate's cylinder: held out then only if it does."""
+    pack = meadow()
+    async with rig() as r:
+        from onboard_helpers import HOME_ALT
+
+        laser = FakeLaser(HOME_ALT)
+        r.ex.laser = laser  # type: ignore[assignment]
+        cmd, _ = await start(r, pack=pack, alt_min_agl_m=6, default_alt_agl_m=40)
+        assert r.ex._inspect is not None  # pyright: ignore[reportPrivateUsage]
+        cid = r.ex._inspect.candidate_id  # pyright: ignore[reportPrivateUsage]
+        lat, lon = at(-300.0, -300.0)  # far from the look and its way back
+        own = Keepout(
+            keepout_id=new_id(), lat=lat, lon=lon, radius_m=20, source="candidate", source_id=cid
+        )
+        r.ex.on_keepouts(KeepoutInstall(install_seq=50, keepouts=[own]), new_id())
+        await r.until(lambda: bool(events(r, "inspect.lower_offer")), 200)
+        r.ex.on_inspect_lower(InspectLower(command_id=cmd.command_id), new_id())
+        await awaiting(r, 120)
+        laser.on = False
+        await r.until(lambda: r.ex.state == S.INSPECT, 5)  # the climb to the map's floor
+        r.ex.on_inspect_outcome(
+            InspectOutcome(
+                command_id=cmd.command_id, outcome="rejected", keepout_released=released
+            ),
+            new_id(),
+        )
+        assert events(r, "executor.inspect_outcome_after_climb")
+        assert not r.ex._rejected  # pyright: ignore[reportPrivateUsage]  # not yet
+        await r.until(lambda: r.ex.state != S.INSPECT, 60)  # the climb's end: decided
+        held_out = [d["candidate_id"] for d in events(r, "executor.keepout_rejected")]
+        assert held_out == ([str(cid)] if released else [])
 
 
 async def test_a_decision_during_the_steps_laser_climb_lets_it_finish() -> None:
