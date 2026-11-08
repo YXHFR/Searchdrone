@@ -1014,7 +1014,8 @@ async def decided(flow: MissionFlow, mission: Mission, candidate_id: str, decisi
     """A person decided on the candidate (``candidates.decide``, the state already moved):
     an open look on it ends, and the drone is told (``InspectOutcome``). A rejection says
     whether the ground releases the candidate's cylinder (``keepout_released``): only a
-    candidate known not to be a person (``FlowRepo.keepout_candidates``)."""
+    candidate known not to be a person, rejected as "not a person" or of another class
+    (``FlowRepo.keepout_candidates``)."""
     outcome = _DECISION_OUTCOME.get(decision)
     if outcome is None:
         return

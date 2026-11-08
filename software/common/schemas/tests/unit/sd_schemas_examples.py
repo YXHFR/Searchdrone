@@ -528,7 +528,9 @@ def _search_examples() -> list[BaseModel]:
             latency_ms=3,
             evidence={"garment:0:red": 0.41},
         ),
-        s.CandidateDecision(decision="unsure", note="oklart", subject_rev=2),
+        s.CandidateDecision(
+            decision="reject", note="en sten", subject_rev=2, reason="not_a_person"
+        ),
         s.CandidateCard(
             candidate_id=CANDIDATE,
             rev=2,

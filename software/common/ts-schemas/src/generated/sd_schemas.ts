@@ -662,6 +662,7 @@ export interface CandidateCounts {
 export interface CandidateDecision {
   decision: "confirm" | "reject" | "inspect" | "unsure" | "reopen" | "resume";
   note?: string;
+  reason?: "not_a_person" | null;
   subject_rev: number;
 }
 /**
@@ -725,6 +726,7 @@ export interface StoredDecision {
   id: string;
   note: string;
   operator_ref: string;
+  reason?: "not_a_person" | null;
   subject_rev: number;
 }
 /**

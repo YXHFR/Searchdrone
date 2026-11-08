@@ -630,6 +630,7 @@ async def decide(
             session_id=session_id,
             now=flow.now(),
             next_state=_next_state(body, pilot=pilot),
+            reason=body.reason,
         )
     except CandidateWriteError as exc:
         raise ApiStatusError(409, exc.code, exc.detail_sv) from exc

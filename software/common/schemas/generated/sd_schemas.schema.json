@@ -1755,6 +1755,18 @@
           "maxLength": 300,
           "type": "string"
         },
+        "reason": {
+          "anyOf": [
+            {
+              "const": "not_a_person",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "subject_rev": {
           "minimum": 1,
           "type": "integer"
@@ -10367,6 +10379,18 @@
         "operator_ref": {
           "pattern": "^operator:[a-z0-9][a-z0-9_-]{0,31}$",
           "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "const": "not_a_person",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "subject_rev": {
           "minimum": 1,

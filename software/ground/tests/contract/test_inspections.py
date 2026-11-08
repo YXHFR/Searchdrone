@@ -231,6 +231,7 @@ async def test_the_decision_while_the_drone_waits(
     ("decision", "kw", "released"),
     [
         ("reject", {}, False),  # a person keeps its cylinder (owner decision 1)
+        ("not_a_person", {}, True),  # "Ingen person här": the pilot says it is none
         ("reject", {"label": "red_block", "px_size": 24.0}, True),  # not a person
         ("resume", {"label": "red_block", "px_size": 24.0}, False),  # not rejected
     ],
@@ -239,12 +240,16 @@ async def test_a_rejection_releases_the_cylinder_only_of_what_is_not_a_person(
     r: Rig, decision: str, kw: dict[str, Any], released: bool
 ) -> None:
     """The ground tells the drone with the decision whether it releases the candidate's
-    cylinder (``keepout_released``): only for a rejected candidate that is not a person.
+    cylinder (``keepout_released``): only for a rejected candidate that is not a person,
+    by its class or by the pilot's "Ingen person här".
     The drone holds a rejected cylinder out of force before the install only then."""
     _, cid, sent = await started(r, **kw)
     await event(r, "inspect.done", **done(sent))
     async with person(r, "pilot", "kalle") as pilot:
-        res = await decide(pilot, cid, decision)
+        if decision == "not_a_person":
+            res = await decide(pilot, cid, "reject", reason="not_a_person")
+        else:
+            res = await decide(pilot, cid, decision)
         assert res.status_code == 200, res.text
     await r.until(lambda: r.onboard.looks, 5, "InspectOutcome")
     (told,) = r.onboard.looks

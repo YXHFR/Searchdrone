@@ -94,6 +94,22 @@ def test_decision_kinds_and_rev() -> None:
         search.CandidateDecision.model_validate({"decision": "confirm", "subject_rev": 0})
 
 
+def test_only_a_rejection_has_a_reason_and_none_keeps_the_cylinder() -> None:
+    plain = search.CandidateDecision(decision="reject", subject_rev=1)
+    assert plain.reason is None  # "Fel person / osäker": the safe side
+    said = search.CandidateDecision(decision="reject", subject_rev=1, reason="not_a_person")
+    assert said.reason == "not_a_person"
+    for kind in ("confirm", "inspect", "unsure", "reopen", "resume"):
+        with pytest.raises(ValidationError):
+            search.CandidateDecision.model_validate(
+                {"decision": kind, "subject_rev": 1, "reason": "not_a_person"}
+            )
+    with pytest.raises(ValidationError):
+        search.CandidateDecision.model_validate(
+            {"decision": "reject", "subject_rev": 1, "reason": "rock"}
+        )
+
+
 # --- perception messages ---------------------------------------------------------------
 
 

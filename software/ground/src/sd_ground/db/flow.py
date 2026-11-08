@@ -46,13 +46,19 @@ OPEN_STATUSES = ("pending_approval", "dispatched", "received", "accepted", "runn
 # The class of a person (the detector's class register, ``sd_detect/classes.toml``). A
 # candidate's class is its detections' label: fusion joins only detections of one label.
 PERSON_LABEL = "person"
-# Whether the candidate ``{c}`` is known not to be a person: it has detections, and each
-# has a class that is not ``PERSON_LABEL`` (binds ``:person``). A detection without a class
-# (a detector without classes) may be a person, and so may a candidate without detections.
+# Whether the candidate ``{c}`` is known not to be a person (binds ``:person``), either:
+# * a person said so: the candidate's newest decision is a rejection with the reason
+#   ``not_a_person`` ("Ingen person här"). A plain rejection ("Fel person / osäker"), or any
+#   later decision, does not say it;
+# * or it has detections, and each has a class that is not ``PERSON_LABEL``. A detection
+#   without a class (a detector without classes) may be a person, and so may a candidate
+#   without detections.
 _NOT_A_PERSON = (
-    "COALESCE((SELECT bool_and(pd.label IS NOT NULL AND pd.label <> :person) "
+    "(COALESCE((SELECT pc.reason = 'not_a_person' FROM candidate_decisions pc "
+    "WHERE pc.candidate_id = {c} ORDER BY pc.created_at DESC, pc.id DESC LIMIT 1), false) "
+    "OR COALESCE((SELECT bool_and(pd.label IS NOT NULL AND pd.label <> :person) "
     "FROM candidate_observations po JOIN detections pd ON pd.detection_id = po.detection_id "
-    "WHERE po.candidate_id = {c}), false)"
+    "WHERE po.candidate_id = {c}), false))"
 )
 
 
@@ -1270,9 +1276,9 @@ class FlowRepo:
         then by display number: the newest revision is ``confirmed`` (a person confirmed
         the find and has not reopened it), or it is not merged, the detector or the image
         model is at least ``score_min`` sure, and it is either still open or rejected but
-        not known not to be a person (the owner's rule: a rejected candidate the AI saw as
-        a person keeps its cylinder; only one that is not a person, ``_NOT_A_PERSON``, is
-        released)."""
+        not known not to be a person (the owner's rule: a rejected candidate that may be a
+        person keeps its cylinder; only one that is not, ``_NOT_A_PERSON``: the person
+        rejected it as "not a person", or its class is not a person, is released)."""
         rows = await self._all(
             "SELECT candidate_id::text AS candidate_id, seq, state, lat, lon, sigma95_m FROM ("  # noqa: S608 - constants only
             "SELECT DISTINCT ON (candidate_id) candidate_id, seq, state, "

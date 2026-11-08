@@ -92,11 +92,22 @@ export function ReviewCandidate({
     }
   };
 
-  const decide = async (decision: CandidateDecision["decision"]): Promise<void> => {
+  // A rejection with ``reason`` "not_a_person" ("Ingen person här") releases the
+  // candidate's keep-out cylinder; a plain one ("Inte hen") keeps it, the person may be
+  // someone else.
+  const decide = async (
+    decision: CandidateDecision["decision"],
+    reason?: CandidateDecision["reason"],
+  ): Promise<void> => {
     setBusy(true);
     setMsg(null);
     try {
-      const body: CandidateDecision = { decision, note: note.trim(), subject_rev: card.rev };
+      const body: CandidateDecision = {
+        decision,
+        note: note.trim(),
+        subject_rev: card.rev,
+        ...(reason ? { reason } : {}),
+      };
       const d = await api<CandidateDetail>(paths.candidateDecision(card.candidate_id), {
         method: "POST",
         body,
@@ -192,9 +203,20 @@ export function ReviewCandidate({
           className="btn cand-reject"
           disabled={busy || !ready}
           data-testid="cand-reject"
+          title={t("candidates.review.rejectHint")}
           onClick={() => void decide("reject")}
         >
           {t("candidates.review.reject")}
+        </button>
+        <button
+          type="button"
+          className="btn cand-reject"
+          disabled={busy || !ready}
+          data-testid="cand-reject-nothing"
+          title={t("candidates.review.rejectNothingHint")}
+          onClick={() => void decide("reject", "not_a_person")}
+        >
+          {t("candidates.review.rejectNothing")}
         </button>
         {inspecting ? null : (
           <button
