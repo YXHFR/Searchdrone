@@ -521,7 +521,9 @@ def test_a_container_moved_after_a_preemption_counts_the_earlier_attempt(
     before = 1000.0 + app.UNSEEN_S  # its mark and what it may have run after it
     assert before <= res["seconds"] < before + 5
     last = json.loads(mark.read_text())
-    assert last["ended"] and last["seconds"] == pytest.approx(res["seconds"], abs=0.1)
+    # The last mark is written before the call returns: never later than its seconds
+    # (rounded to 0.1 s), but a busy runner can take any time between the two.
+    assert last["ended"] and before <= last["seconds"] <= res["seconds"] + 0.05
 
 
 def test_two_runs_of_one_call_add_up_their_seconds(

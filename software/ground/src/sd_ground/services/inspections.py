@@ -45,7 +45,10 @@ order is then the active order in the situation, its sector's progress and cover
 (``commands``, ``coverage``), and its end reaches the AI as a skill event of that order
 (``inspection.resume_ended``: the search's skill and sector, status done, failed or
 superseded, ``details.resumed_after_look`` the look's order). In memory only: after a
-restart of the ground the search flies on unreported, as before.
+restart of the ground the search flies on unreported, as before. When that end does not
+come and the drone's state no longer names the resume (``on_snapshot``), the run's link
+ends there, and that moment is kept in the event log (``inspection.resume_left``) for
+the coverage rebuilt after a restart.
 """
 
 from __future__ import annotations
@@ -103,6 +106,7 @@ __all__ = [
     "Look",
     "candidate_ref",
     "decided",
+    "flies_resume",
     "flown_on",
     "gate_facts",
     "lower",
@@ -112,6 +116,7 @@ __all__ = [
     "overflight_allowed",
     "overflight_revoked",
     "permit",
+    "record_resume_left",
     "refuse_during_look",
     "refuse_revoked",
     "replaced",
@@ -776,6 +781,9 @@ async def _tell_closed(flow: MissionFlow, look: Look) -> None:
             "breakpoint": None if c is None else c.breakpoint,
             "resumed_command_id": None if resumed is None else str(resumed.id),
             "resumed_skill": None if resumed is None else resumed.skill,
+            "resume_command_id": (
+                None if c is None or c.resume_command_id is None else str(c.resume_command_id)
+            ),
             "sector_id": sector_id,
         },
         "issuer_kind": "brain" if brain else "operator",
@@ -905,8 +913,16 @@ def _flies_resume(
     executor never answers for its own resume (no acks), so its state names it by skill
     only: ``active_command_id`` is None and ``active_skill`` "resume" (one resume at a
     time onboard). A resume acked as an order is named by its id."""
+    resume = None if c.resume_command_id is None else str(c.resume_command_id)
+    return flies_resume(resume, active_command_id, active_skill)
+
+
+def flies_resume(
+    resume_command_id: str | None, active_command_id: str | None, active_skill: str | None
+) -> bool:
+    """``_flies_resume`` by the resume's id (a look's end rebuilt from the event log)."""
     if active_command_id is not None:
-        return active_command_id == str(c.resume_command_id)
+        return active_command_id == resume_command_id
     return active_skill == "resume"
 
 
@@ -958,6 +974,25 @@ def on_snapshot(
                 active_skill=active_skill,
                 seen=look.resume_seen,
             )
+            record_resume_left(
+                flow, mission_id, str(c.resumed_command_id), look.row.command_id, look.resume_seen
+            )
+
+
+def record_resume_left(
+    flow: MissionFlow, mission_id: str, search_id: str, look_id: str | None, seen: bool
+) -> None:
+    """The drone's state no longer names the resume of the search flown on after a look
+    (``on_snapshot``): kept in the event log (``inspection.resume_left``, at the time it was
+    seen), so that after a ground restart the run ends there (``coverage._run_end``) even
+    when its ``inspection.resume_ended`` never comes."""
+    flow.g.add_event(
+        "inspection.resume_left",
+        severity="info",
+        mission_id=mission_id,
+        vehicle_id=flow.g.config.default_vehicle_id,
+        payload={"command_id": search_id, "look": look_id, "seen": seen},
+    )
 
 
 def forget(flow: MissionFlow, mission_id: str) -> None:

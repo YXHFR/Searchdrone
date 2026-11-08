@@ -34,6 +34,7 @@ export type AlertCode =
   | "KEEPOUTS_INSTALLED"
   | "KEEPOUT_HOLD"
   | "SECTOR_GAP"
+  | "COVERAGE_UNAVAILABLE"
   | "MISSION_FALLBACK"
   | "GPS_WEAK"
   | "GPS_LOST"

@@ -278,7 +278,9 @@ async def test_two_refusal_reasons_that_take_turns_are_told_once_each() -> None:
         r.ex._route_refusal = refusal  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
         install(r)
         await r.run(executor_module._STRAIGHTEN_RETRY_MS / 1000 * 4.5)
-        assert len(tries) >= 4, tries
+        # Tried again once a retry period (about five times in four and a half), not on
+        # every reflex tick.
+        assert 4 <= len(tries) <= 6, tries
         refusals = [d for t, _, d in r.up.events if t == "executor.keepout_straighten_refused"]
         assert [d["codes"] for d in refusals] == [list(c) for c in turns], refusals
 

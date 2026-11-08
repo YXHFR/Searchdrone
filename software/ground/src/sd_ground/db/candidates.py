@@ -249,10 +249,21 @@ class CandidateRepo:
         blocking moves to the candidate it was merged into (down a chain of merges), where
         the larger of the two counts: its cylinder is now the survivor's. A stored value
         that is not a finite number of metres >= 0 is left out, so an old or damaged row
-        cannot break the cards."""
+        cannot break the cards.
+
+        A drone's own cylinder named by a detection no candidate held yet when the search
+        went around it (``candidate.blocks_survey_pending``) blocks through the candidate
+        that detection has joined since, so its card is first from its very first
+        version."""
         rows = await self._all(
             "SELECT payload->>'candidate_id' AS c, payload->>'skipped_m' AS m "
-            "FROM events WHERE mission_id = :m AND type = 'candidate.blocks_survey'",
+            "FROM events WHERE mission_id = :m AND type = 'candidate.blocks_survey' "
+            "UNION ALL "
+            "SELECT DISTINCT o.candidate_id::text AS c, e.payload->>'skipped_m' AS m "
+            "FROM events e "
+            "JOIN candidate_observations o ON o.detection_id::text = e.payload->>'detection_id' "
+            "JOIN candidates c ON c.candidate_id = o.candidate_id AND c.mission_id = :m "
+            "WHERE e.mission_id = :m AND e.type = 'candidate.blocks_survey_pending'",
             m=mission_id,
         )
         raw: dict[str, float] = {}
@@ -267,6 +278,22 @@ class CandidateRepo:
         for cid, m in raw.items():
             end = _survivor(cid, into)
             out[end] = max(m, out.get(end, m))
+        return out
+
+    async def pending_blocks(self, mission_id: str) -> dict[str, float]:
+        """The detections whose cylinder a search went around before any candidate held
+        them (``candidate.blocks_survey_pending``), with the most metres left out there.
+        A row that is not a finite number of metres >= 0 is left out."""
+        rows = await self._all(
+            "SELECT payload->>'detection_id' AS d, payload->>'skipped_m' AS m "
+            "FROM events WHERE mission_id = :m AND type = 'candidate.blocks_survey_pending'",
+            m=mission_id,
+        )
+        out: dict[str, float] = {}
+        for r in rows:
+            m = _metres(r["m"])
+            if r["d"] is not None and m is not None:
+                out[str(r["d"])] = max(m, out.get(str(r["d"]), m))
         return out
 
     async def _merged_into(self, mission_id: str) -> dict[str, str]:
