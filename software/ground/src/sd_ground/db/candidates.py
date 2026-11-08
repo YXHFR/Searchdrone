@@ -27,7 +27,8 @@ from sd_schemas.search import CandidateRevision, CandidateState
 
 __all__ = ["CandidateRepo", "CandidateWriteError", "Decided", "Written"]
 
-# A candidate in these states takes no revision from the search service.
+# A candidate in these states takes no revision from the search service, but for a
+# confirmed one's sightings (``_write_one``).
 CLOSED = frozenset({"confirmed", "rejected", "merged"})
 
 _LATEST = (
@@ -357,9 +358,34 @@ class CandidateRepo:
                 raise CandidateWriteError(
                     "REV_CONFLICT", "Kandidaten har ändrats sedan den lästes."
                 )
-            if prev["state"] in CLOSED:
+            # A confirmed find takes the detections that joined it as observations (the
+            # same person seen again: no new card next to it), and nothing else: its
+            # state, position, radius, scores and priority stay as the person confirmed
+            # them, and its assessment as it was.
+            found = (
+                prev["state"] == CandidateState.CONFIRMED.value
+                and r.state is None
+                and r.merged_into is None
+                and r.assessment is None
+                and bool(r.observations)
+            )
+            if prev["state"] in CLOSED and not found:
                 raise CandidateWriteError(
                     "CANDIDATE_CLOSED", "Kandidaten är avgjord eller sammanslagen."
+                )
+            if found:
+                r = r.model_copy(
+                    update={
+                        "lat": prev["lat"],
+                        "lon": prev["lon"],
+                        "sigma95_m": prev["sigma95_m"],
+                        "n_seen": max(int(prev["n_seen"]), r.n_seen),
+                        "best_detector_score": prev["best_detector_score"],
+                        "refined_person_score": prev["refined_person_score"],
+                        "priority": prev["priority"],
+                        "first_seen_utc": prev["first_seen_utc"],
+                        "last_seen_utc": max(prev["last_seen_utc"], r.last_seen_utc),
+                    }
                 )
             held = prev["state"] == CandidateState.INSPECTING.value
             if r.state is not None and held:

@@ -334,6 +334,86 @@ async def test_e1_the_search_token_never_decides(r: Rig) -> None:
     assert (near["near_seq"], near["near_state"]) == (1, "rejected")
 
 
+async def _decide_in_db(r: Rig, cid: str, state: str, decision: str) -> None:
+    """A person's decision, written as the decision route would."""
+    async with r.flow.repo.engine.begin() as conn:
+        await conn.execute(text(
+            "INSERT INTO candidates (candidate_id, rev, mission_id, seq, state, geom, sigma95_m, "
+            "n_seen, n_in_view, best_detector_score, priority, first_seen_utc, last_seen_utc) "
+            "SELECT candidate_id, rev + 1, mission_id, seq, :s, geom, sigma95_m, n_seen, "
+            "n_in_view, best_detector_score, priority, first_seen_utc, last_seen_utc "
+            "FROM candidates WHERE candidate_id = :c ORDER BY rev DESC LIMIT 1"
+        ), {"c": cid, "s": state})  # fmt: skip
+        await conn.execute(text(
+            "INSERT INTO candidate_decisions (candidate_id, decision, subject_rev, operator_ref, "
+            "session_id) VALUES (:c, :d, 1, 'operator:demo', 's')"
+        ), {"c": cid, "d": decision})  # fmt: skip
+
+
+async def test_a_detection_next_to_a_find_joins_it_and_one_next_to_a_rejected_does_not(
+    r: Rig,
+) -> None:
+    mid = await r.open_mission()
+    service, client = search_service(r, red_profile(r))
+    try:
+        await send(r, person(r, 0, 100))
+        await send(r, person(r, 60, 100))
+        assert await service.step() == 2
+        found, gone = sorted((await queue(r, mid))["items"], key=lambda c: c["seq"])
+        await _decide_in_db(r, found["candidate_id"], "confirmed", "confirm")
+        await _decide_in_db(r, gone["candidate_id"], "rejected", "reject")
+
+        # The same person seen again 3 m off; someone 3 m from the rejected one.
+        again, near = person(r, 3, 100), person(r, 63, 100)
+        await send(r, again, near)
+        await service.step()  # the stale fusion: 409, read back
+        await service.step()
+        items = {c["candidate_id"]: c for c in (await queue(r, mid, state="confirmed"))["items"]}
+        after = items[found["candidate_id"]]
+        assert after["state"] == "confirmed" and after["n_seen"] == 2
+        assert after["rev"] == found["rev"] + 2  # the decision, then the observation
+        for k in ("lat", "lon", "sigma95_m", "priority", "best_detector_score"):
+            assert after[k] == found[k], k  # unmoved, unscored: as the person confirmed it
+        decided = ("confirmed", "rejected")
+        new = [c for c in (await queue(r, mid))["items"] if c["state"] not in decided]
+        assert len(new) == 1
+        assert (new[0]["near_seq"], new[0]["near_state"]) == (gone["seq"], "rejected")
+        async with r.flow.repo.engine.begin() as conn:
+            seen = (await conn.execute(text(
+                "SELECT candidate_id::text AS c, detection_id::text AS d "
+                "FROM candidate_observations"
+            ))).all()  # fmt: skip
+        assert (found["candidate_id"], str(again.detection_id)) in seen
+        assert (new[0]["candidate_id"], str(near.detection_id)) in seen
+    finally:
+        await client.aclose()
+
+    # The search token may add observations to a find and nothing else.
+    extra = person(r, 2, 100)
+    await send(r, extra)
+    obs = [{"detection_id": str(extra.detection_id), "distance_m": 2.0}]
+    base = revision(r) | {
+        "candidate_id": found["candidate_id"],
+        "base_rev": after["rev"],
+        "state": None,
+        "observations": obs,
+    }
+    for bad in (
+        base | {"state": "ready"},
+        base | {"observations": []},
+        base | {"candidate_id": gone["candidate_id"], "base_rev": gone["rev"] + 1},
+    ):
+        res = await post(r, mid, bad)
+        assert res.status_code == 409 and res.json()["code"] == "CANDIDATE_CLOSED", bad
+    lat, lon = r.at(9, 109)
+    moved = base | {"lat": lat, "lon": lon, "sigma95_m": 40.0, "priority": 0.99, "n_seen": 3}
+    assert (await post(r, mid, moved)).status_code == 200
+    (last,) = (await queue(r, mid, state="confirmed"))["items"]
+    for k in ("lat", "lon", "sigma95_m", "priority"):
+        assert last[k] == found[k], k
+    assert last["n_seen"] == 3 and last["state"] == "confirmed"
+
+
 async def test_one_observation_per_detection_and_batches_are_atomic(r: Rig) -> None:
     mid = await r.open_mission()
     det = person(r, 0, 100)
