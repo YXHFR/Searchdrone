@@ -5,15 +5,17 @@ bounding-box twin of the same picture for the simulator's labels. Each publishes
 own Gazebo Transport topics, ``<prefix>/<sensor>`` and ``<prefix>/<boxes>``, and gets its
 own ``gz_stills capture`` process and still folder.
 
-The main camera is ``world.STILLS`` (Raspberry Pi Camera Module 3, 66 degrees, rendered at
-1280 x 720). The tele camera is a Raspberry Pi HQ Camera (Sony IMX477, 4056 x 3040 px,
-1.55 um pixels) behind an M12 tele lens of about 20 degrees horizontally. The simulator
-renders it at the main camera's scale (1280 of the Camera Module 3's 4608 px), 1128 x 846,
-so the two keep their real ratio of pixels per degree (about 2.9x): a person is about
-three times as many pixels across in the tele still as in the main one from the same
-height. ``tele=true`` (``SimConfig``) turns it on; ``tele_hfov_deg``, ``tele_width`` and
+The main camera is ``world.STILLS`` (Raspberry Pi Camera Module 3, 4608 x 2592 at 66
+degrees, rendered at half its width and height, 2304 x 1296: a quarter of the pixels, for
+Gazebo's render cost). The tele camera is a Raspberry Pi HQ Camera (Sony IMX477, 4056 x
+3040 px, 1.55 um pixels) behind an M12 tele lens of about 20 degrees horizontally. The
+simulator renders it at the main camera's scale, half its width and height: 2028 x 1520.
+The two keep their real ratio of pixels per degree (about 2.9x): a person is about three
+times as many pixels across in the tele still as in the main one from the same height.
+``tele=true`` (``SimConfig``) turns it on; ``tele_hfov_deg``, ``tele_width`` and
 ``tele_height`` change it, e.g. to the lens's field of view once it is measured, or to the
-sensor's full 4056 x 3040 (slow to render).
+sensor's full 4056 x 3040 (slow to render). The onboard computer places a smaller still
+of its camera's shape with the same field of view.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ __all__ = [
 ]
 
 TELE_SENSOR_PX = (4056, 3040)  # the HQ Camera's sensor, for reference
-TELE_SIZE_PX = (1128, 846)  # rendered: the sensor at the main camera's scale (1280 / 4608)
+TELE_SIZE_PX = (2028, 1520)  # rendered: the sensor at the main camera's scale (half)
 TELE_HFOV_DEG = 20.0  # the M12 tele lens on the HQ Camera, as the seller states it
 TELE_RATE_HZ = 1.0  # as the main stills camera
 

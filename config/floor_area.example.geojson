@@ -1,0 +1,23 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Example area for just floor-fetch: the public simulator site at Hellasgården, Nacka (about 600 x 560 m). Copy this file outside the repository and draw your own area: one polygon, longitude before latitude (WGS84), at most 10 x 10 km."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [18.155, 59.286],
+            [18.165, 59.286],
+            [18.165, 59.291],
+            [18.155, 59.291],
+            [18.155, 59.286]
+          ]
+        ]
+      }
+    }
+  ]
+}

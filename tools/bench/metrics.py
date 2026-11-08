@@ -12,13 +12,19 @@ a 95 % Wilson interval.
 false alarms, and its recall (all sizes, and per size class under ``by_class``) at that
 threshold. One dataset's false alarms never move another's threshold, and the rows are
 what a run on that dataset alone (``sets=``) gives.
+
+``recall_by_size`` (pooled, and ``by_size`` per dataset) is the same recall in finer bins
+of the longest side (``SIZE_EDGES``), so a change in how large the people are trained
+(``just train-detector scales=``) shows where it helps: our wide camera sees a person at
+about 30-35 px, the tele at about 100 px.
 """
 
 from __future__ import annotations
 
+import itertools
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -30,6 +36,10 @@ FP_PER_12MP = 0.5
 SCORE_MIN = 0.25  # assumed on-board score floor (no on-board constant exists yet)
 MP12 = 12_000_000
 SIZE_CLASSES = ("lt16", "16to32", "gt32")
+# finer bins of the longest side for the report by person size (``recall_by_size``):
+# our wide camera sees a person at about 30-35 px, the tele at about 100 px; a bin holds
+# sides from its lower edge up to (not including) the next one
+SIZE_EDGES = (0, 16, 24, 32, 48, 64, 96, 128, 192)
 
 
 def size_class(box: Sequence[float]) -> str:
@@ -37,6 +47,17 @@ def size_class(box: Sequence[float]) -> str:
     if side < 16:
         return "lt16"
     return "16to32" if side <= 32 else "gt32"
+
+
+def size_bin(side: float) -> str:
+    """The ``SIZE_EDGES`` bin of a box's longest side: ``"24-32"``, ``"192+"``."""
+    for lo, hi in itertools.pairwise(SIZE_EDGES):
+        if side < hi:
+            return f"{lo}-{hi}"
+    return f"{SIZE_EDGES[-1]}+"
+
+
+SIZE_BINS = tuple(size_bin(lo) for lo in SIZE_EDGES)
 
 
 @dataclass
@@ -49,6 +70,7 @@ class PictureResult:
     truth_hit_score: list[float | None]  # score of the detection matched to it
     fp_scores: list[float]  # scores of detections matched to nothing
     latency_ms: float = 0.0
+    truth_side: list[float] = field(default_factory=list)  # longest side of each box, px
 
 
 def match_picture(
@@ -83,6 +105,7 @@ def match_picture(
         hit,
         fps,
         latency_ms,
+        [float(max(b[2] - b[0], b[3] - b[1])) for b in t],
     )
 
 
@@ -153,6 +176,8 @@ class Summary:
     latency_ms: dict[str, float]
     score_hit: dict[str, float] | None = None
     score_fp: dict[str, float] | None = None
+    # size bin -> n, hits, recall, lo, hi, at the pooled threshold (``SIZE_EDGES``)
+    recall_by_size: dict[str, dict[str, float]] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -167,6 +192,7 @@ class Summary:
             "latency_ms": self.latency_ms,
             "score_hit": self.score_hit,
             "score_fp": self.score_fp,
+            "recall_by_size": self.recall_by_size,
         }
 
 
@@ -192,6 +218,20 @@ def _counts(results: Sequence[PictureResult], t: float) -> dict[str, tuple[int, 
     return {c: (h, n) for c, (h, n) in rows.items()}
 
 
+def _size_rows(results: Sequence[PictureResult], t: float) -> dict[str, dict[str, float]]:
+    """Recall at ``t`` per ``SIZE_BINS`` bin of the person's longest side (bins with no
+    person are left out; a result made without sides counts in none)."""
+    rows = {b: [0, 0] for b in SIZE_BINS}
+    for r in results:
+        if len(r.truth_side) != len(r.truth_hit_score):
+            continue
+        for side, score in zip(r.truth_side, r.truth_hit_score, strict=True):
+            row = rows[size_bin(side)]
+            row[1] += 1
+            row[0] += int(score is not None and score >= t)
+    return {b: _recall_row(h, n) for b, (h, n) in rows.items() if n}
+
+
 def _fp_rate(results: Sequence[PictureResult], t: float) -> float:
     area = sum(r.pixels for r in results) / MP12
     return sum(1 for r in results for s in r.fp_scores if s >= t) / area if area else 0.0
@@ -206,6 +246,7 @@ def _dataset_row(results: Sequence[PictureResult], fp_per_12mp: float) -> dict[s
         "threshold": None if math.isinf(t) else round(t, 4),
         "fp_per_12mp": round(_fp_rate(results, t), 4),
         "by_class": {c: _recall_row(*rows[c]) for c in SIZE_CLASSES},
+        "by_size": _size_rows(results, t),
     }
 
 
@@ -233,6 +274,7 @@ def summarise(results: Sequence[PictureResult], fp_per_12mp: float = FP_PER_12MP
         latency_ms={"p50": round(_pct(lat, 50), 1), "p95": round(_pct(lat, 95), 1)},
         score_hit=_beta_moments(hit_scores),
         score_fp=_beta_moments(fp_scores),
+        recall_by_size=_size_rows(results, t),
     )
 
 

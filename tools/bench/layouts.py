@@ -36,6 +36,15 @@ in one part, so no near-copy of a test picture is ever trained on.
   out, and a picture with none of them is an empty picture (water, no person). The
   authors' own train and val parts hold frames of the same videos, so they are pooled:
   the id is ``<video>/<n>`` and the sequence the video (``source.folder_name``).
+* ``uit_drone_yolo``: UIT-Drone4 (Zenodo 14862652), city traffic in Vietnam filmed from
+  drones at 3840 x 2160: ``images/<part>/<stem>.jpg`` with ``labels/<part>/<stem>.txt``
+  (YOLO; class 0 pedestrian, 1 motorcycle, 2 car, 3 bus). Only pedestrians are persons.
+  A motorcycle's box holds its riders, people who are not boxed as persons, so the
+  motorcycles are kept as ``ignore`` regions (``Layout.ignore``): a training tile that
+  overlaps one is left out. The stem ends in the frame number; only every tenth frame
+  is taken (``UIT_DRONE_STEP``). The archive's own train/val/test_all folders hold
+  frames of the same videos, so they are pooled: the id is the stem and the sequence
+  the video (``DJI_0606``, ``363``, ``AIUit000061``).
 * ``simfarm``: the sim farm's rounds (``<round>/images/<stem>.png`` with
   ``<round>/labels/<stem>.txt``, YOLO class 0). The id is ``<round>/<stem>``, the
   sequence the round. Only for pre-training, never measured on.
@@ -91,6 +100,9 @@ class Layout:
     # a set whose labels are one file for all pictures: its members from the names and
     # a reader of those label files
     catalogue: Callable[[list[str], Reader], list[Member]] | None = None
+    # the regions of a label file that hold people who are not boxed as persons (the
+    # index keeps them as ``ignore``; a training tile that overlaps one is left out)
+    ignore: Callable[[bytes | None, int, int], list[Box]] | None = None
 
     def find(self, names: list[str], read: Reader | None = None) -> list[Member]:
         """The members among ``names`` (``read``: reads a label file, for a catalogue)."""
@@ -108,7 +120,13 @@ def clip(box: Box, width: int, height: int) -> Box | None:
     return (x0, y0, x1, y1) if x1 - x0 >= 1 and y1 - y0 >= 1 else None
 
 
-def yolo_boxes(data: bytes | None, width: int, height: int, classes: frozenset[int]) -> list[Box]:
+def yolo_boxes(
+    data: bytes | None,
+    width: int,
+    height: int,
+    classes: frozenset[int],
+    max_boxes: int = MAX_BOXES,
+) -> list[Box]:
     """YOLO lines ``class cx cy w h`` in fractions of the picture."""
     if not data:
         return []
@@ -136,7 +154,7 @@ def yolo_boxes(data: bytes | None, width: int, height: int, classes: frozenset[i
         )
         if box:
             out.append(box)
-    if len(out) > MAX_BOXES:
+    if len(out) > max_boxes:
         raise ValueError("too many boxes in one label file")
     return out
 
@@ -340,6 +358,36 @@ def _seadronessee(names: list[str], read: Reader) -> list[Member]:
     return out
 
 
+# UIT-Drone4: only every tenth frame (a video's neighbouring frames are near-copies)
+UIT_DRONE_STEP = 10
+_UIT_PARTS = ("train", "val", "test_all")
+_UIT_STEM = re.compile(r"[A-Za-z0-9]+(_[A-Za-z0-9]+)*_(?P<frame>\d{1,6})")
+UIT_PEDESTRIAN = frozenset({0})
+UIT_MOTORCYCLE = frozenset({1})  # boxed with its riders: people that are not persons here
+MAX_IGNORE = 2000
+
+
+def _uit_drone(names: list[str]) -> list[Member]:
+    present = set(names)
+    out: list[Member] = []
+    for name in names:
+        p = PurePosixPath(name)
+        if len(p.parts) != 3 or p.parts[0] != "images" or p.parts[1] not in _UIT_PARTS:
+            continue
+        stem = _UIT_STEM.fullmatch(p.stem)
+        if stem is None or p.suffix != ".jpg":
+            # a picture named in a way not seen before could be a video of another kind
+            raise BenchError(f"uit_drone4: {name} har ett okänt namn")
+        if int(stem["frame"]) % UIT_DRONE_STEP:
+            continue
+        label = f"labels/{p.parts[1]}/{p.stem}.txt"
+        # every picture has a label file; one without would count as empty
+        if label not in present:
+            raise BenchError(f"uit_drone4: {name} saknar etikettfil {label}")
+        out.append(Member(p.stem, sequence_of("uit_drone_yolo", p.stem), name, label))
+    return out
+
+
 def _simfarm(names: list[str], suffix: str = ".png") -> list[Member]:
     present = set(names)
     out: list[Member] = []
@@ -377,6 +425,13 @@ LAYOUTS: dict[str, Layout] = {
     "seadronessee_coco": Layout(
         "seadronessee_coco", _labels_first, lambda d, w, h: [], catalogue=_seadronessee
     ),
+    # class 0 is pedestrian, 1 motorcycle (with its riders), 2 car, 3 bus
+    "uit_drone_yolo": Layout(
+        "uit_drone_yolo",
+        _uit_drone,
+        lambda d, w, h: yolo_boxes(d, w, h, UIT_PEDESTRIAN),
+        ignore=lambda d, w, h: yolo_boxes(d, w, h, UIT_MOTORCYCLE, MAX_IGNORE),
+    ),
 }
 
 
@@ -393,4 +448,9 @@ def sequence_of(layout: str, image_id: str) -> str:
         return KIOS_SITES[m["rec"]]
     if layout in ("simfarm", "simfarm_stills", "kios_carperson", "seadronessee_coco"):
         return image_id.split("/")[0]
+    if layout == "uit_drone_yolo":
+        # the video: "DJI_0606_0p40_1p00_000147" and "VIS_0359_..." -> "DJI_0606",
+        # "VIS_0359"; "363_0p00s_1p00s_359", "VIS06_336_000217" -> "363", "VIS06"
+        parts = image_id.split("_")
+        return "_".join(parts[:2]) if parts[0].isalpha() and len(parts) > 2 else parts[0]
     raise KeyError(layout)

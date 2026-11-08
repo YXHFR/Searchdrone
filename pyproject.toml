@@ -95,11 +95,13 @@ typeCheckingMode = "standard"
 strict = ["software/common/schemas/src", "software/common/safety/src"]
 include = ["software", "simulation", "tools"]
 # The PyTorch scripts in tools/train run in its own Python (tools/train/pyproject.toml);
-# the rest of tools/train (fetch_weights, tiles, evaluate) runs here and is checked.
+# the rest of tools/train (fetch_weights, tiles, evaluate, cloud) runs here and is checked.
 exclude = [
   "**/node_modules", "**/.venv", "**/generated", "**/__pycache__",
   "tools/train/vendor", "tools/train/tests", "tools/train/families.py",
   "tools/train/train_detector.py", "tools/train/export_onnx.py",
+  # Modal (the `cloud` group of tools/train) is not in the workspace either; cloud.py is.
+  "tools/train/modal_app.py",
   # rasterio and osmium live in tools/rlmaps' own Python (tools/rlmaps/pyproject.toml).
   "tools/rlmaps/build.py",
 ]
@@ -134,4 +136,5 @@ markers = [
   "search: the search chain set of a pull request (just ci-sitl mode=search)",
   "search_nightly: the nightly search campaign over SD_SEARCH_SEEDS (mode=search-nightly)",
   "e2e_search: the end-to-end search demo of just e2e-search",
+  "inspect: the closer look's scenarios TN01-TN19 (just ci-sitl mode=inspect)",
 ]

@@ -19,6 +19,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TypedDict
 
 import shapely
 import yaml
@@ -47,7 +48,12 @@ def flight_area(fix: fixture.Fixture) -> shapely.Geometry:
     return shapely.buffer(shapely.convex_hull(points), BESIDE_M)
 
 
-def charter_floor(height_m: float) -> dict[str, float]:
+class CharterFloor(TypedDict):
+    alt_min_agl_m: float
+    default_alt_agl_m: float
+
+
+def charter_floor(height_m: float) -> CharterFloor:
     """The test charter's overrides that keep a decision maker that picks its own heights
     (sd-brain) at the round's height or above: the gate rejects any order below it."""
     return {"alt_min_agl_m": height_m, "default_alt_agl_m": height_m}

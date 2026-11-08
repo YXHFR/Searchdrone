@@ -74,7 +74,6 @@ class AutoFc(FakeFlightController):
 
     def __init__(self, clock: FakeClock, *, accel_ms2: float | None = None, **kw: Any) -> None:
         super().__init__(clock, **kw)
-        self.loiter_until: float | None = None
         self.track: list[tuple[float, float, float]] = []  # lat, lon, alt while armed
         self.accel_ms2 = accel_ms2
         self.vel = (0.0, 0.0)  # east, north m/s (with ``accel_ms2``)
@@ -144,9 +143,6 @@ class AutoFc(FakeFlightController):
             self.speed_ms = float(item.param2)
             self.mission_current += 1
             return
-        if item.command == mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH:
-            self.mode = CopterMode.RTL
-            return
         lat, lon = item.x / 1e7, item.y / 1e7
         if self._origin is not None:
             north = (self._origin[0] - self.lat) * _M_PER_DEG
@@ -161,13 +157,8 @@ class AutoFc(FakeFlightController):
         close = math.hypot(north, east) <= GOTO_ARRIVE_RADIUS_M and abs(self.alt_rel - item.z) < 1
         if not close:
             return
-        if item.command == mavlink.MAV_CMD_NAV_LOITER_TIME:
-            now = self.clock.monotonic()
-            if self.loiter_until is None:
-                self.loiter_until = now + float(item.param1)
-            if now < self.loiter_until:
-                return
-            self.loiter_until = None
+        if item.command == mavlink.MAV_CMD_NAV_LOITER_UNLIM:
+            return  # hovers there until the mode changes
         self._send(mavlink.MAVLink_mission_item_reached_message(self.mission_current))
         self.mission_current += 1
 

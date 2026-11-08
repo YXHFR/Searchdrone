@@ -11,6 +11,7 @@ radio_mavlink_in:    {base: 14561, per_instance: true}   # SITL serial2 -> links
 mavtap_in:           {base: 14562, per_instance: true}   # SITL serial1 -> mavtap
 onboard_mavlink:     {base: 14563, per_instance: true, owner: onboard, env: SD_ONBOARD__MAV_URL}  # mavtap -> sd-onboard
 harness_mavlink:     {base: 14564, per_instance: true}   # SITL serial0 -> harness
+rangefinder_mavlink: {base: 14565, per_instance: true}   # SITL serial6 <-> the simulated laser (rangefinder=tf02|grf250)
 qgc_mavlink:         {base: 14550, per_instance: false, only_instance: 0}   # SITL serial5 -> QGC (optional)
 # --- SITL <-> Gazebo ---
 sitl_json_fdm:       {base: 9002,  per_instance: true}   # moved by -I; 9003 + 10N is the reply

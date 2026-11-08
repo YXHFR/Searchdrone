@@ -83,7 +83,7 @@ def test_fusion_keeps_classes_apart() -> None:
     assert step is not None and step.created
 
 
-def test_fusion_closed_candidates_take_no_sightings() -> None:
+def test_fusion_a_detection_next_to_a_rejected_candidate_makes_a_new_one() -> None:
     f = Fusion()
     a = f.add(sighting(0, 0))
     assert a is not None
@@ -91,9 +91,53 @@ def test_fusion_closed_candidates_take_no_sightings() -> None:
     step = f.add(sighting(1, 0))
     assert step is not None and step.created and step.candidate_id != a.candidate_id
     assert len(f.tracks[a.candidate_id].sightings) == 1
-    f.tracks[step.candidate_id].state = CandidateState.CONFIRMED
+    f.tracks[step.candidate_id].state = CandidateState.MERGED
     again = f.add(sighting(1, 0))
     assert again is not None and again.created
+
+
+def test_fusion_a_detection_next_to_a_confirmed_candidate_joins_it_unmoved() -> None:
+    f = Fusion()
+    a = f.add(sighting(0, 0, sigma=3.0, t=0))
+    assert a is not None
+    t = f.tracks[a.candidate_id]
+    t.state, t.decided = CandidateState.CONFIRMED, True
+    where = (t.lat, t.lon, t.sigma95_m)
+    step = f.add(sighting(5, 0, sigma=3.0, t=7))  # within 4 + 3 m
+    assert step is not None and not step.created and step.candidate_id == a.candidate_id
+    assert step.distance_m == pytest.approx(5.0, abs=0.05) and step.merged == ()
+    assert len(f.tracks) == 1 and len(t.sightings) == 2 and t.n_seen == 2
+    assert (t.lat, t.lon, t.sigma95_m) == where  # not moved, not reopened
+    assert t.state is CandidateState.CONFIRMED
+    assert t.last_seen_utc == t.sightings[-1].captured_utc
+    beyond = f.add(sighting(8, 0, sigma=3.0))  # beyond 7 m: a card of its own
+    assert beyond is not None and beyond.created
+    other_class = f.add(sighting(0, 0, label="red_block"))
+    assert other_class is not None and other_class.created
+
+
+def test_fusion_a_find_with_a_wide_radius_takes_sightings_only_within_twelve_metres() -> None:
+    f = Fusion()
+    a = f.add(sighting(0, 0, sigma=20.0, t=0))  # 4 + 20 m, capped at 12
+    assert a is not None
+    t = f.tracks[a.candidate_id]
+    t.state, t.decided = CandidateState.CONFIRMED, True
+    inside = f.add(sighting(11.5, 0, sigma=3.0, t=1))
+    assert inside is not None and inside.candidate_id == a.candidate_id
+    outside = f.add(sighting(0, 12.5, sigma=3.0, t=2))  # within 4 + 20 m, beyond 12 m
+    assert outside is not None and outside.created
+    assert len(t.sightings) == 2 and t.sigma95_m == 20.0  # unmoved, as confirmed
+
+
+def test_fusion_an_open_candidate_nearer_than_a_find_takes_the_sighting() -> None:
+    f = Fusion()
+    found = f.add(sighting(0, 0, sigma=3.0, t=0))
+    near = f.add(sighting(9, 0, sigma=3.0, t=1))
+    assert found is not None and near is not None and near.created
+    f.tracks[found.candidate_id].state = CandidateState.CONFIRMED
+    step = f.add(sighting(5, 0, sigma=3.0, t=2))  # 5 m from the find, 4 m from the other
+    assert step is not None and step.candidate_id == near.candidate_id
+    assert len(f.tracks[found.candidate_id].sightings) == 1
 
 
 def test_fusion_merges_candidates_that_drift_together_older_survives() -> None:

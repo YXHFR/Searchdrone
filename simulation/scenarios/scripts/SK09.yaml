@@ -1,6 +1,8 @@
-# SK09: the wrong person in sector A, the right one in sector B. After a closer look at
-# the first HÖG candidate the AI searches sector B (the operator rejects the wrong person
-# meanwhile). Test data for the scripted commander.
+# SK09: the wrong person in sector A, the right one in sector B. The AI takes a closer
+# look at the first HÖG candidate, the drone searches sector A to its end, and then the AI
+# searches sector B (the operator rejects the wrong person meanwhile). The first HÖG
+# candidate need not be the wrong person: a false detection can come first, so the AI must
+# not leave sector A after the look. Test data for the scripted commander.
 scenario: SK09
 timeout_s: 900
 expected_runtime_s: 540
@@ -30,10 +32,32 @@ turns:
     when: {priority_class: high}
     once: false
     say: ["K{seq} HÖG. Granska bilden, jag söker vidare."]
+  # The look's "done" is not its end: the drone waits over the candidate for the
+  # operator's decision and refuses moves until then (INSPECT_BUSY). Its "closed" event
+  # says what comes next: on "resume" the drone flies sector A on by itself, and its end
+  # (that order's own "done") orders sector B below; on "hold" the AI orders sector A
+  # again; with no "next" (the drone's report did not come) the AI asks, it orders nothing.
   - on: skill_event
     when: {skill: inspect_detection, status: [done, failed]}
-    say: ["Bilderna är tagna. Söker vidare i sektor B."]
-    action: {skill: survey_sector, params: {sector_id: "B", alt_m: 50, spacing_m: 45, speed_ms: 7}}
+    say: ["Bilderna är tagna. Väntar på operatörens beslut."]
+  - on: skill_event
+    when:
+      skill: inspect_detection
+      status: closed
+      outcome: [rejected, unsure, resume, timeout]
+      next: resume
+    say: ["Titten är klar. Drönaren söker vidare i sektor A."]
+  - on: skill_event
+    when:
+      skill: inspect_detection
+      status: closed
+      outcome: [rejected, unsure, resume, timeout, failed, aborted]
+      next: hold
+    say: ["Titten är klar. Söker vidare i sektor A."]
+    action: {skill: survey_sector, params: {sector_id: "A", alt_m: 50, spacing_m: 45, speed_ms: 7}}
+  - on: skill_event
+    when: {skill: inspect_detection, status: closed, next: null}
+    say: ["Titten är klar men drönaren har inte sagt vad den gör. Ska jag söka vidare i sektor A?"]
   # Only a person confirms: after a confirmation the drone holds and the AI asks.
   - on: candidate_decided
     when: {decision: confirm}
@@ -55,11 +79,11 @@ turns:
     say: ["Ingen väg runt spärrzonen. Flyger hem och landar."]
     action: {skill: return_home, params: {reason: "Spärrzon i vägen."}}
   - on: skill_event
-    when: {skill: survey_sector, status: done}
+    when: {skill: survey_sector, status: done, sector_id: A}
     say: ["Sektorn är sökt. Söker av sektor B."]
     action: {skill: survey_sector, params: {sector_id: "B", alt_m: 50, spacing_m: 45, speed_ms: 7}}
   - on: skill_event
-    when: {skill: survey_sector, status: done}
+    when: {skill: survey_sector, status: done, sector_id: B}
     say: ["Sektorerna är sökta. Flyger hem och landar."]
     action: {skill: return_home, params: {reason: "Sökningen klar."}}
   - on: operator_message

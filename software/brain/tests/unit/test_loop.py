@@ -19,6 +19,7 @@ from sd_brain.loop import BACK_TEXT, DEADLINE_TEXT, RATE_TEXT, STOP_FALLBACK
 from sd_brain.memory import mission_request, pending_request
 from sd_brain.turn import AiAction, OutMessage, TurnDiagnostics, TurnInput, TurnOutput
 from sd_schemas.base import new_id
+from sd_schemas.commander import SkillRequest, SkillSubmitResult
 from sd_schemas.decide import ChatIntentReport, ChoiceAnswer, DecideRequest, DecisionEngine
 
 REJECT = {
@@ -205,6 +206,8 @@ async def test_state_changed_retries_once() -> None:
     assert (
         fg.commands[1].based_on is not None and fg.commands[1].based_on.state_seq == seq_before + 5
     )
+    # Sent again by code with the fresh picture; the model is not asked (owner 2026-11-03).
+    assert [t.trigger for t in backend.turns] == ["operator_message"]
 
 
 async def test_queued_messages_never_act() -> None:
@@ -462,6 +465,162 @@ async def test_idle_tick() -> None:
     loop2.idle_tick(force=True)
     await loop2.settle()
     assert not loop2.records
+
+
+async def test_idle_tick_waits_for_the_end_of_its_own_order() -> None:
+    """#159 SC01_takeover: an idle turn that ran after the AI's goto had ended on the
+    ground, but before that end reached the AI as an event, saw no active order and sent
+    one of its own (a scripted resume, 0.1 s after the goto ended). The end's own turn
+    decides what follows: the idle turn waits for it."""
+    backend = Steps(act("goto", pin="P1"), say("Framme vid P1."), say("Inget nytt."))
+    loop, fg, _ = make_loop(backend)
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert [c.skill for c in fg.commands] == ["goto"]
+    goto = str(fg.commands[0].command_id)
+    assert fg.sit["active_command"] is None  # ended on the ground; its event not here yet
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert len(backend.turns) == 1 and len(fg.commands) == 1
+    evt = {"type": "event.skill", "body": {"command_id": goto, "skill": "goto", "status": "done"}}
+    fg.apply_event(evt)
+    loop.handle_event(evt)
+    await loop.settle()
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["idle_tick", "skill_event", "idle_tick"]
+
+
+async def test_an_end_that_never_comes_holds_the_idle_tick_one_period_only() -> None:
+    backend = Steps(act("goto", pin="P1"), say("Inget nytt."))
+    loop, fg, clock = make_loop(backend)
+    loop.idle_tick(force=True)
+    await loop.settle()
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert len(backend.turns) == 1
+    clock.t += BrainConfig().behaviour.idle_airborne_tick_s + 1
+    assert loop.idle_tick()
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["idle_tick", "idle_tick"]
+    assert len(fg.commands) == 1
+
+
+async def test_an_end_that_comes_during_the_submit_is_not_waited_for() -> None:
+    """The ground can publish an order's end before its HTTP answer (a ground skill such
+    as report is done on insert, a dispatch can fail fast). The skill_event turn has then
+    run already; the next idle turn does not wait for an end that came."""
+    backend = Steps(act("goto", pin="P1"), say("Framme vid P1."), say("Inget nytt."))
+    loop, fg, _ = make_loop(backend)
+    orig = fg.submit
+
+    async def submit(mission_id: str, req: SkillRequest) -> SkillSubmitResult:
+        result = await orig(mission_id, req)
+        body = {"command_id": str(req.command_id), "skill": req.skill, "status": "done"}
+        evt = {"type": "event.skill", "body": body}
+        fg.apply_event(evt)
+        loop.handle_event(evt)
+        return result
+
+    fg.submit = submit
+    loop.idle_tick(force=True)
+    await loop.settle()
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["idle_tick", "skill_event", "idle_tick"]
+
+
+@pytest.mark.parametrize("decision", ["REJECT", "error"])
+async def test_an_order_that_did_not_go_through_is_not_waited_for(decision: str) -> None:
+    backend = Steps(act("goto", pin="P1"), say("Inget nytt."), say("Inget nytt."))
+    loop, fg, _ = make_loop(backend)
+    if decision == "error":
+        orig = fg.submit
+
+        async def submit(mission_id: str, req: SkillRequest) -> SkillSubmitResult:
+            fg.submit = orig
+            raise GroundError("sd-ground svarar inte", 503)
+
+        fg.submit = submit
+    else:
+        fg.responses = [{"match": {"skill": "goto"}, "result": {"decision": "REJECT"}}]
+    loop.idle_tick(force=True)
+    await loop.settle()  # a REJECT also runs its retry turn (a plain say here)
+    assert not loop._unended
+    turns = len(backend.turns)
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert len(backend.turns) == turns + 1 and backend.turns[-1].trigger == "idle_tick"
+
+
+async def test_a_new_mission_from_an_event_forgets_the_old_orders() -> None:
+    backend = Steps(act("goto", pin="P1"))
+    loop, _, _ = make_loop(backend)
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert loop._unended
+    new = "01a150c5-0000-7000-8000-0000000000ff"
+    loop.handle_event({"type": "event.mission", "mission_id": new, "body": {"created": True}})
+    assert not loop._unended
+
+
+async def test_a_replayed_reconnect_still_waits_for_the_end() -> None:
+    """On a reconnect in the same server epoch the ground replays what the stream missed,
+    so the order's end still comes: the idle turn keeps waiting for it."""
+    backend = Steps(
+        act("goto", pin="P1"), say("Tillbaka."), say("Framme vid P1."), say("Inget nytt.")
+    )
+    loop, fg, _ = make_loop(backend)
+    loop.idle_tick(force=True)
+    await loop.settle()
+    goto = str(fg.commands[0].command_id)
+    await loop.connected(True)  # its "recovered" turn runs; the record stays
+    await loop.settle()
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["idle_tick", "recovered"]
+    assert len(fg.commands) == 1
+    evt = {"type": "event.skill", "body": {"command_id": goto, "skill": "goto", "status": "done"}}
+    fg.apply_event(evt)
+    loop.handle_event(evt)  # the replay
+    await loop.settle()
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert [t.trigger for t in backend.turns][2:] == ["skill_event", "idle_tick"]
+
+
+async def test_a_resync_forgets_the_ends_that_never_come() -> None:
+    """A new epoch or a gap past the replay ring: the missed end never comes."""
+    backend = Steps(act("goto", pin="P1"), say("Inget nytt."))
+    loop, _, _ = make_loop(backend)
+    loop.idle_tick(force=True)
+    await loop.settle()
+    loop.stream_resynced()
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["idle_tick", "idle_tick"]
+
+
+async def test_an_order_on_its_card_is_waited_for_until_its_end() -> None:
+    """An order that waits for the pilot's click (PENDING_APPROVAL) is counted too: once
+    clicked and run, its end decides what follows, not an idle turn."""
+    backend = Steps(act("goto", pin="P1"), say("Framme vid P1."), say("Inget nytt."))
+    loop, fg, _ = make_loop(backend)
+    fg.responses = [{"match": {"skill": "goto"}, "result": {"decision": "PENDING_APPROVAL"}}]
+    loop.idle_tick(force=True)
+    await loop.settle()
+    goto = str(fg.commands[0].command_id)
+    assert goto in loop._unended
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert len(backend.turns) == 1
+    evt = {"type": "event.skill", "body": {"command_id": goto, "skill": "goto", "status": "done"}}
+    fg.apply_event(evt)
+    loop.handle_event(evt)
+    await loop.settle()
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["idle_tick", "skill_event", "idle_tick"]
 
 
 @pytest.mark.parametrize(("kind", "waits"), [("charter", False), ("command", True)])
@@ -858,3 +1017,122 @@ async def test_a_target_find_wakes_the_ai_and_context_does_not() -> None:
     loop.handle_event({"type": "event.detection", "mission_id": loop.mission_id, "body": target})
     await loop.settle()
     assert [t.trigger for t in backend.turns] == ["detection"]
+
+
+# --- an old picture: the order is sent again by code (owner decision 2026-11-03) ----------
+
+
+def _stale_reject(code: str = "STATE_CHANGED") -> dict[str, Any]:
+    return {
+        "decision": "REJECT",
+        "reason_codes": [code],
+        "message_sv": "Läget ändrades.",
+        "status": "rejected_by_gate",
+    }
+
+
+async def test_a_stale_refusal_is_sent_again_by_code_not_by_the_model() -> None:
+    backend = Steps(act("goto", pin="P1"), act("goto", pin="P9"))
+    loop, fg, _ = make_loop(backend)
+    fg.responses = [{"match": {"skill": "goto"}, "result": _stale_reject(), "times": 1}]
+    loop.handle_event(fg.operator_message("Flyg till P1"))
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["operator_message"]  # no model retry
+    first, again = fg.commands
+    assert again.skill == first.skill and again.params == first.params
+    assert again.command_id != first.command_id
+
+
+async def test_a_resend_refused_again_goes_to_the_model_once() -> None:
+    backend = Steps(act("goto", pin="P1"), say("Det gick inte."))
+    loop, fg, _ = make_loop(backend)
+    fg.responses = [{"match": {"skill": "goto"}, "result": _stale_reject("STATE_STALE")}]
+    loop.handle_event(fg.operator_message("Flyg till P1"))
+    await loop.settle()
+    assert len(fg.commands) == 2  # the first and one resend, never a third by code
+    assert [t.trigger for t in backend.turns] == ["operator_message", "gate_reject_retry"]
+
+
+async def test_an_onboard_refusal_for_an_old_picture_is_sent_again_by_code() -> None:
+    backend = Steps(act("survey_sector", sector="A"), say("Inte detta."))
+    loop, fg, _ = make_loop(backend)
+    loop.handle_event(fg.operator_message("Sök sektor A"))
+    await loop.settle()
+    first = fg.commands[0]
+    fg.sit["snapshot_state_seq"] += 3
+    loop.handle_event(
+        {
+            "type": "event.skill",
+            "body": {
+                "command_id": str(first.command_id),
+                "skill": first.skill,
+                "status": "rejected_onboard",
+                "reason_codes": ["STATE_CHANGED"],
+            },
+        }
+    )
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["operator_message"]
+    again = fg.commands[1]
+    assert again.skill == first.skill and again.params == first.params
+    assert again.based_on is not None and again.based_on.state_seq == fg.sit["snapshot_state_seq"]
+    # The resend refused onboard as well: the model hears it, nothing is sent a third time.
+    loop.handle_event(
+        {
+            "type": "event.skill",
+            "body": {
+                "command_id": str(again.command_id),
+                "skill": again.skill,
+                "status": "rejected_onboard",
+                "reason_codes": ["STATE_CHANGED"],
+            },
+        }
+    )
+    await loop.settle()
+    assert len(fg.commands) == 2
+    assert [t.trigger for t in backend.turns] == ["operator_message", "skill_event"]
+
+
+async def test_an_onboard_refusal_for_another_reason_wakes_the_model() -> None:
+    backend = Steps(act("goto", pin="P1"), say("Spärrzon."))
+    loop, fg, _ = make_loop(backend)
+    loop.handle_event(fg.operator_message("Flyg till P1"))
+    await loop.settle()
+    cid = str(fg.commands[0].command_id)
+    loop.handle_event(
+        {
+            "type": "event.skill",
+            "body": {
+                "command_id": cid,
+                "skill": "goto",
+                "status": "rejected_onboard",
+                "reason_codes": ["KEEPOUT_VIOLATION"],
+            },
+        }
+    )
+    await loop.settle()
+    assert len(fg.commands) == 1
+    assert [t.trigger for t in backend.turns] == ["operator_message", "skill_event"]
+
+
+async def test_a_looks_done_is_not_its_end_its_closed_event_is() -> None:
+    """The drone waits over the candidate after a look's "done": the AI's order is still
+    unended (no idle turn acts in between) until the look's "closed" event, which wakes
+    the AI with what the drone does next."""
+    backend = Steps(say("Väntar på beslutet."), say("Söker vidare."))
+    loop, fg, _ = make_loop(backend)
+    loop._unended["look-1"] = None  # pyright: ignore[reportPrivateUsage]
+    body: dict[str, Any] = {
+        "command_id": "look-1",
+        "skill": "inspect_detection",
+        "status": "done",
+    }
+    for status in ("done", "closed"):
+        evt = {"type": "event.skill", "body": body | {"status": status}}
+        fg.apply_event(evt)
+        loop.handle_event(evt)
+        await loop.settle()
+        if status == "done":
+            assert "look-1" in loop._unended  # pyright: ignore[reportPrivateUsage]
+    assert not loop._unended  # pyright: ignore[reportPrivateUsage]
+    assert [t.trigger for t in backend.turns] == ["skill_event", "skill_event"]

@@ -22,6 +22,7 @@ from sd_brain.constants import BRAIN_HEARTBEAT_S, CLOUD_RETRY_AFTER_S
 from sd_brain.context import ContextBuilder
 from sd_brain.decide import DecisionService, JevEngine, OpenAiDecisionsEngine, QuestionEngine
 from sd_brain.ground_client import GroundClient, GroundError
+from sd_brain.ground_http import ground_http
 from sd_brain.health import HealthState
 from sd_brain.loop import CommanderLoop
 from sd_brain.runtime.base import llm_sampling
@@ -68,7 +69,7 @@ def _engines(
 
 
 def build(cfg: BrainConfig, secrets: Secrets, reg: SkillRegistry = SKILL_REGISTRY) -> Brain:
-    http = httpx.AsyncClient(timeout=5.0, trust_env=False)  # loopback only, never a proxy
+    http = ground_http(trust_env=False)  # loopback only, never a proxy
     cloud_http = (
         httpx.AsyncClient(timeout=20.0)
         if (secrets.cloud_api_key or secrets.jev_api_key or secrets.openai_api_key)
@@ -194,6 +195,7 @@ def follow_ground_profile(b: Brain, profile: str | None) -> None:
 
 async def _stream(b: Brain) -> None:
     async def resync() -> None:
+        b.loop.stream_resynced()
         mission = await b.ground.active_mission(b.cfg.ground.vehicle_id)
         await b.loop.set_mission(mission)
 

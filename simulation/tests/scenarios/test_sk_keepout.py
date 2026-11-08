@@ -84,7 +84,7 @@ from test_sc_linkloss import (  # pyright: ignore[reportMissingImports]
 )
 from test_sk_inspect import (  # pyright: ignore[reportMissingImports]
     Camera,
-    a_detection,
+    a_candidate,
     airborne_for_inspection,
     inspecting,
     person,
@@ -133,6 +133,13 @@ async def _land(sc: Scenario) -> None:
 
 async def _executor(sc: Scenario, state: str) -> bool:
     return (await sc.onboard_state())["executor_state"] == state
+
+
+def two_looks(ex: Any, where: list[tuple[float, float]]) -> None:
+    """Two stills of the same persons, one after the other: an unsure detection (0.62)
+    makes the drone's own cylinder only on a second look (owner decision 2026-11-03)."""
+    ex.on_detections([person(c) for c in where])
+    ex.on_detections([person(c) for c in where])
 
 
 @pytest.mark.budget_s(480)
@@ -287,7 +294,7 @@ async def test_own_detections_under_the_drone_during_a_search(
             plane.latlon(e - 13.0 * de, n - 13.0 * dn),
         ]
         since = time.monotonic()
-        sc.r.onboard.ex.on_detections([person(c) for c in centres])
+        two_looks(sc.r.onboard.ex, centres)
         await until_event(sc, "keepout_reroute")
 
         await sc.wait_command("survey_sector", "done", 300)
@@ -349,7 +356,7 @@ async def test_a_person_seen_close_ahead_stops_the_search_first(
         assert stop_distance_m(speed) + 3.0 < edge < stop_m(speed), (speed, edge)
         centre = plane.latlon(e + (edge + RADIUS_M) * de, n + (edge + RADIUS_M) * dn)
         since = time.monotonic()
-        ex.on_detections([person(centre)])
+        two_looks(ex, [centre])
         ((k, _),) = ex.local_keepouts.values()
 
         reroutes = await until_event(sc, "keepout_reroute")
@@ -471,7 +478,7 @@ async def test_a_person_seen_during_the_find_move(
             # short way out, so it ends well before the find move's deadline.
             centre = plane.latlon(e, n + (RADIUS_M - 8.0 if seen == "below" else 45.0))
             since = time.monotonic()
-            ex.on_detections([person(centre)])
+            two_looks(ex, [centre])
             ((k, _),) = ex.local_keepouts.values()
             await sc.until(
                 lambda: (
@@ -546,8 +553,8 @@ async def test_an_inspection_started_inside_new_cylinders(
         step = math.dist((e, n), (e0, n0))
         de, dn = (e - e0) / step, (n - n0) / step
         target = plane.latlon(e + 6.0 * de, n + 6.0 * dn)
-        det = await a_detection(sc, target)
-        ex.on_detections([person(target), person(plane.latlon(e - 13.0 * de, n - 13.0 * dn))])
+        cid = await a_candidate(sc, target)
+        two_looks(ex, [target, plane.latlon(e - 13.0 * de, n - 13.0 * dn)])
         cand = Keepout(
             keepout_id=new_id(),
             lat=target[0],
@@ -559,7 +566,7 @@ async def test_an_inspection_started_inside_new_cylinders(
         ex.on_keepouts(KeepoutInstall(install_seq=INSTALL_SEQ, keepouts=[cand]), new_id())
         Camera(sc)
         since = time.monotonic()
-        order = await inspecting(sc, det)
+        order = await inspecting(sc, cid)
 
         # Once the drone is out of the cylinders, the ground moves (or shrinks) the
         # candidate's cylinder under the same id.
@@ -609,9 +616,9 @@ async def test_a_person_below_during_an_inspection_is_left_on_a_replan(
     async with scenario(sim, migrated_db, tmp_path) as sc:
         await airborne_for_inspection(sc)
         p1 = next(p for p in FIXTURE["pins"] if p["id"] == "P1")
-        det = await a_detection(sc, sc.at(float(p1["east_m"]), float(p1["north_m"])))
+        cid = await a_candidate(sc, sc.at(float(p1["east_m"]), float(p1["north_m"])))
         Camera(sc)
-        order = await inspecting(sc, det)
+        order = await inspecting(sc, cid)
         ex = sc.r.onboard.ex
         st = sc.sim.harness.state
         await sc.until(
@@ -624,7 +631,7 @@ async def test_a_person_below_during_an_inspection_is_left_on_a_replan(
         e, n = plane.xy(st.lat, st.lon)
         centre = plane.latlon(e, n + 15.0)
         since = time.monotonic()
-        ex.on_detections([person(centre)])
+        two_looks(ex, [centre])
         k = min(
             (k for k, _ in ex.local_keepouts.values()),
             key=lambda k: distance_m(k.lat, k.lon, *centre),

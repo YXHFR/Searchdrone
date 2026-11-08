@@ -15,6 +15,10 @@ every measured set that is fetched), ``mini=1`` (the small CI bank instead), ``l
 weakest dataset, as ``just pick-detector`` ranks, or for any one dataset, or when a
 dataset of the earlier result is missing; see ``compare``).
 
+After the per-dataset lines it prints recall by person size (the box's longest side, in
+finer bins than the three size classes; ``recall_by_size`` in the result), so the effect
+of training at our cameras' scales (``just train-detector scales=``) can be seen.
+
 The detector sees one picture at a time as the drone's camera would give it; the
 result file holds only numbers (no picture, no file name, no box).
 """
@@ -47,6 +51,7 @@ from bench.common import (
 from bench.datasets import Image, image_root, index_path, load_register, read_index
 from bench.metrics import (
     FP_PER_12MP,
+    SIZE_BINS,
     PictureResult,
     Summary,
     match_picture,
@@ -54,7 +59,7 @@ from bench.metrics import (
     summarise,
     weakest_recall,
 )
-from bench.splits import CURRENT, MINI_VERSION, load_mini, load_split
+from bench.splits import MEASURED, MINI_VERSION, load_mini, load_split
 
 from sd_detect.api import BBox, Detection, Detector, Frame
 from sd_detect.fake import NullDetector
@@ -117,7 +122,7 @@ def pictures(args: dict[str, str], data: Path) -> tuple[str, list[Picture]]:
         part = args.get("part", "test")
         if part not in ("test", "val"):
             raise BenchError("part ska vara test eller val", 2)
-        split = load_split(CURRENT)
+        split = load_split(MEASURED)
         register = load_register()
         measured = [n for n, ds in register.items() if "measure" in ds.use]
         if args.get("sets"):
@@ -260,6 +265,28 @@ def compare(body: dict[str, object], earlier: Path) -> str | None:
     return None
 
 
+def size_table(body: Mapping[str, Any]) -> list[str]:
+    """Recall by the person's longest side, pooled and per dataset, as text lines (empty
+    for a result from before ``recall_by_size``)."""
+    pooled = body.get("recall_by_size") or {}
+    rows = [("alla", pooled)] + [
+        (name, row.get("by_size") or {})
+        for name, row in (body.get("recall_by_dataset") or {}).items()
+    ]
+    bins = [b for b in SIZE_BINS if any(b in r for _, r in rows)]
+    if not bins:
+        return []
+    width = max(len(n) for n, _ in rows)
+    out = [
+        "Recall per personstorlek (längsta sidan i px; antal personer inom parentes):",
+        "  " + " " * width + "".join(f"{b:>15}" for b in bins),
+    ]
+    for name, row in rows:
+        cells = [f"{row[b]['recall']:.2f} ({row[b]['n']})" if b in row else "-" for b in bins]
+        out.append(f"  {name:<{width}}" + "".join(f"{c:>15}" for c in cells))
+    return out
+
+
 def selfcheck(items: Sequence[Picture], source: str = "") -> tuple[list[str], dict[str, object]]:
     """Null must find nothing and the facit everything; the errors and both results."""
     errors = []
@@ -341,6 +368,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"(16-32 px {cls['16to32']['recall']}, > 32 px {cls['gt32']['recall']}; "
                 f"egen tröskel {row['threshold']}, {row['fp_per_12mp']} falsklarm per 12 MP)"
             )
+        for line in size_table(body):
+            say(line)
         if args.get("compare"):
             why = compare(body, Path(args["compare"]))
             if why:

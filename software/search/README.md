@@ -16,10 +16,15 @@ Its checks run from the repository root: `just test` (all checks: `just check`).
    search API (`/search/v1` on the loopback listener, with its own token). It has no
    route that gives orders, approves, presses STOP or decides on a candidate.
 2. **Fuses** detections of the same class into candidates (`fusion.py`): a detection joins
-   the nearest open candidate within 4 m plus the larger 95 % radius (at most 12 m),
-   otherwise it starts a new one. A single sighting is never dropped. Confirmed and
-   rejected candidates take no new sightings. Two candidates that drift together are
-   merged (the older stays) unless a person has decided on either.
+   the nearest open or confirmed candidate within 4 m plus the larger 95 % radius (at most
+   12 m), otherwise it starts a new one. A single sighting is never dropped. A confirmed
+   candidate takes the sightings that join it but does not move or reopen, so a find
+   seen again makes no new card. The owner accepted the cost: for the rest of the
+   mission (unless the pilot undoes the find), a second person that close to a find gets
+   no card of their own; their pictures are on the find's card, and they are inside its
+   keep-out cylinder (30 m plus the radius) all the same. Rejected candidates take no new
+   sightings. Two candidates that drift together are merged (the older stays) unless a
+   person has decided on either.
 3. **Scores the colours** in the crops against the approved search profile (`color.py`,
    `score.py`): `match`, `conflict` or `not_visible` per field, from the share of each
    colour among the pixels that differ from the background. Only an approved profile

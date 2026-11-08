@@ -45,6 +45,7 @@ __all__ = [
     "CROP_JPEG_MAX_BYTES",
     "CROP_MAX_PX",
     "KEEPOUTS_MAX",
+    "KEEPOUT_RELEASED_MAX",
     "KIND_MODELS",
     "MANUAL_CONTROL_TIMEOUT_MS",
     "PERCEPTION_DETECTIONS_MAX",
@@ -71,6 +72,7 @@ __all__ = [
     "HelloAck",
     "InspectLower",
     "InspectOutcome",
+    "InspectStay",
     "Keepout",
     "KeepoutInstall",
     "LatchRef",
@@ -318,6 +320,16 @@ class InspectLower(SdModel):
     command_id: Id  # the inspect_detection order
 
 
+class InspectStay(SdModel):
+    """Ground -> onboard, reliable: the pilot's no to "Gå lägre?" ("Nej, stanna här"). The
+    drone stops waiting for an answer at once and the look ends where it is
+    (``lower_declined``), as on no answer in ``LOWER_OFFER_S``: it never goes lower for it.
+    A kind of its own, not a flag on ``InspectLower``, so that a no can never be read as a
+    yes. Only from the pilot's own click."""
+
+    command_id: Id  # the inspect_detection order
+
+
 class ManualTakeover(SdModel):
     """Ground -> onboard, reliable. The pilot takes over (Ta över) or hands back (Lämna tillbaka).
 
@@ -364,6 +376,10 @@ CROP_MAX_PX: Final = 512  # a crop's longest side
 CROP_JPEG_MAX_BYTES: Final = 45_000
 VIEW_SIDE_MAX_PX: Final = 1536  # the square a view is cut from, in still pixels
 KEEPOUTS_MAX: Final = 200
+# The detections of rejected candidates sent with a keep-out list (newest first): the drone's
+# own cylinders made from them are removed. A full list and a full keep-out list fit one
+# message.
+KEEPOUT_RELEASED_MAX: Final = 200
 
 _JPEG_MAGIC = b"\xff\xd8\xff"
 
@@ -510,10 +526,15 @@ class KeepoutInstall(SdModel):
     list stays in force until a list with a higher ``install_seq`` arrives: the envelope's
     ``ttl_ms`` only limits how late the message may be delivered, never how long the
     cylinders apply.
+
+    ``released``: detections of candidates a person rejected (spec titta-narmare §7.3.5).
+    The drone removes its own cylinders made from any of them (``source = "detection"``,
+    ``source_id`` the detection); the ground's list no longer holds the candidate's.
     """
 
     install_seq: int = Field(ge=0)
     keepouts: list[Keepout] = Field(default_factory=list[Keepout], max_length=KEEPOUTS_MAX)
+    released: list[Id] = Field(default_factory=list[Id], max_length=KEEPOUT_RELEASED_MAX)
 
 
 KIND_MODELS: dict[str, type[SdModel]] = {
@@ -543,6 +564,7 @@ KIND_MODELS: dict[str, type[SdModel]] = {
         KeepoutInstall,
         InspectOutcome,
         InspectLower,
+        InspectStay,
     )
 }
 
@@ -563,6 +585,7 @@ RELIABLE_KINDS = frozenset(
         "KeepoutInstall",
         "InspectOutcome",
         "InspectLower",
+        "InspectStay",
     }
 )
 

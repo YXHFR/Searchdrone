@@ -66,6 +66,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CLOSE_AFTER_DISARM_S",
+    "RELEASE_WAIT_S",
     "TICK_S",
     "FlowError",
     "MavCaller",
@@ -76,6 +77,10 @@ TLOG_NAME = "flight.tlog"  # the ground station's own MAVLink channel, per missi
 
 CLOSE_AFTER_DISARM_S: Final = 10.0
 TICK_S: Final = 0.2
+# After Resume, how long the gate's picture waits for the onboard executor to let go:
+# its acknowledgement (``RELEASE_ACK_WAIT_S``) and the next snapshot (2 Hz) after it.
+RELEASE_WAIT_S: Final = 2.0
+RELEASE_POLL_S: Final = 0.05
 _HOME_MODES: Final = frozenset({CopterMode.RTL, CopterMode.SMART_RTL})
 _LATCH_TRIGGER: Final = {
     "stop": Trigger.OPERATOR_STOP,
@@ -175,6 +180,9 @@ class _VehicleWatch:
     armed: bool = False
     flown: bool = False  # in the air since it last stood disarmed outside a flight state
     battery_rtl: bool = False  # the onboard battery rule is flying home
+    # The last snapshot the flow has handled (its mission transitions done) and when.
+    handled: StateSnapshot | None = None
+    handled_mono_ms: int = 0
 
 
 @dataclass
@@ -192,6 +200,10 @@ class MissionFlow:
     finds: dict[str, Any] = field(default_factory=dict[str, Any])  # mission id -> Finds
     reports: dict[str, Any] = field(default_factory=dict[str, Any])  # vehicle id -> ReportQueue
     link_watch: dict[str, LinkWatch] = field(default_factory=dict[str, "LinkWatch"])
+    looks: dict[str, Any] = field(default_factory=dict[str, Any])  # command id -> Look
+    # look command id -> mission id: the end of the search flown on after it was told
+    resume_told: dict[str, str] = field(default_factory=dict[str, str])
+    permit: Any = None  # the pilot's overflight permit; None: the config's
     _watch: dict[str, _VehicleWatch] = field(default_factory=dict[str, _VehicleWatch])
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _tasks: set[asyncio.Task[Any]] = field(default_factory=set[asyncio.Task[Any]])
@@ -200,6 +212,8 @@ class MissionFlow:
     # Missions not to start recording for again: their files are closing, or opening the
     # file failed once (logged).
     _tlog_done: set[str] = field(default_factory=set[str])
+    # vehicle -> the action_seq of the last Resume whose release the gate has waited for
+    _release_waited: dict[str, int] = field(default_factory=dict[str, int])
 
     # --- small helpers -----------------------------------------------------------------
 
@@ -514,6 +528,7 @@ class MissionFlow:
 
     async def close(self, mission: Mission, trigger: Trigger, reason: str) -> Mission:
         from sd_ground.services import files as files_service
+        from sd_ground.services import inspections as inspections_service
 
         await self.end_clearance(
             mission.vehicle_id, "invalidated", "MISSION_CLOSED", str(mission.id)
@@ -521,6 +536,7 @@ class MissionFlow:
         await files_service.close_files(self, mission)
         after = await self.transition(str(mission.id), trigger, closed_reason=reason)
         self.coverage.forget(str(mission.id))
+        inspections_service.forget(self, str(mission.id))
         return after or await self.mission(str(mission.id))
 
     # --- limits and autonomy -----------------------------------------------------------
@@ -594,6 +610,54 @@ class MissionFlow:
 
     # --- the gate's picture ------------------------------------------------------------
 
+    async def released_onboard(self, vehicle_id: str) -> None:
+        """After a Resume: wait until the onboard executor has let go and the flow has
+        handled a snapshot from after that (the mission ACTIVE again), at most
+        ``RELEASE_WAIT_S``. Called before an order reads its mission: the gate then sees
+        the drone as it is, and the order goes out after the release over SD-link, which
+        the executor handles in order. So it is never refused onboard as
+        ``ONB_CONTROL_HELD`` for being early.
+
+        Returns at once when no Resume's release is on its way or it was waited for
+        already (only the first order after a Resume waits); when any newer action came:
+        STOP, FLY HOME or a system action (its latch decides), a take-over or hand-back
+        (the pilot's hands decide), or a newer number from onboard; and when the executor
+        did not take the release (refused, no answer, SD-link down): the gate and the
+        executor then refuse as before. STOP and FLY HOME never come here."""
+        actions = self.actions
+        if actions is None:
+            return
+        clock = self.g.clock
+        deadline = clock.monotonic() + RELEASE_WAIT_S
+        while True:
+            release = actions.release(vehicle_id)
+            if release is None or self._release_waited.get(vehicle_id) == release.action_seq:
+                return
+            seq = release.action_seq
+            if actions.latches.latest_seq(vehicle_id) != seq or release.result not in (
+                None,
+                "acked",
+            ):
+                break
+            watch = self._watch.get(vehicle_id)
+            snap = None if watch is None else watch.handled
+            if (
+                release.answered_mono_ms is not None
+                and watch is not None
+                and snap is not None
+                # handled after the ack was (the ack's own snapshot came before it)
+                and watch.handled_mono_ms > release.answered_mono_ms
+                and snap.executor_state is not ExecutorState.HELD
+                and not (snap.manual_control or snap.control_suspended or snap.stop_latch)
+                and not watch.resume_pending
+            ):
+                break
+            if clock.monotonic() >= deadline:
+                log.warning("missions.release_wait_timeout", vehicle_id=vehicle_id, seq=seq)
+                break
+            await clock.sleep(RELEASE_POLL_S)
+        self._release_waited[vehicle_id] = seq
+
     async def gate_context(self, mission: Mission) -> GateContext:
         vid = mission.vehicle_id
         row = await self.active_charter_row(mission)
@@ -665,6 +729,7 @@ class MissionFlow:
     async def on_inbound(self, vehicle_id: str, inbound: Inbound) -> None:
         from sd_ground.services import approvals as approvals_service
         from sd_ground.services import commands as commands_service
+        from sd_ground.services import inspections as inspections_service
         from sd_ground.services import link_loss as link_loss_service
         from sd_ground.services import perception as perception_service
         from sd_schemas.link import Ack, CharterAck, CropData, OnboardEvent, PerceptionReport
@@ -686,8 +751,16 @@ class MissionFlow:
                 vehicle_id=vehicle_id,
                 payload={"source": "onboard", **body.data},
             )
+            if body.type.startswith("inspect."):
+                await inspections_service.on_event(self, body.type, dict(body.data))
             if body.type == "executor.keepout_hold":
                 self._keepout_hold_alert(vehicle_id, mission, body.data, inbound.envelope.sent_utc)
+            if body.type == "executor.survey_blocked" and mission is not None:
+                from sd_ground.services import candidates as candidates_service
+
+                await candidates_service.on_survey_blocked(
+                    self, str(mission.id), vehicle_id, dict(body.data)
+                )
             if body.type in _PANEL_EVENTS:  # the pilot's log line, after the link is back
                 self.publish(
                     "vehicle",
@@ -698,6 +771,8 @@ class MissionFlow:
                 )
         elif isinstance(body, StateSnapshot):
             await self._on_snapshot(vehicle_id, body)
+            watch = self._watch.setdefault(vehicle_id, _VehicleWatch())
+            watch.handled, watch.handled_mono_ms = body, self.g.clock.monotonic_ms()
         elif isinstance(body, PerceptionReport):
             perception_service.enqueue(self, vehicle_id, body)  # never waits for storage
         elif isinstance(body, CropData):
@@ -705,6 +780,7 @@ class MissionFlow:
 
     async def _on_snapshot(self, vehicle_id: str, snap: StateSnapshot) -> None:
         from sd_ground.services import commands as commands_service
+        from sd_ground.services import inspections as inspections_service
 
         watch = self._watch.setdefault(vehicle_id, _VehicleWatch())
         mission = await self.repo.open_mission(vehicle_id)
@@ -750,6 +826,10 @@ class MissionFlow:
                 await commands_service.cancel_open(self, vehicle_id, "BATTERY_RTL")
         watch.battery_rtl = snap.battery_rtl_active
         await commands_service.on_snapshot(self, mission, snap)
+        active = None if snap.active_command_id is None else str(snap.active_command_id)
+        inspections_service.on_snapshot(self, str(mission.id), active, snap.active_skill)
+        if snap.inspect is not None:
+            await inspections_service.on_progress(self, mission, snap.inspect)
 
     # --- the run task ------------------------------------------------------------------
 
@@ -792,6 +872,7 @@ class MissionFlow:
         if not self.g.db_ok:
             return  # the mission lives in the database; STOP / FLY HOME do not need it
         from sd_ground.services import coverage as coverage_service
+        from sd_ground.services import inspections as inspections_service
         from sd_ground.services import link_loss as link_loss_service
 
         await approvals_service.expire(self)
@@ -805,6 +886,7 @@ class MissionFlow:
             await self._follow_landing(vid, mission)
             await coverage_service.tick(self, mission)
             await link_loss_service.tick(self, mission)
+            await inspections_service.tick(self, mission)
             self._follow_tlog(mission)
 
     def _follow_tlog(self, mission: Mission) -> None:
@@ -975,13 +1057,15 @@ class MissionFlow:
     # --- the AI's picture --------------------------------------------------------------
 
     async def situation(self, mission_id: str) -> Any:
-        """``GET /commander/v1/missions/{id}/situation``."""
+        """``GET /commander/v1/missions/{id}/situation``: the AI's picture, right after a
+        Resume the drone once released (``released_onboard``), not the HELD it was in."""
         from sd_ground.services import approvals as approvals_service
         from sd_ground.services import commands as commands_service
         from sd_ground.services import probability_map as map_service
         from sd_ground.services.candidate_lines import candidate_lines
         from sd_ground.services.situation import build_situation
 
+        await self.released_onboard((await self.mission(mission_id)).vehicle_id)
         mission = await self.mission(mission_id)
         row = await self.active_charter_row(mission)
         proposals = [c for c in await self.repo.charters(mission_id) if c.status == "proposed"]
@@ -1008,6 +1092,7 @@ class MissionFlow:
             sdlink_up=self.sdlink_up(mission.vehicle_id),
             active_command=await commands_service.active_command(self, mission),
             sectors=await self.repo.sectors(mission_id),
+            gaps=None if (cov := self.coverage.missions.get(mission_id)) is None else cov.gaps,
             annotations=annotations,
             recent_events=events[-20:],
             probability_line=await map_service.probability_line(self, mission_id),

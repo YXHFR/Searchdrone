@@ -20,37 +20,57 @@ export function endMarker(testId: string, at = new Date()): string {
   return `${at.toISOString()} END ${testId}\n`;
 }
 
+/** How long after a test's END marker a request without the test header still counts as
+ * sent by that closing page. A full mock run measured such requests 0.9 s and 2.2 s after
+ * the END before them; 5 s leaves room for a slower CI runner. */
+export const CLOSE_WINDOW_MS = 5_000;
+
 /** Splits the log: requests that escaped while their test ran (they fail the run) and
  * requests sent while a page was closing. Once a page starts closing, Playwright stops
  * handling its routes and sends what is in flight on to the network whatever the test
  * does (the panel's POST .../missions/open on load among them), so those are reported,
- * not failed. A request is "while closing" when it was logged after its test's END marker
- * or carries no test header (sent after the page's headers were dropped). One whose test
- * never wrote END (the worker died mid-test) counts as during the test. */
+ * not failed. A request is "while closing" when it was logged after its own test's END
+ * marker, or, without the test header (the page had dropped its headers), within
+ * CLOSE_WINDOW_MS after some test's END. Everything else fails: a request before its
+ * test's END, one whose test never wrote END (the worker died mid-test), one without the
+ * header and no END just before it, and any line that cannot be read. With several
+ * workers some test has usually just ended, so the window only bounds header-less
+ * requests loosely; with one worker it is tight. */
 export function classify(log: string): { during: string[]; closing: string[] } {
-  const ends = new Map<string, string>();
-  const requests: { at: string; test: string | null; line: string }[] = [];
+  const ends = new Map<string, number>();
+  const endTimes: number[] = [];
+  const requests: { at: number; test: string | null; line: string }[] = [];
+  // The guard writes Date#toISOString(); anything looser is not its line.
+  const time = (s: string | undefined): number =>
+    s && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(s) ? Date.parse(s) : Number.NaN;
+  const during: string[] = [];
   for (const line of log.split("\n")) {
     if (!line.trim()) continue;
     const [, endAt, endOf] = /^(\S+) END (\S+)$/.exec(line) ?? [];
-    if (endAt && endOf) {
-      ends.set(endOf, endAt);
+    if (endOf && !Number.isNaN(time(endAt))) {
+      ends.set(endOf, time(endAt));
+      endTimes.push(time(endAt));
       continue;
     }
-    const req = /^(\S+) \S+ \S+ \((.*?); referer /.exec(line);
-    const header = req?.[2] ?? "";
-    requests.push({
-      at: req?.[1] ?? "",
-      test: header && header !== "no test header" ? (header.split(" ")[0] ?? null) : null,
-      line,
-    });
+    const [, at, header] = /^(\S+) \S+ \S+ \((.*?); referer /.exec(line) ?? [];
+    if (header === undefined || Number.isNaN(time(at))) {
+      during.push(`unreadable log line: ${line}`);
+      continue;
+    }
+    const test = header === "no test header" ? null : (header.split(" ")[0] ?? "");
+    requests.push({ at: time(at), test, line });
   }
-  const during: string[] = [];
   const closing: string[] = [];
   for (const r of requests) {
-    const end = r.test ? ends.get(r.test) : undefined;
-    const afterEnd = r.test === null || (end !== undefined && r.at > end);
-    (afterEnd ? closing : during).push(r.line);
+    let afterClose: boolean;
+    if (r.test === null) {
+      afterClose = endTimes.some((e) => e <= r.at && r.at - e <= CLOSE_WINDOW_MS);
+    } else {
+      const end = ends.get(r.test);
+      // The same millisecond as its END counts as after it: the log has no finer order.
+      afterClose = end !== undefined && r.at >= end;
+    }
+    (afterClose ? closing : during).push(r.line);
   }
   return { during, closing };
 }

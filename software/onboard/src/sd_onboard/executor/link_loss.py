@@ -17,6 +17,10 @@ SD-link message; the phases are ``sd_schemas.executor.LinkLossPhase``.
 Anyone else taking over (a person, the RC transmitter, a flight-controller failsafe,
 another limit's return home) ends the rule's part (``YIELDED``) until the link is back.
 
+* **Inspect climb** (a closer look under way): the look ends and the drone climbs straight
+  up to the height it started at (an internal order in ``INSPECT``); then L-LINK as usual
+  from the same clock, the climb counted as ``climbing_out``.
+
 The keep-out climb (``climbing_out``: straight up out of a person's cylinder) is not cut
 short: L-LINK holds once it has ended (in the keep-out hold) and goes home from there when
 that is due, and L-FIND's hover starts up there, with its clock, also past the find move's
@@ -43,6 +47,7 @@ from sd_safety.link_loss import (
     HOME_CLIMBING_MS,
     HOME_MS,
     FindPlan,
+    InspectClimbPlan,
     choose_mode,
 )
 from sd_schemas.charter import MissionCharter
@@ -77,6 +82,9 @@ class LinkLossInput:
     taken_by: str | None = None
     # The keep-out climb is under way: it ends in the keep-out hold, which nothing cuts short.
     climbing_out: bool = False
+    # A closer look is under way and started at this height above home: the link lost,
+    # it ends and the drone climbs straight up to it first (``InspectClimbPlan``).
+    inspect_start_alt_m: float | None = None
 
 
 class LinkLossRule:
@@ -175,7 +183,20 @@ class LinkLossRule:
             nav_ok=x.nav_ok,
             keepouts=x.keepouts,
             charter=x.charter,
+            inspect_start_alt_m=x.inspect_start_alt_m,
         )
+        if isinstance(plan, InspectClimbPlan):
+            self.phase = P.GRACE
+            return [
+                LimitAction("L-LINK", "event", "link_loss", "link_lost", {}),
+                LimitAction(
+                    "L-LINK",
+                    "inspect_climb",
+                    "link_loss",
+                    "link_loss_inspect_climb",
+                    {"alt_m": round(plan.alt_m, 1)},
+                ),
+            ]
         if not isinstance(plan, FindPlan):
             self.phase = P.GRACE
             return [LimitAction("L-LINK", "event", "link_loss", "link_lost", {})]

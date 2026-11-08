@@ -53,6 +53,7 @@ from sd_ground.services.telemetry import TelemetryService
 from sd_ground.services.vehicle_actions import OperatorPresence, VehicleActions
 from sd_ground.services.video import VideoMonitor
 from sd_ground.web import COMMANDER_BODY_LIMIT, LoopbackGuard, PanelGuard
+from sd_schemas.commander import GROUND_HTTP_KEEPALIVE_S
 
 __all__ = [
     "Background",
@@ -304,6 +305,9 @@ def _uvicorn(app: Any, bind: str, **extra: Any) -> uvicorn.Server:
         proxy_headers=False,  # nothing sits in front of this server; never trust X-Forwarded-*
         forwarded_allow_ips=[],
         date_header=False,
+        # Set here, not left to uvicorn's default: the brain's clients drop idle
+        # connections well before this (sd_brain.ground_http).
+        timeout_keep_alive=GROUND_HTTP_KEEPALIVE_S,
         **extra,
     )
     return uvicorn.Server(config)

@@ -24,6 +24,7 @@ import math
 from dataclasses import dataclass
 
 __all__ = [
+    "ASPECT_TOLERANCE",
     "RADIUS_95",
     "Attitude",
     "ErrorBudget",
@@ -36,6 +37,7 @@ __all__ = [
 ]
 
 RADIUS_95 = math.sqrt(-2.0 * math.log(0.05))  # 2.448: 95 % of a 2-D normal error
+ASPECT_TOLERANCE = 0.01  # a still's shape may differ this much from the camera's (rounding)
 Vec3 = tuple[float, float, float]
 Xy = tuple[float, float]
 
@@ -71,6 +73,31 @@ class PinholeCamera:
     @property
     def vfov_deg(self) -> float:
         return math.degrees(2 * math.atan((self.height_px / 2) / self.focal_px))
+
+    def scaled(self, width_px: int, height_px: int) -> PinholeCamera:
+        """The same lens on a picture of ``width_px`` x ``height_px`` (the sensor read out
+        smaller, or the still shrunk): same field of view, mount and centre, as a share
+        of the picture. The ground a still covers then does not depend on its pixels.
+        Refuses a picture of another shape (sides off by more than ``ASPECT_TOLERANCE``),
+        which would be a cropped view, not a smaller one."""
+        if (width_px, height_px) == (self.width_px, self.height_px):
+            return self
+        if width_px < 1 or height_px < 1:
+            raise ValueError("the picture must have at least one pixel")
+        sx, sy = width_px / self.width_px, height_px / self.height_px
+        if abs(sx / sy - 1.0) > ASPECT_TOLERANCE:
+            raise ValueError(
+                f"a {width_px}x{height_px} still does not have the camera's shape "
+                f"({self.width_px}x{self.height_px})"
+            )
+        return PinholeCamera(
+            width_px,
+            height_px,
+            self.hfov_deg,
+            None if self.cx is None else self.cx * sx,
+            None if self.cy is None else self.cy * sy,
+            self.mount_pitch_deg,
+        )
 
 
 @dataclass(frozen=True)

@@ -1,8 +1,14 @@
-"""``inspect_detection``: a closer look at a candidate from the side, cameras straight down.
+"""``inspect_detection``: a closer look at a candidate, cameras straight down.
 
-This is the look from outside the candidate's cylinder (stage 2, B2-09). With the closer
-look v2 (``sd_schemas.inspect``) it stays as the ``live`` look without the overflight
-permit; the step-wise approach straight over the candidate comes with its own handler.
+Two looks, chosen by the charter (``MissionCharter.overflight_allowed``):
+
+* Allowed (``sim``, ``exercise``, ``live`` with the permit): straight over the candidate
+  and down in steps (``skills.inspect_steps.StepLook``).
+* Not allowed (``live`` without the permit, or no operation mode): the look from outside
+  the candidate's cylinder (stage 2, B2-09), described below.
+
+Either way the handler ends when the stills are taken; the executor then hovers for the
+pilot's decision and flies back to where the search broke off (``executor.inspect``).
 
 The point, height and heading are ``InspectDetectionParams.geometry`` (the same
 function the ground's gate used): on the edge of the target's keep-out cylinder + 10 m,
@@ -35,6 +41,7 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, ClassVar, Final
+from uuid import UUID
 
 from sd_mav.modes import CopterMode
 from sd_onboard.skills import register_handler
@@ -49,10 +56,12 @@ from sd_onboard.skills.base import (
 )
 from sd_onboard.skills.capture_stills import NO_STILLS, take_stills
 from sd_onboard.skills.goto import GotoHandler, goto_plan
+from sd_onboard.skills.inspect_steps import StepLook, look_radius_m
 from sd_safety.keepout import circles, reroute
 from sd_safety.targets import Polygon, Xy, polygon_from_geojson
-from sd_schemas.base import Id, LatLonAlt
+from sd_schemas.base import Id, LatLon, LatLonAlt
 from sd_schemas.executor import ResumePoint
+from sd_schemas.inspect import STEPS_MAX, InspectEnd
 from sd_schemas.keepout import INSPECT_SPEED_MS, leg_enters
 from sd_schemas.skills import InspectDetectionParams, SkillParams, TargetContext
 from sd_schemas.vehicle import VehicleState
@@ -94,8 +103,9 @@ class _Leg:
 def _way_out(here: Xy, cyl: Sequence[tuple[Xy, float]], area: Polygon) -> Xy | None:
     """Out of the cylinders ``here`` lies in, ``EXIT_CLEAR_M`` past the last edge along
     the same straight leg (``sd_safety.keepout.reroute``'s way out); None when there is
-    none, or no room for the extra metres before another cylinder or the charter's edge."""
-    way = reroute([here], cyl, area=area)
+    none, or no room for the extra metres before another cylinder or the charter's edge
+    (the way out is chosen with that room reserved, so this is a backstop)."""
+    way = reroute([here], cyl, area=area, exit_reserve_m=EXIT_CLEAR_M)
     if way is None or len(way) < 2:
         return None
     out = way[1]
@@ -124,6 +134,9 @@ class InspectHandler:
         self._leg_plan: SkillPlan | None = None
         self._exits = 0
         self._replans = 0
+        self.steps: StepLook | None = None  # the look straight over the target
+        self.still_ids: list[UUID] = []
+        self.end: InspectEnd | None = None
 
     def plan(self, params: SkillParams, ctx: PlanContext) -> SkillPlan:
         if not isinstance(params, InspectDetectionParams):
@@ -131,6 +144,16 @@ class InspectHandler:
         if params.lat is None or params.lon is None or params.target_radius_m is None:
             raise PlanError("SCHEMA_INVALID", "målets position saknas")
         self._params = params
+        if ctx.charter.overflight_allowed:
+            self.command_id, self.candidate_id = ctx.command_id, params.candidate_id
+            self.steps = StepLook(
+                params=params,
+                command_id=ctx.command_id,
+                start_alt_m=ctx.vehicle.alt_rel_home_m,
+                anchor=LatLon(lat=params.lat, lon=params.lon),
+                radius_m=look_radius_m(params.sigma95_m),
+            )
+            return self.steps.plan(ctx)
         leg = self._next(ctx)
         if leg is None:
             raise PlanError("ONB_INSPECT_GEOMETRY")
@@ -155,6 +178,10 @@ class InspectHandler:
         )
 
     async def start(self, plan: SkillPlan, io: ExecutorIO) -> None:
+        if self.steps is not None:
+            await self.steps.run(io)
+            self.still_ids, self.end = list(self.steps.still_ids), self.steps.end
+            return
         if self.command_id is None or self._ctx is None:
             raise RuntimeError("planned before running")
         while True:
@@ -182,31 +209,43 @@ class InspectHandler:
         await io.sleep(SETTLE_S)
         taken = await take_stills(io, self.command_id, INSPECT_STILLS, INSPECT_STILL_INTERVAL_S)
         self.taken = len(taken)
-        io.emit_event(
-            "inspect_done",
-            {
-                "command_id": str(self.command_id),
-                "candidate_id": str(self.candidate_id),
-                "still_ids": [str(s) for s in taken],
-            },
-        )
+        self.still_ids, self.end = list(taken), "side_look"
         if not taken:
             raise SkillFailedError("ONB_CAMERA_UNAVAILABLE", NO_STILLS)
 
+    def lower(self) -> None:
+        """The pilot said yes to going below the automatic floor (``InspectLower``)."""
+        if self.steps is not None:
+            self.steps.lower()
+
+    def stay(self) -> None:
+        """The pilot said no to going lower (``InspectStay``): the look ends where it is."""
+        if self.steps is not None:
+            self.steps.stay()
+
     def leg_end(self) -> tuple[float, float] | None:
+        if self.steps is not None:
+            return self.steps.leg_end()
         leg = self._leg
         return None if leg is None or self._at_point else (leg.lat, leg.lon)
 
     def exiting(self) -> bool:
+        if self.steps is not None:
+            return False
         return self._leg is not None and self._leg.exit
 
     def climbing(self) -> bool:
+        if self.steps is not None:
+            return self.steps.climbing()
         return self._leg is not None and self._leg.climb
 
     def climb(self, ctx: PlanContext, alt_m: float) -> bool:
         """Straight up to ``alt_m`` from where the drone stops (``from_stop``), flown from
         the next tick; the order then ends in the keep-out hover. False when no leg is
-        flown."""
+        flown. The look straight over the target climbs the same way, then its steps end
+        (``StepLook.climb``)."""
+        if self.steps is not None:
+            return self.steps.climb(ctx, alt_m)
         if self._leg is None or self._at_point:
             return False
         v = ctx.vehicle
@@ -221,6 +260,8 @@ class InspectHandler:
     def replan(self, ctx: PlanContext, allowed: Callable[[list[LatLonAlt]], bool]) -> bool:
         """The leg again from ``ctx`` (a way out when inside a cylinder, else the point),
         flown from the next tick if ``allowed`` takes its path."""
+        if self.steps is not None:
+            return self.steps.replan(ctx)
         if self._leg is None or self._at_point or self._leg.climb:
             return False
         if self._replans >= REPLANS_MAX:
@@ -289,6 +330,10 @@ class InspectHandler:
             self.goto.prepare(ctx, leg.lat, leg.lon, leg.alt_m, leg.speed_ms, yaw_deg=leg.yaw_deg)
 
     def on_tick(self, ctx: TickContext) -> SkillStatus:
+        if self.steps is not None:
+            return SkillStatus(
+                stage="running", progress_pct=min(100.0, 100.0 * self.steps.step / STEPS_MAX)
+            )
         if not self._at_point:
             flown = self.goto.on_tick(ctx).progress_pct or 0.0
             return SkillStatus(stage="running", progress_pct=0.8 * flown)
@@ -298,4 +343,5 @@ class InspectHandler:
         await io.set_mode(CopterMode.LOITER)
 
     def resume_point(self, vehicle: VehicleState) -> ResumePoint | None:
-        return None  # a closer look is ordered again, not resumed
+        return None  # a closer look is ordered again, not resumed; the executor keeps the
+        # point where the search broke off (``executor.inspect``)

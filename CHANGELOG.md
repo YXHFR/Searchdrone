@@ -8,6 +8,38 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Training at our cameras' scales (the owner's decision of 2026-11-03: more real
+  aerial pictures, resampled so people have the pixel sizes our cameras will see):
+  `just train-detector scales=native,wide,tele` also cuts each training picture
+  resampled so its people are as large as the wide Camera Module 3 (about 71 px/m at
+  50 m, a person about 33 px) or the tele (about 230 px/m, a person about 100 px) sees
+  them, each picture at a height drawn between 30 and 60 m. A picture's scale is its
+  set's `px_per_m` in the register (HERIDAL: about 2 cm per pixel) or read off its
+  person boxes, and it is enlarged at
+  most `max_up=2` times, since an enlarged person is blurred. The val and the locked
+  test part are never resampled. The tile builder prints how many people of what size
+  each set gave at each scale.
+- Recall by person size: `just bench-detector` prints, and its result holds
+  (`recall_by_size`, and `by_size` per dataset), the recall in bins of the box's
+  longest side (0-16, 16-24, 24-32, 32-48, 48-64, 64-96, 96-128, 128-192, 192+ px), so
+  the effect of `scales=` can be seen.
+- UIT-Drone4 to train on (Zenodo 14862652, CC BY 4.0, University of Information
+  Technology, VNU-HCM): city traffic in Vietnam filmed from drones at 3840x2160. Every
+  tenth video frame is taken: 1,523 pictures with 7,193 pedestrians, half of them
+  between 36 and 86 px (median 59 px), between our wide and tele cameras' sizes. Its
+  motorcycles are boxed with their riders, who are people but not boxed as persons, so
+  they are kept as ignore regions and a tile that overlaps one is never trained on. It
+  is never measured on: the new split v4 keeps every set of v3 as it was and gives
+  UIT-Drone4 only train and val parts by video. The measurement still reads v3, so
+  results measured before stay comparable.
+
+- A larger person detector to train (the owner's decision of 2026-11-03):
+  `just train-detector model=yolox_m` trains YOLOX-m, started from Megvii's COCO
+  weights (Apache-2.0, fetched and checked by `just detector-fetch only=yolox_m`), with
+  batch 4 by default so it fits an 8 GB graphics card. It exports and is measured like
+  `yolox_s`, and the drone reads it the same way, but each tile costs about 2.8 times
+  the arithmetic (73.8 against 26.8 GFLOPs at 640 px). `init=` from a `yolox_s` run is
+  refused with a plain reason: the two sizes cannot share weights.
 - A photo farm for the person detector (the owner's decision of 2026-11-02: as
   realistic as possible, with the right proportions): `just sim-farm-stills` takes
   still pictures of people at the site with its real trees, without flying. People
@@ -269,6 +301,28 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- The wide stills camera takes its stills at full resolution (the owner's decision of
+  2026-11-03): `[perception]` defaults to 4608 x 2592 at 66 degrees, the Raspberry Pi
+  Camera Module 3 with its standard lens, instead of 1280 x 720. At 50 m that is about
+  71 px per metre (a person 30-35 px across) instead of about 20 (about 10 px). The
+  search plan's camera follows. The simulator renders the stills camera at half its width
+  and height, 2304 x 1296, and the tele camera at the same scale, 2028 x 1520 (a quarter
+  of the pixels, for Gazebo's render time in CI and the sim farm). `sd-onboard` places a
+  smaller still of the camera's shape with the camera's field of view, so the ground a
+  still covers never depends on its pixel count; a still of another shape is refused.
+  Each perception report now says how many tiles the detector cut the still into (45
+  at full resolution, 6 at 1280 x 720). A detector slower than the camera skips stills,
+  as before: each round takes the newest still and removes the older ones. The photo
+  farm has a `profile=cm3` for this camera (not drawn unless asked for).
+- With a detector that takes seconds a still (a CPU on 45 tiles), orders' stills come
+  first: `sd-onboard`'s perception loop never runs two detections at once (a detection an
+  order gave up on still holds the detector until it ends) and starts none of its own
+  while `capture_stills` or a closer look takes stills; a round under way gives way and
+  its stills not yet run are dropped, never reported. How long an order's still and a
+  closer look's round may take follows from the detector's measured time per tile times
+  each camera's tiles (0.5 s a tile until measured, at most 60 s a still; the executor's
+  watchdog at most 300 s). A closer look's rounds of stills do not count in its 180 s
+  (`INSPECT_MAX_S`), up to 180 s of them.
 - The simulator drill (`sd-brain eval --backend sim`), its golden replays, the
   scenario evaluation and `perf-cloud` now ask the cloud model as a real flight does:
   `[llm]`'s sampling (a completion limit of 4096 tokens, not a fixed 512), prompt
@@ -319,8 +373,9 @@ All notable changes to this project are listed here. The format follows
   failed turn. A refused token (401) ends the loop also when the AI's turn or a write
   (a chat line, an order, a charter, the memory, the decision log) meets it, not only on
   the next read. The `backend_decide_failed` and `turn_failed` log lines quote the
-  error's text with `repr`, so it cannot start a log line of its own. A prompt value that is no JSON (a
-  UUID, a datetime) is logged as its text again, as before this change.
+  error's text with `repr`, so it cannot start a log line of its own. A prompt value
+  that is not JSON (a UUID, a datetime) is logged as its text, also when that text
+  holds a lone surrogate.
 - Each cloud call now logs its tokens (`cloud_call`: finish reason, latency, prompt,
   completion and reasoning tokens, the limit), the drill keeps the same numbers with
   each recorded answer, and `perf-cloud` reports the most completion and reasoning
@@ -756,6 +811,11 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- `hardware/drone.yaml` uses the retailer's listed 0.913 kg for the 10 000 mAh 6S2P pack
+  (was 0.87 kg), as the fpv7 CAD already does. `just hw-check` now gives 2.343 kg in all,
+  291 W hover power and 35.6 min hover time; every limit still holds. The SITL frame
+  `sd_quad14.json` follows with `mass` 2.343, and the hwcalc tests read the mass from the
+  file instead of repeating it.
 - The AI commander's search-again rule: the lane spacing never goes below the survey
   tool's 10 m minimum, and the 30 m default and the 10 m floor are filled into the prompt
   from the code. The battery check compares "till hemgräns" with the minutes of a pass,

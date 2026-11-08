@@ -1,15 +1,23 @@
 """Fusion: detections of a target class become candidates (places where someone may be).
 
-A detection joins the nearest active candidate of its class within
+A detection joins the nearest active or confirmed candidate of its class within
 ``FUSION_RADIUS_M + max(sigma_new, sigma_candidate)`` (at most ``FUSION_RADIUS_MAX_M``),
 otherwise it starts a new candidate. A single sighting is never dropped. The position is
 the mean of the sightings weighted by score / sigma^2, and the 95 % radius shrinks with
 more sightings but never below ``SIGMA_MIN_M``.
 
-Confirmed and rejected candidates take no new sightings: a detection next to one starts a
-new candidate (the panel shows it as "near rejected K7"). Two active candidates that end
-up closer than the radius are merged: the older stays, the younger becomes ``merged``
-with ``merged_into`` set; its observations stay where they are. Nothing merges once a
+A confirmed candidate (a find) takes the sightings that join it, as observations, but
+stays where the person confirmed it: its position and radius do not move and it is not
+reopened. A detection near a find is most likely the same person seen again, so it makes
+no new card to decide. The cost: a second person within the fusion radius of a find
+(4 m + sigma, at most 12 m) gets no card of their own, though they are inside the
+find's keep-out cylinder (30 m + sigma) all the same. That holds for the rest of the
+mission, unless the pilot undoes the find: it is then an open candidate again, with the
+sightings it took, for a person to decide anew. Rejected and merged candidates take
+no new sightings: a detection next to a rejected one starts a new candidate (the panel
+shows it as "near rejected K7"). Two active candidates that end up closer than the
+radius are merged: the older stays, the younger becomes ``merged`` with ``merged_into``
+set; its observations stay where they are. Nothing merges once a
 person has decided on either, or while one is being inspected.
 
 A closer look (``inspect_detection``) flies over one candidate and photographs it from
@@ -72,10 +80,12 @@ LOOK_JOIN_MAX_M = 30.0  # = sd_safety.constants.PERSON_KEEPOUT_M (a test checks)
 HUMAN_STATES = frozenset(
     {CandidateState.INSPECTING, CandidateState.CONFIRMED, CandidateState.REJECTED}
 )
-# Candidates that take no new sightings.
+# Candidates fusion no longer changes: no assessment, no refit, no merge.
 CLOSED_STATES = frozenset(
     {CandidateState.CONFIRMED, CandidateState.REJECTED, CandidateState.MERGED}
 )
+# Closed candidates that take no new sightings (a confirmed one still does, unmoved).
+NO_SIGHTINGS_STATES = frozenset({CandidateState.REJECTED, CandidateState.MERGED})
 
 
 @dataclass(frozen=True)
@@ -139,6 +149,10 @@ class Track:
     @property
     def open(self) -> bool:
         return self.state not in CLOSED_STATES
+
+    @property
+    def takes_sightings(self) -> bool:
+        return self.state not in NO_SIGHTINGS_STATES
 
     @property
     def held(self) -> bool:
@@ -211,7 +225,7 @@ class Fusion:
             return Step(target.candidate_id, created=False, distance_m=d)
         best: tuple[float, datetime, str] | None = None
         for t in self.tracks.values():
-            if t.label != s.label or not t.open:
+            if t.label != s.label or not t.takes_sightings:
                 continue
             d = distance_m(t.lat, t.lon, s.lat, s.lon)
             if d <= fusion_radius_m(s.sigma95_m, t.sigma95_m):
@@ -235,6 +249,9 @@ class Fusion:
             return Step(t.candidate_id, created=True, distance_m=0.0, merged=self._merge(t))
         t = self.tracks[best[2]]
         t.sightings.append(s)
+        if t.state is CandidateState.CONFIRMED:  # a find stays where it was confirmed
+            t.last_seen_utc = max(t.last_seen_utc, s.captured_utc)
+            return Step(t.candidate_id, created=False, distance_m=best[0])
         t.refit()
         return Step(t.candidate_id, created=False, distance_m=best[0], merged=self._merge(t))
 

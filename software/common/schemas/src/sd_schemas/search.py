@@ -60,8 +60,10 @@ __all__ = [
     "StoredAssessment",
     "StoredDecision",
     "SubjectCategory",
+    "blocks_text",
     "fusion_radius_m",
     "priority_class",
+    "queue_order",
 ]
 
 Certainty = Literal["certain", "likely", "unsure"]
@@ -289,7 +291,9 @@ class CandidateAssessment(SdModel):
         return value
 
 
-DecisionKind = Literal["confirm", "reject", "inspect", "unsure", "reopen"]
+# "inspect" starts a closer look; "resume" ("Fortsätt söka nu") ends the wait after one
+# and sends the drone back to the search.
+DecisionKind = Literal["confirm", "reject", "inspect", "unsure", "reopen", "resume"]
 
 
 class CandidateDecision(SdModel):
@@ -342,6 +346,22 @@ class CandidateCard(SdModel):
     merged_into: Id | None = None
     first_seen_utc: AwareDatetime
     last_seen_utc: AwareDatetime
+    # An open candidate whose cylinder the search had to go around: the metres of search
+    # left out there (the most of any route). Its class is high and it is first in the
+    # queue, whatever its priority, until a person decides it: a possible person nobody
+    # has looked at keeps that part of the area unsearched.
+    blocks_survey_m: float | None = Field(default=None, ge=0)
+
+
+def queue_order(card: CandidateCard) -> tuple[bool, float, int]:
+    """The queue's order: candidates that block the search first, then by priority
+    (highest first), then by display number."""
+    return (card.blocks_survey_m is None, -card.priority, card.seq)
+
+
+def blocks_text(skipped_m: float) -> str:
+    """The reason the panel and the AI show for a candidate that blocks the search."""
+    return f"blockerar sökningen, {round(skipped_m)} m bana hoppad"
 
 
 # --- the search service's API (/search/v1) ------------------------------------------------
@@ -401,7 +421,9 @@ class CandidateRevision(SdModel):
     """A new candidate (``base_rev`` 0) or the next revision of one, from the search
     service. It may set ``new``, ``assessing``, ``ready`` or ``merged``; ``state`` None keeps
     the state in force (a candidate a person or the pilot holds). Confirmed and rejected
-    are a person's and are refused here (E1)."""
+    are a person's and are refused here (E1). A confirmed candidate takes only new
+    observations (``state`` None, no assessment): the ground keeps its position, radius,
+    scores and priority."""
 
     candidate_id: Id
     base_rev: int = Field(ge=0)  # the rev this one follows; 0 = a new candidate

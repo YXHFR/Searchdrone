@@ -87,6 +87,7 @@ def test_kind_models_cover_the_catalogue() -> None:
         "KeepoutInstall",
         "InspectOutcome",
         "InspectLower",
+        "InspectStay",
     }
     assert set(link.KIND_MODELS) >= link.RELIABLE_KINDS
     assert link.RELIABLE_KINDS >= link.TTL_REQUIRED_KINDS

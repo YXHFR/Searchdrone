@@ -46,6 +46,8 @@ TABLES = {
     "cloud_usage",
     # 0006_candidate_views
     "candidate_views",
+    # 0007_inspections
+    "inspections",
 }
 APPEND_ONLY = ("events", "gate_decisions", "chat_messages", "brain_decisions")
 
@@ -76,7 +78,7 @@ def test_roundtrip(fresh_db: Db) -> None:
     assert _tables(db) == TABLES
     assert "3.6" in db.run("SELECT postgis_full_version() AS v")[0]["v"]
     head = db.run("SELECT version_num FROM alembic_version", role="sd_app")
-    assert [r["version_num"] for r in head] == ["0006_candidate_views"]
+    assert [r["version_num"] for r in head] == ["0008_floor_pack_choice"]
 
 
 def test_app_role_has_no_delete_anywhere(migrated_db: Db) -> None:

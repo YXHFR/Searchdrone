@@ -3,10 +3,29 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
+import check_owner_gate
 import pytest
+
+# The paths that needed owner-ok until the owner turned it off (2026-11-04). The gate tests
+# run against this example list, so the mechanism stays tested while PROTECTED is empty.
+EXAMPLE_PROTECTED = (
+    re.compile(r"^hardware/", re.IGNORECASE),
+    re.compile(r"^\.github/CODEOWNERS$"),
+    re.compile(r"^tools/accept/pr_gate_exceptions\.txt$"),
+    re.compile(
+        r"^tools/(check_merged_pr_gates|workflow_rules|check_owner_gate|check_review_comments)\.py$"
+    ),
+    re.compile(r"^\.github/workflows/(review-gate|owner-gate|pr-title|release)\.yml$"),
+)
+
+
+@pytest.fixture(autouse=True)
+def example_protected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(check_owner_gate, "PROTECTED", EXAMPLE_PROTECTED)
 
 
 class GitRepo:

@@ -84,6 +84,10 @@ class TransitionCtx(NamedTuple):
     fc_home_mode: bool  # flight controller in RTL or SMART_RTL per the latest HEARTBEAT
 
 
+# "watchdog_rtl": the companion watchdog no longer flies home (it only stops; see
+# ``sd_ground.mav.companion_watchdog``) and never sets it. It stays so a latch stored or
+# adopted from an onboard Hello before that change still reads, and is handled as a
+# FLY HOME latch (released the same way).
 LatchAction = Literal["stop", "return_home", "battery_rtl", "watchdog_stop", "watchdog_rtl"]
 
 

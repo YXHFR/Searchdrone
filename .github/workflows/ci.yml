@@ -68,7 +68,7 @@ jobs:
 
   contract:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -104,7 +104,7 @@ jobs:
               | jq -e '.assignments.unbuilt.value | split(" ") | index("test-panel-e2e")' >/dev/null; then
             echo "hoppar över test-panel-e2e (inte byggt än)"
           else
-            pnpm --filter @searchdrone/panel exec playwright install --with-deps chromium firefox webkit
+            bash tools/ci/playwright-install.sh chromium firefox webkit
             just test-panel-e2e
           fi
       - name: No orthophotos in the screenshots
@@ -139,7 +139,7 @@ jobs:
       - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
       - name: Panel screenshots
         run: |
-          pnpm --filter @searchdrone/panel exec playwright install --with-deps chromium
+          bash tools/ci/playwright-install.sh chromium
           just panel-screens
       - name: No orthophotos in the screenshots
         id: ortho

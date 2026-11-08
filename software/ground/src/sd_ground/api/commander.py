@@ -528,6 +528,31 @@ def to_commander(event: BusEvent) -> dict[str, Any] | None:
             for k in ("command_id", "skill", "status", "reason_codes", "message_sv", "details")
         }
         body["command_id"] = d.get("id")
+        sector_id = (d.get("params") or {}).get("sector_id")
+        if sector_id is not None:
+            body["sector_id"] = sector_id  # which sector's search ended
+    elif event.type == "inspection.closed" or (
+        event.type == "inspection.resume_ended" and d.get("issuer_kind") == "brain"
+    ):
+        # A look's end ("closed"; every look, the pilot's too: the AI's moves were refused
+        # with INSPECT_BUSY until it; ``issuer_kind`` says whether the look or the search
+        # flown on is the AI's) and the end of the AI's search flown on after a look (that
+        # search's own order), as skill events (``services.inspections``).
+        kind = "event.skill"
+        body = {
+            k: d.get(k)
+            for k in (
+                "command_id",
+                "skill",
+                "status",
+                "reason_codes",
+                "message_sv",
+                "details",
+                "issuer_kind",
+            )
+        }
+        if d.get("sector_id") is not None:
+            body["sector_id"] = d["sector_id"]
     elif event.type == "charter.updated":
         kind = "event.charter"
         body = {
@@ -600,8 +625,12 @@ def to_commander(event: BusEvent) -> dict[str, Any] | None:
             return None
         kind, body = "event.candidate", wake
     elif event.type == "candidate.decided":
-        # A person's decision, without who made it or their note.
+        # A person's decision, without who made it or their note. An observer's mark
+        # during a look is only a note for the pilot (owner decision: during a look only
+        # the pilot moves the drone), so it never wakes the AI as a decision.
         decision = d.get("decision") or {}
+        if decision.get("noted"):
+            return None
         kind = "event.candidate_decided"
         body = {
             "candidate_id": d.get("candidate_id"),

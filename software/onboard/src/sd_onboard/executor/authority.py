@@ -10,18 +10,22 @@ message that steers is only sent when every one of these holds:
    is the expected one (or the one we are changing to);
 4. no other mode change of ours waits for its confirmation (``set_mode`` waits).
 
-A switch to AUTO of ours that the flight controller accepted and that was cancelled
-before a HEARTBEAT showed it (a reroute that replaces the one switching to AUTO) is still
-ours until that switch's own confirm deadline (``LateMode``): the flight controller may
-have taken it, and a HEARTBEAT showing AUTO then is our own doing, not a takeover. It
-becomes the expected mode. Only AUTO: the executor never steers by holding a mode, so a
-LOITER, BRAKE, RTL or LAND the drone was not asked for is always a person's or a
-failsafe's. It ends at once with a notice from the ground, a change from outside, a hold
-the executor enters itself, the RC mode switch moving, any HEARTBEAT received after its
-own answer that shows another mode (the flight controller was in AUTO when it answered, so
-it left it), or any HEARTBEAT received after the answer that settled a newer mode command
-of ours: the flight controller handles commands in order, so a HEARTBEAT received after
-that answer left after the command was handled, and AUTO in it is from outside. A lost
+A switch to AUTO or LOITER of ours that the flight controller accepted and that was
+cancelled before a HEARTBEAT showed it (a reroute that replaces the one switching to AUTO;
+a closer look's step that ends in LOITER, cut short by the link-loss climb or FLY HOME) is
+still ours until that switch's own confirm deadline (``LateMode``): the flight controller
+may have taken it, and a HEARTBEAT showing that mode then is our own doing, not a
+takeover. It becomes the expected mode. A person's switch to the same mode in that window
+changes nothing the flight controller does (it is in that mode already: a HEARTBEAT after
+the answer that shows another mode ends the window), and one after a newer answer of ours
+is a takeover again. Only these two (``LATE_MODES``): a BRAKE, RTL, SMART_RTL, LAND or
+GUIDED the drone was not asked for is always a person's or a failsafe's. It ends at once
+with a notice from the ground, a change from outside, a hold the executor enters itself,
+the RC mode switch moving, any HEARTBEAT received after its own answer that shows another
+mode (the flight controller was in the late mode when it answered, so it left it), or any
+HEARTBEAT received after the answer that settled a newer mode command of ours: the flight
+controller handles commands in order, so a HEARTBEAT received after that answer left
+after the command was handled, and the late mode in it is from outside. A lost
 answer whose mode a HEARTBEAT already shows counts as received with that HEARTBEAT.
 "After" is the order the messages were received in, never a time: two messages can share
 a millisecond. The vehicle records each answer as it is received and every HEARTBEAT
@@ -30,6 +34,17 @@ showed another mode (``other_mode_seq``), so it holds before the executor runs a
 After AUTO was taken as ours the RC mode switch is still watched for ``RC_RECHECK_MS``
 past that (or to the deadline): a pilot's RC AUTO whose HEARTBEAT came before the next
 RC_CHANNELS sample is then a takeover after all.
+
+Assumed: the link delivers the flight controller's messages in the order it sent them
+(one serial or radio link to it). Were they reordered, a GUIDED HEARTBEAT sent before the
+AUTO answer but received after it would end the late AUTO, and the AUTO that shows next
+would be taken as a takeover: a false hold, never a takeover taken as ours.
+
+Known residual: a newer mode command of ours whose answer is lost, then a GCS switch to
+AUTO before any HEARTBEAT showed our change. Nothing received yet tells that the late AUTO
+is over, so that AUTO is taken as ours. It is bounded by the late record's deadline (at
+most ``MODE_CONFIRM_TIMEOUT_S`` after the answer, 2 s) and to AUTO, and an RC takeover is
+always caught: the mode switch moving ends the record, and it is watched after adoption.
 
 A mode change nobody here asked for suspends control at once (HELD, ``external``). A
 failsafe signal up to 2 s before or after it makes it FAILSAFE instead; a notice from the
@@ -52,7 +67,9 @@ _WINDOW_MS: Final = int(OVERRIDE_NOTICE_WINDOW_S * 1000)
 _FRESH_MS: Final = int(MODE_FRESH_S * 1000)
 # RC_CHANNELS comes at 4 Hz: after a late AUTO is taken, this long covers several samples.
 RC_RECHECK_MS: Final = 1000
-LATE_MODES: Final = frozenset({CopterMode.AUTO})  # the only modes a late HEARTBEAT may show
+# The only modes a late HEARTBEAT may show: AUTO (a reroute) and LOITER (a closer look
+# holds between its steps in LOITER, and the link-loss climb or FLY HOME may cut that short).
+LATE_MODES: Final = frozenset({CopterMode.AUTO, CopterMode.LOITER})
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,8 +120,8 @@ class Authority:
         self, mode: CopterMode, until_ms: int, rc_mode_pwm: int | None, answer_seq: int
     ) -> None:
         """A switch the flight controller accepted, cancelled before a HEARTBEAT showed it:
-        it may show until ``until_ms``, that switch's own confirm deadline. Only AUTO
-        (``LATE_MODES``); any other mode that shows later is not taken as ours.
+        it may show until ``until_ms``, that switch's own confirm deadline. Only AUTO and
+        LOITER (``LATE_MODES``); any other mode that shows later is not taken as ours.
         ``answer_seq`` is the receive order of the answer that accepted it."""
         late = LateMode(mode, until_ms, rc_mode_pwm, answer_seq)
         self.late = late if mode in LATE_MODES else None
@@ -121,6 +138,7 @@ class Authority:
         if late is None:
             return None
         moved = switch_moved(late.rc_mode_pwm, t.rc_mode_pwm)
+        # Receive order stands for send order: the link does not reorder (module docstring).
         after_newer = t.mode_answer_seq is not None and t.mode_answer_seq > late.answer_seq
         # The flight controller was in the late mode when it sent that answer: a HEARTBEAT
         # received after it that showed another mode means it left it, so the mode showing

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 from pydantic import Field
 
@@ -20,6 +21,7 @@ from sd_schemas.base import (
 )
 from sd_schemas.charter import AutonomyMode, MissionCharter
 from sd_schemas.executor import ExecutorState
+from sd_schemas.inspect import FloorReason
 from sd_schemas.keepout import Keepout
 from sd_schemas.mission import MissionState, OperatorLatch, PausedBy, ReturningCause
 from sd_schemas.safety import SafetyLimits
@@ -31,6 +33,7 @@ __all__ = [
     "ClearanceState",
     "GateContext",
     "GateDecision",
+    "GateFloor",
     "GateRequest",
     "StateRef",
 ]
@@ -62,6 +65,9 @@ class GateRequest(SdModel):
     phase: Literal["submit", "approve", "estimate", "onboard"]
     approval_confirmations: list[str] = Field(default_factory=list[str])  # phase approve: ticked
     planned_path: list[LatLonAlt] | None = None  # onboard: the handler's path; ground: None
+    # onboard: the speed the handler flies the path at (a search route's passage through
+    # unconfirmed cylinders is counted at it, ``sd_safety.keepout.passage_for``); ground: None
+    planned_speed_ms: float | None = Field(default=None, gt=0, le=100)
 
 
 class ClearanceState(SdModel):
@@ -74,6 +80,16 @@ class ClearanceState(SdModel):
     received_mono_ms: int  # monotonic time of the click (ground) or of receipt (onboard)
     valid_for_ms: int = Field(gt=0, le=CLEARANCE_VALID_MS)
     consumed: bool
+
+
+class GateFloor(SdModel):
+    """The height floor along an order's path (``sd_safety.floor``), worked out by the
+    caller from the map pack (the gate reads no files): the highest floor in force on the
+    path, above sea level. The ground counts without the laser (the auto floor); onboard
+    the executor passes the floor its step is checked against."""
+
+    floor_amsl_m: float = Field(ge=-500, le=9000)
+    reason: FloorReason
 
 
 class GateContext(SdModel):
@@ -113,6 +129,22 @@ class GateContext(SdModel):
     # The keep-out cylinders in force (onboard: the ground's and its own; ground: the list
     # it installs). No route may enter one (R-KEEPOUT).
     keepouts: tuple[Keepout, ...] = ()
+    # Onboard: how long the drone has been inside each unconfirmed cylinder it is in now
+    # (seconds, by keepout_id). A search route that starts inside one continues the pass
+    # the drone is on and counts that time; one not listed may only be left without
+    # going deeper (``sd_safety.keepout.passes``). Ground: empty.
+    keepout_inside_s: Mapping[Id, float] = Field(default_factory=dict[UUID, float])
+    # The closer look (inspect_detection). Cylinders a look may fly over: its own
+    # candidate's, in sim and exercise or live with the permit (R-KEEPOUT skips them).
+    suspended_keepout_ids: tuple[Id, ...] = ()
+    # The order of a look in progress or waiting for the pilot's decision: another look is
+    # refused (R-INSPECT-ONE).
+    inspect_active: Id | None = None
+    # Ground: the candidates a look may start on (ready or assessing). None where the
+    # candidates are not known (onboard): R-INSPECT-TARGET is the ground's.
+    inspectable_candidates: tuple[Id, ...] | None = None
+    # The height floor along the order's path; None: not worked out (R-FLOOR, R-FLOOR-CEIL).
+    floor: GateFloor | None = None
 
 
 class GateDecision(SdModel):

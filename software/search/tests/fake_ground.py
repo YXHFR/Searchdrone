@@ -122,8 +122,33 @@ class FakeGround:
                 seq = 1 + max((v[0].seq for v in staged.values()), default=0)
                 state = CandidateState(r.state)
             else:
-                if not prev or prev[-1].rev != r.base_rev or prev[-1].state in CLOSED:
-                    raise ConflictError("stale or closed", 409)
+                found = (  # a confirmed find takes observations only, and stays put
+                    prev is not None
+                    and prev[-1].state is CandidateState.CONFIRMED
+                    and r.state is None
+                    and r.merged_into is None
+                    and r.assessment is None
+                    and bool(r.observations)
+                )
+                if not prev or prev[-1].rev != r.base_rev:
+                    raise ConflictError("stale", 409)
+                if prev[-1].state in CLOSED and not found:
+                    raise ConflictError("closed", 409)
+                if found:
+                    p = prev[-1]
+                    r = r.model_copy(
+                        update={
+                            "lat": p.lat,
+                            "lon": p.lon,
+                            "sigma95_m": p.sigma95_m,
+                            "n_seen": max(p.n_seen, r.n_seen),
+                            "best_detector_score": p.best_detector_score,
+                            "refined_person_score": p.refined_person_score,
+                            "priority": p.priority,
+                            "first_seen_utc": p.first_seen_utc,
+                            "last_seen_utc": max(p.last_seen_utc, r.last_seen_utc),
+                        }
+                    )
                 if r.state is not None and prev[-1].state is CandidateState.INSPECTING:
                     raise ConflictError("held", 409)
                 seq = prev[-1].seq

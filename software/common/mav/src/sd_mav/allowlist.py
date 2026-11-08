@@ -22,8 +22,9 @@ What                                   Allowed
                                        ``0 <= yaw < 2 pi``), ``0 <= alt <= max``, within
                                        the fence radius from home
 ``DO_CHANGE_SPEED`` (178)              ``param1 = 1``, ``0 < param2 <= max``, ``param3 = -1``
-``MISSION_COUNT``, ``MISSION_ITEM_INT``  mission type 0, commands 16, 178, 19, 20 with the
-                                       same number checks
+``MISSION_COUNT``, ``MISSION_ITEM_INT``  mission type 0, commands 16, 178 and 17 (the
+                                       hover with no end; param1..4 = 0) with the same
+                                       number checks
 ``MISSION_REQUEST_LIST``/``_INT``,     mission type 0 or 1 (1 = read the fence back)
 ``MISSION_ACK``
 ``DO_SET_MISSION_CURRENT`` (224),      a mission index
@@ -153,8 +154,7 @@ _MISSION_COMMANDS: Final = frozenset(
     {
         mavlink.MAV_CMD_NAV_WAYPOINT,  # 16
         mavlink.MAV_CMD_DO_CHANGE_SPEED,  # 178
-        mavlink.MAV_CMD_NAV_LOITER_TIME,  # 19
-        mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH,  # 20
+        mavlink.MAV_CMD_NAV_LOITER_UNLIM,  # 17: the hover that ends a search, no return
     }
 )
 _GROUND_MODES: Final = STOP_MODES | HOME_MODES
@@ -517,29 +517,21 @@ def _mission_item(msg: Any, ctx: SendContext) -> str | None:
 def _mission_item_numbers(
     cmd: int, frame: int, seq: int, params: list[float], msg: Any, ctx: SendContext
 ) -> str | None:
-    if cmd in (mavlink.MAV_CMD_NAV_WAYPOINT, mavlink.MAV_CMD_NAV_LOITER_TIME):
+    if cmd in (mavlink.MAV_CMD_NAV_WAYPOINT, mavlink.MAV_CMD_NAV_LOITER_UNLIM):
         if seq == 0:  # the home slot; ArduPilot overwrites it with its home position
             if cmd != mavlink.MAV_CMD_NAV_WAYPOINT or frame != mavlink.MAV_FRAME_GLOBAL:
                 return "mission item 0 must be the home waypoint in the global frame"
             return None
         if frame not in _REL_ALT_FRAMES:
             return f"frame {frame} not allowed for a waypoint"
-        if cmd == mavlink.MAV_CMD_NAV_WAYPOINT and any(v != 0 for v in params):
-            return "waypoint needs param1..4 = 0"
-        if cmd == mavlink.MAV_CMD_NAV_LOITER_TIME:
-            loiter = _int(params[0])
-            if loiter is None or not 0 <= loiter <= 3600 or any(v != 0 for v in params[1:]):
-                return "loiter time needs 0..3600 s and param2..4 = 0"
+        if any(v != 0 for v in params):
+            return "waypoint and hover need param1..4 = 0"
         return _alt_ok(float(msg.z), ctx) or _within_fence(int(msg.x), int(msg.y), ctx)
-    if frame != mavlink.MAV_FRAME_MISSION or seq == 0:
-        return "speed and return items use the mission frame and never index 0"
+    if frame != mavlink.MAV_FRAME_MISSION or seq == 0:  # DO_CHANGE_SPEED
+        return "speed items use the mission frame and never index 0"
     if int(msg.x) != 0 or int(msg.y) != 0 or float(msg.z) != 0:
-        return "speed and return items carry no position"
-    if cmd == mavlink.MAV_CMD_DO_CHANGE_SPEED:
-        return _speed_ok(params[0], params[1], params[2], params[3], ctx)
-    if any(v != 0 for v in params):  # NAV_RETURN_TO_LAUNCH
-        return "return item needs param1..4 = 0"
-    return None
+        return "speed items carry no position"
+    return _speed_ok(params[0], params[1], params[2], params[3], ctx)
 
 
 def _mission_read(msg: Any, ctx: SendContext) -> str | None:

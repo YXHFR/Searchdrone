@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
+import numpy as np
 from PIL import Image
 
 from sd_detect import ClassRegistry, Detection, Frame, __version__, keep_plausible
@@ -71,7 +72,9 @@ def crop_jpeg(frame: Frame, d: Detection) -> tuple[BBox, bytes, int, int]:
     x0 = int(min(max(0, cx - side / 2), max(0, frame.width - side)))
     y0 = int(min(max(0, cy - side / 2), max(0, frame.height - side)))
     x1, y1 = min(frame.width, x0 + side), min(frame.height, y0 + side)
-    img = Image.frombytes("RGB", (frame.width, frame.height), frame.rgb).crop((x0, y0, x1, y1))
+    # Only the square is copied out of the still (a full 12 MP still is 36 MB).
+    pixels = np.frombuffer(frame.rgb, dtype=np.uint8).reshape(frame.height, frame.width, 3)
+    img = Image.fromarray(np.ascontiguousarray(pixels[y0:y1, x0:x1]))
     img.thumbnail((THUMB_PX, THUMB_PX))
     out = io.BytesIO()
     img.save(out, format="JPEG", quality=80)  # no EXIF: nothing but the pixels
@@ -92,8 +95,14 @@ def process(
     latency_ms: float,
     rate_hz: float,
     command_id: UUID | None = None,
+    inspect_step: int | None = None,
+    tiles: int = 1,
 ) -> Perception | None:
-    """``None`` when the camera's view does not reach the ground (no footprint)."""
+    """``None`` when the camera's view does not reach the ground (no footprint).
+    ``camera`` must have the still's size (``PinholeCamera.scaled``); ``tiles``: how many
+    tiles the detector cut the still into."""
+    if (camera.width_px, camera.height_px) != (frame.width, frame.height):
+        raise ValueError("the camera model must have the still's size")
     att = Attitude(pose.roll_deg, pose.pitch_deg, pose.yaw_deg)
     h = pose.agl_m
     corners = footprint(camera, att, h)
@@ -142,6 +151,7 @@ def process(
     report = PerceptionReport(
         still_id=still_id,
         command_id=command_id,
+        inspect_step=inspect_step,
         captured_utc=captured_utc,
         sensor="rgb",
         pose=StillPose(
@@ -166,7 +176,7 @@ def process(
             version=__version__,
             placement="onboard",
             ok=True,
-            tiles=1,
+            tiles=max(0, tiles),
             latency_ms=round(max(0.0, latency_ms), 1),
             rate_hz=round(max(0.0, rate_hz), 3),
         ),

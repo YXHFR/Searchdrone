@@ -19,7 +19,7 @@ import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import httpx
 from sqlalchemy import URL
@@ -54,6 +54,9 @@ from sd_schemas.link import (
     ClearanceConfirmation,
     Hello,
     HelloAck,
+    InspectLower,
+    InspectOutcome,
+    InspectStay,
     KeepoutInstall,
     OperatorOverrideNotice,
     OperatorRelease,
@@ -94,8 +97,13 @@ class FakeOnboard:
     held_by: str | None = None
     stop_latch: bool = False
     accept_charters: bool = True
-    order_outcome: str = "done"  # or "running" (stays), "rejected"
+    order_outcome: str = "done"  # or "running" (stays), "rejected", "silent" (no ack)
     reject_gate: Any = None  # with "rejected": the onboard gate's own decision
+    refuse_while_held: bool = False  # as the executor: an order while HELD, ONB_CONTROL_HELD
+    # Resume's OperatorRelease: "release" (let go, then "done"), "refuse" (stays HELD,
+    # "rejected"), "silent" (stays HELD, no answer) or "ack_held" ("done", but no
+    # snapshot ever shows it let go)
+    release_reply: Literal["release", "refuse", "silent", "ack_held"] = "release"
     battery_rtl_active: bool = False  # the onboard battery rule flies home
     rc_link: bool | None = None  # PF12 (None: not required, as in SITL and CI)
     boot_id: int = 1
@@ -109,8 +117,14 @@ class FakeOnboard:
     keepout_seq: int = -1  # as the executor: a lower install_seq is refused (stale)
     position: tuple[float, float] | None = None  # None: at home
     alt_rel_home_m: float = 0.0
+    # The running order as the executor's snapshot names it: its id only once the order
+    # was acked (never for the executor's own resume after a look, ``own_resume``), its
+    # skill always.
     active_command_id: Any = None
+    active_skill: str | None = None
     progress_pct: float | None = None
+    inspect: Any = None  # a closer look's progress (InspectProgress) in the snapshots
+    looks: list[Any] = field(default_factory=list[Any])  # the answers to a closer look
     session: LinkSession | None = None
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
     _tasks: list[asyncio.Future[Any]] = field(default_factory=list[asyncio.Future[Any]])
@@ -121,6 +135,15 @@ class FakeOnboard:
         self.executor_state = state
         for k, v in kw.items():
             setattr(self, k, v)
+
+    def own_resume(self) -> None:
+        """As the executor after a look: it flies on by its own resume, which it never
+        acks, so its state names the resume by skill only (no ``active_command_id``)."""
+        self.active_command_id, self.active_skill = None, "resume"
+
+    def idle(self) -> None:
+        """No order runs onboard."""
+        self.active_command_id, self.active_skill = None, None
 
     def restart(self) -> None:
         """After ``close``: the next ``start`` connects again (a new SD-link session)."""
@@ -161,7 +184,7 @@ class FakeOnboard:
                 "heading_deg": 0.0,
                 "battery_pct": 95.0,
                 "active_command_id": self.active_command_id,
-                "active_skill": None,
+                "active_skill": self.active_skill,
                 "progress_pct": self.progress_pct,
                 "resume_available": False,
                 "charter_id": None if charter is None else charter.charter_id,
@@ -174,6 +197,7 @@ class FakeOnboard:
                 "battery_rtl_active": self.battery_rtl_active,
                 "sector_progress": {},
                 "tick_ms_p95": 5.0,
+                "inspect": self.inspect,
             }
         )
 
@@ -247,6 +271,11 @@ class FakeOnboard:
             await session.ack(inbound.envelope.msg_id, "done")
         elif isinstance(body, SkillCommand):
             self.orders.append(body)
+            if self.refuse_while_held and self.executor_state is ExecutorState.HELD:
+                await session.ack(body.command_id, "rejected", reason_codes=["ONB_CONTROL_HELD"])
+                return
+            if self.order_outcome == "silent":
+                return  # the answer is late: the test acks it itself
             if self.order_outcome == "rejected":
                 codes = (
                     ["ONB_STALE_ORDER"]
@@ -259,10 +288,10 @@ class FakeOnboard:
                 return
             await session.ack(body.command_id, "accepted")
             await session.ack(body.command_id, "running")
-            self.active_command_id = body.command_id
+            self.active_command_id, self.active_skill = body.command_id, body.skill
             if self.order_outcome == "done":
                 await session.ack(body.command_id, "done")
-                self.active_command_id = None
+                self.idle()
         elif isinstance(body, OperatorOverrideNotice):
             self.notices.append(body)
             if body.kind in ("stop", "watchdog_stop"):
@@ -270,8 +299,19 @@ class FakeOnboard:
                 self.set_state(ExecutorState.HELD, held_by="operator_stop")
         elif isinstance(body, OperatorRelease):
             self.notices.append(body)
-            self.stop_latch = False
-            self.set_state(ExecutorState.HOLD, hold_reason="operator_released", held_by=None)
+            if self.release_reply == "refuse":
+                await session.ack(
+                    inbound.envelope.msg_id, "rejected", reason_codes=["ONB_STALE_ORDER"]
+                )
+                return
+            if self.release_reply == "release":
+                self.stop_latch = False
+                self.set_state(ExecutorState.HOLD, hold_reason="operator_released", held_by=None)
+            if self.release_reply != "silent":
+                await session.ack(inbound.envelope.msg_id, "done")
+        elif isinstance(body, InspectOutcome | InspectLower | InspectStay):
+            self.looks.append(body)
+            await session.ack(inbound.envelope.msg_id, "done")
 
 
 @dataclass
@@ -367,9 +407,11 @@ class Rig:
             headers=H,
         )
 
-    async def ready_mission(self, half: float = 150.0, **proposal: Any) -> str:
-        """Open, propose (as the pilot, with ``proposal``'s fields), approve: READY with
-        fence and install."""
+    async def ready_mission(
+        self, half: float = 150.0, *, mode: str | None = None, **proposal: Any
+    ) -> str:
+        """Open, propose (as the pilot, with ``proposal``'s fields), approve (in the
+        operation ``mode`` when given): READY with fence and install."""
         mid = await self.open_mission()
         res = await self.panel.post(
             f"/api/v1/missions/{mid}/charters",
@@ -378,7 +420,8 @@ class Rig:
         )
         assert res.status_code == 201, res.text
         charter = res.json()
-        res = await self.approve(str(charter["approval_id"]), charter["version"])
+        extra = {} if mode is None else {"operation_mode": mode}
+        res = await self.approve(str(charter["approval_id"]), charter["version"], **extra)
         assert res.status_code == 200, res.text
         await self.wait_status(mid, "READY", 30)
         await self.wait_snapshot(ExecutorState.PREFLIGHT)

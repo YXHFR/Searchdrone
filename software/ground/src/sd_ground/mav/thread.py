@@ -630,9 +630,9 @@ class GroundMav:
         if action == "watchdog_stop":
             self._on_event("vehicle.onboard_silent", "warning", {})
             self._system_action(self.vehicle_id, action, None)
-        elif action == "watchdog_rtl":
-            self._on_event("vehicle.onboard_silent_rtl", "critical", {})
-            self._system_action(self.vehicle_id, action, None)
+            if fresh_mode == CopterMode.AUTO:  # the search stops here, or at its end
+                t = snap.telemetry
+                self.mission_end.raise_alarm(t.mission_seq_current, t.mission_total)
 
     def energy_short(self, short: bool) -> None:
         """The wind check's ``ENERGY_HOME`` (``sd_ground.services.wind``): the battery

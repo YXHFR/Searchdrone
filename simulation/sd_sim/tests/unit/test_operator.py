@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
 
+from sd_schemas.search import queue_order
 from sd_sim.operator import OperatorError, ScriptedOperator
 
 SIM = {"SD_SIM": "1"}
@@ -178,3 +180,24 @@ def test_approves_the_profile_against_what_the_card_showed() -> None:
     post = next(c for c in panel.calls if c[0] == "POST")
     assert post[2] == {"profile": {"subject_category": "hiker"}, "base_version": 0,
                        "proposal_id": "p1"}  # fmt: skip
+
+
+def test_reviews_first_a_low_target_that_blocks_the_search_and_confirms_it() -> None:
+    """SK01 seed 3: the target, seen once at a lane's end, is low (0.19) behind many medium
+    false alarms, and the search went around its cylinder. The ground puts it first
+    (``queue_order``), so the operator reviews it before them and confirms the find."""
+    target = card("t", 10, "ready", 1.0) | {"priority": 0.19, "blocks_survey_m": 71.4}
+    noise = [card(f"n{i}", i, "ready", -1.0, cls="medium") | {"priority": 0.4} for i in range(1, 9)]
+    every = [*noise, target]
+
+    def ground_order(c: dict[str, Any]) -> tuple[bool, float, int]:
+        """The ground's order, from the card's fields."""
+        fields = SimpleNamespace(**({"blocks_survey_m": None} | c))
+        return queue_order(fields)  # type: ignore[arg-type]
+
+    panel = Panel(sorted(every, key=ground_order))
+    op = make(panel)
+    d = asyncio.run(op.review_once())
+    assert d is not None and (d.candidate_id, d.decision) == ("t", "confirm")
+    assert op.confirmed is not None and op.confirmed.thing == "target"
+    assert op.target_first_rank == 1

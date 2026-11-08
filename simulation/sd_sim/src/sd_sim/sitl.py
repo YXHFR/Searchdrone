@@ -4,7 +4,7 @@ Every serial port SITL uses is a ``udpclient`` to 127.0.0.1, so SITL opens no TC
 for them (its default for serial0 is a TCP listener on all addresses that also makes
 SITL wait for a connection). In ArduPilot 4.7.1 serial3 and serial4 are the simulated
 GPS receivers and there is no serial9, so those are never overridden. The optional
-QGroundControl link therefore uses serial5.
+QGroundControl link therefore uses serial5, and the optional simulated laser serial6.
 """
 
 from __future__ import annotations
@@ -21,6 +21,8 @@ from sd_sim.errors import InfraError
 # ArduPilot's public SITL site (CMAC). Never a private address.
 CMAC_HOME = "-35.363261,149.165230,584.0,353"
 QGC_SERIAL = "--serial5"
+# The simulated laser pointing down (sd_sim.rangefinder) talks MAVLink on serial6.
+RANGEFINDER_SERIAL = "--serial6"
 # The project's parameter layers, loaded after every generated layer: the safety
 # parameters (failsafes, fence, battery) and the vehicle's sim-only parameters. Both are
 # required: a missing layer stops the start instead of silently flying without it.
@@ -155,6 +157,7 @@ class SitlOptions:
     speedup: int = 1
     home: str = CMAC_HOME
     qgc: bool = False
+    rangefinder: bool = False  # the simulated laser on serial6 (rangefinder=tf02|grf250)
 
 
 def build_sitl_argv(opts: SitlOptions, ports: dict[str, int], layout: SitlLayout) -> list[str]:
@@ -190,6 +193,8 @@ def build_sitl_argv(opts: SitlOptions, ports: dict[str, int], layout: SitlLayout
     ]
     if opts.qgc and opts.instance == 0:
         argv += [QGC_SERIAL, f"udpclient:127.0.0.1:{ports['qgc_mavlink']}"]
+    if opts.rangefinder:
+        argv += [RANGEFINDER_SERIAL, f"udpclient:127.0.0.1:{ports['rangefinder_mavlink']}"]
     return argv
 
 

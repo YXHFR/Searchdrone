@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pymavlink.dialects.v20 import ardupilotmega as mavlink
 from stop_helpers import PILOT, VID, stack
 
 from sd_ground.mav.companion_watchdog import CompanionWatchdog, WatchInput
+from sd_ground.mav.mission_end_watch import FALLBACK_GRACE_MS
 from sd_ground.services.vehicle_actions import OperatorPresence
 from sd_mav.modes import HOME_MODES, STOP_MODES, CopterMode
 
@@ -27,13 +29,14 @@ def test_watchdog_phases_pure() -> None:
     assert w.tick(_inp(2.9, CopterMode.GUIDED)) is None
     assert w.tick(_inp(3.0, CopterMode.GUIDED)) == "watchdog_stop"
     assert w.phase == "stopped"
-    for t in (3.1, 10.0, 19.9):  # its own BRAKE: nothing more until 20 s
-        assert w.tick(_inp(t, CopterMode.BRAKE)) is None
-    assert w.tick(_inp(20.0, CopterMode.BRAKE)) == "watchdog_rtl"
-    assert w.phase == "rtl"
-    assert w.tick(_inp(25.0, CopterMode.SMART_RTL)) is None
+    for t in (3.1, 10.0, 20.0, 60.0, 600.0):  # its own BRAKE: it hovers, never home
+        for mode in (CopterMode.BRAKE, CopterMode.LOITER):
+            assert w.tick(_inp(t, mode)) is None, (t, mode)
+    assert w.phase == "stopped" and w.alarm_active
+    # The operator's FLY HOME (or the battery failsafe) takes it home: the watchdog lets go.
+    assert w.tick(_inp(601.0, CopterMode.SMART_RTL)) is None
     # The heartbeat comes back: idle again.
-    assert w.tick(_inp(26.0, CopterMode.SMART_RTL, onboard_seen_ms=25_500)) is None
+    assert w.tick(_inp(602.0, CopterMode.SMART_RTL, onboard_seen_ms=601_500)) is None
     assert w.phase == "idle" and not w.alarm_active
 
 
@@ -48,14 +51,35 @@ def test_watchdog_modes() -> None:
         CopterMode.STABILIZE,
     ):
         w = CompanionWatchdog(0)
-        assert w.tick(_inp(5.0, mode)) is None
-        if mode not in (CopterMode.LOITER,):
-            assert w.tick(_inp(25.0, mode)) is None, mode
-    # Idle and airborne in LOITER or AUTO: straight to the flight home at 20 s.
-    for mode in (CopterMode.LOITER, CopterMode.AUTO):
-        w = CompanionWatchdog(0)
-        assert w.tick(_inp(5.0, mode)) is None
-        assert w.tick(_inp(20.0, mode)) == "watchdog_rtl"
+        for t in (5.0, 20.0, 25.0, 600.0):  # LOITER (an order ended) included: it hovers
+            assert w.tick(_inp(t, mode)) is None, (t, mode)
+        assert w.alarm_active and w.phase == "idle"
+    # GUIDED seen late (the ground restarted): still only STOP's steps, never home.
+    w = CompanionWatchdog(0)
+    assert w.tick(_inp(25.0, CopterMode.GUIDED)) == "watchdog_stop"
+    assert w.tick(_inp(60.0, CopterMode.BRAKE)) is None
+
+
+def test_watchdog_stops_an_auto_flight_and_never_flies_it_home() -> None:
+    """Option A: nobody steers the search mission any more, so the drone stops at 3 s,
+    and that stop stands; only the operator, the battery or the radio failsafe ends it."""
+    w = CompanionWatchdog(0)
+    assert w.tick(_inp(2.9, CopterMode.AUTO)) is None
+    assert w.tick(_inp(3.0, CopterMode.AUTO)) == "watchdog_stop"
+    assert w.phase == "stopped"
+    for t in (5.0, 20.0, 60.0, 600.0):
+        for mode in (CopterMode.BRAKE, CopterMode.LOITER):
+            assert w.tick(_inp(t, mode)) is None, (t, mode)
+    assert w.phase == "stopped" and w.alarm_active
+    # Seen late (the ground restarted): an AUTO flight still only stops.
+    w = CompanionWatchdog(0)
+    assert w.tick(_inp(25.0, CopterMode.AUTO)) == "watchdog_stop"
+    assert w.tick(_inp(60.0, CopterMode.BRAKE)) is None
+    # The heartbeat comes back and goes again in GUIDED: a new stop, and again no flight home.
+    assert w.tick(_inp(61.0, CopterMode.BRAKE, onboard_seen_ms=60_500)) is None
+    assert w.phase == "idle"
+    assert w.tick(_inp(64.0, CopterMode.GUIDED, onboard_seen_ms=60_500)) == "watchdog_stop"
+    assert w.tick(_inp(81.0, CopterMode.BRAKE, onboard_seen_ms=60_500)) is None
 
 
 def test_watchdog_respects_the_operator_and_the_ground() -> None:
@@ -100,7 +124,7 @@ async def test_battery_guard_also_after_the_operators_stop() -> None:
         assert s.latches.get(VID).action == "battery_rtl"  # type: ignore[union-attr]
 
 
-async def test_watchdog_escalates_after_own_stop() -> None:
+async def test_watchdog_stops_a_silent_guided_flight_and_never_flies_it_home() -> None:
     async with stack() as s:
         s.fly()
         await s.run(1.0)
@@ -111,10 +135,61 @@ async def test_watchdog_escalates_after_own_stop() -> None:
         assert latch is not None and latch.action == "watchdog_stop"
         assert "vehicle.onboard_silent" in s.g.types()
         assert "alarm.ONBOARD_SILENT" in s.g.types()
-        await s.run(17.0)
+        assert "alarm.MISSION_FALLBACK" not in s.g.types()  # no search mission was flying
+        await s.run(60.0)  # well past the old 20 s flight home
+        assert s.fc.mode in STOP_MODES
+        assert s.latches.get(VID).action == "watchdog_stop"  # type: ignore[union-attr]
+        assert "vehicle.onboard_silent_rtl" not in s.g.types()
+
+
+async def test_watchdog_stops_a_silent_auto_flight_and_it_stays_stopped() -> None:
+    """The search mission flies in AUTO and the onboard computer falls silent: STOP's
+    steps at 3 s, and no flight home however long the silence lasts."""
+    async with stack() as s:
+        s.fly(mode=CopterMode.AUTO)
+        await s.run(1.0)
+        s.onboard_alive[0] = False
+        await s.run(3.4)
+        assert s.fc.mode in STOP_MODES
+        latch = s.latches.get(VID)
+        assert latch is not None and latch.action == "watchdog_stop"
+        assert "alarm.ONBOARD_SILENT" in s.g.types()
+        assert "alarm.MISSION_FALLBACK" in s.g.types()  # the search stopped mid-way
+        await s.run(60.0)
+        assert s.fc.mode in STOP_MODES
+        assert s.latches.get(VID).action == "watchdog_stop"  # type: ignore[union-attr]
+        assert "vehicle.onboard_silent_rtl" not in s.g.types()
+
+
+async def test_mission_end_then_a_silent_onboard_computer_alarms_once() -> None:
+    """On the hover at the mission's end the alarm comes after the grace; when the onboard
+    computer then falls silent the watchdog stops the flight without a second alarm."""
+    async with stack() as s:
+        s.fly(mode=CopterMode.AUTO)
+        end = 14  # the hover at the end of a 12-point search: seq == total
+        s.fc._send(mavlink.MAVLink_mission_current_message(end, end))  # pyright: ignore[reportPrivateUsage]
+        await s.run(FALLBACK_GRACE_MS / 1000 + 1.0)
+        assert s.g.types().count("alarm.MISSION_FALLBACK") == 1
+        s.onboard_alive[0] = False
+        await s.run(3.4)
+        assert s.fc.mode in STOP_MODES
+        latch = s.latches.get(VID)
+        assert latch is not None and latch.action == "watchdog_stop"
+        assert s.g.types().count("alarm.MISSION_FALLBACK") == 1
+
+
+async def test_battery_guard_flies_a_stopped_silent_auto_flight_home() -> None:
+    """After the watchdog's stop of an AUTO flight the battery still brings it home."""
+    async with stack(rtl_pct=20.0) as s:
+        s.fly(mode=CopterMode.AUTO)
+        await s.run(1.0)
+        s.onboard_alive[0] = False
+        await s.run(3.4)
+        assert s.fc.mode in STOP_MODES
+        s.fc.battery_pct = 19.0
+        await s.run(1.5)
         assert s.fc.mode in HOME_MODES
-        assert s.latches.get(VID).action == "watchdog_rtl"  # type: ignore[union-attr]
-        assert "vehicle.onboard_silent_rtl" in s.g.types()
+        assert s.latches.get(VID).action == "battery_rtl"  # type: ignore[union-attr]
 
 
 async def test_watchdog_does_nothing_while_the_operators_stop_stands() -> None:

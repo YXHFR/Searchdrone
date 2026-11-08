@@ -193,6 +193,8 @@ class Scenario:
     mid: str = ""
     observer_token: str = ""
     sticks_seq: int = 0
+    # the snapshot's (state_epoch = boot_id, state_seq) when Resume was last pressed
+    resume_at: tuple[int, int] = (0, 0)
     harness_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     bus_log: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
@@ -270,8 +272,11 @@ class Scenario:
 
     # --- the pilot (panel API) -----------------------------------------------------------
 
-    async def ready(self, charter: str = "charter_test", **overrides: Any) -> str:
-        """Open a mission; the pilot proposes and approves a fixture charter: READY."""
+    async def ready(
+        self, charter: str = "charter_test", *, mode: str | None = None, **overrides: Any
+    ) -> str:
+        """Open a mission; the pilot proposes and approves a fixture charter (in the
+        operation ``mode`` when given): READY."""
         r = self.r
         self.mid = await r.open_mission()
         res = await r.panel.post(
@@ -281,7 +286,8 @@ class Scenario:
         )
         assert res.status_code == 201, res.text
         card = res.json()
-        res = await r.approve(str(card["approval_id"]), card["version"])
+        extra = {} if mode is None else {"operation_mode": mode}
+        res = await r.approve(str(card["approval_id"]), card["version"], **extra)
         assert res.status_code == 200, res.text
         await r.wait_status(self.mid, "READY", 90)
         await r.until(r.onboard.ex.preflight_ok, 90, "onboard preflight")
@@ -332,10 +338,13 @@ class Scenario:
         await self.say("Starta.")
         await self.wait_command("takeoff", "done", 90, issuer_kind="brain")
 
-    async def airborne(self, charter: str = "charter_test", **overrides: Any) -> str:
-        """Without the AI process: the pilot's charter and "clear around the drone", and a
-        take-off order on the commander API (the AI's path) to 40 m."""
-        await self.ready(charter, **overrides)
+    async def airborne(
+        self, charter: str = "charter_test", *, mode: str | None = None, **overrides: Any
+    ) -> str:
+        """Without the AI process: the pilot's charter (in the operation ``mode`` when
+        given) and "clear around the drone", and a take-off order on the commander API (the
+        AI's path) to 40 m."""
+        await self.ready(charter, mode=mode, **overrides)
         await self.clearance()
         res = await self.order("takeoff", {"alt_m": 40})
         assert res.get("decision") == "ALLOW", res
@@ -372,6 +381,9 @@ class Scenario:
         headers = dict(H)
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
+        if action == "resume":  # a snapshot from after the release comes later
+            snap = await self.onboard_state()
+            self.resume_at = (int(snap["state_epoch"]), int(snap["state_seq"]))
         return await self.r.panel.post(
             f"/api/v1/vehicles/{VID}/actions/{action}",
             json={"client_action_id": str(new_id())},
@@ -508,6 +520,25 @@ class Scenario:
         live = (await self.r.panel.get(f"/api/v1/vehicles/{VID}/state")).json()
         assert live["snapshot"] is not None, live
         return dict(live["snapshot"])
+
+    async def released_onboard(self) -> bool:
+        """Resume has reached the onboard executor: it hovers because the pilot let go.
+
+        Not just "no longer HELD": the snapshot comes at 2 Hz and the ground sends Resume
+        a moment after its 202, so right after a take-over the latest snapshot can still
+        show the state from before it (an order sent then finds the executor HELD and is
+        refused with ONB_CONTROL_HELD). And from a snapshot sent after the Resume
+        (``state_seq`` past the one when it was pressed, or a later start of sd-onboard:
+        ``state_epoch``, its ``boot_id``, whose ``state_seq`` counts from 1 again): a HOLD
+        from before it, by the same name, is no proof."""
+        snap = await self.onboard_state()
+        return (
+            (int(snap["state_epoch"]), int(snap["state_seq"])) > self.resume_at
+            and snap["executor_state"] == "HOLD"
+            and snap["hold_reason"] == "operator_released"
+            and not snap["manual_control"]
+            and not snap["control_suspended"]
+        )
 
     async def gate(self, command_id: str) -> list[dict[str, Any]]:
         res = await self.r.panel.get(
@@ -747,6 +778,8 @@ async def scenario(
         serve_commander(r, sock),
     ):
         r.commander.base_url = httpx.URL(f"http://127.0.0.1:{port}")  # the bound port
+        if r.search is not None:  # the search API shares the commander listener
+            r.search.base_url = r.commander.base_url
         sink.append(vehicle_events(r.actions.on_event))
         sc = Scenario(r, sim, port)
         publish = r.g.bus.publish

@@ -42,8 +42,8 @@ async def test_flies_every_point_then_hovers_at_the_end() -> None:
         cmd = await r.send(r.order("follow_path", params()), 1)
         assert r.ex.state == S.TRANSIT, r.up.acks[-2:]
         items = r.fc.missions[MISSION]
-        # home, speed, the five points, loiter, return-to-launch
-        assert [i.command for i in items] == [16, 178, 16, 16, 16, 16, 16, 19, 20]
+        # home, speed, the five points, the hover at the end (no return home)
+        assert [i.command for i in items] == [16, 178, 16, 16, 16, 16, 16, 17]
         assert items[1].param2 == 6
         for item, (e, n) in zip(items[2:7], CORNERS, strict=True):
             lat, lon = at(e, n)

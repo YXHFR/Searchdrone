@@ -1,5 +1,5 @@
 {
-  "mass": 2.3,
+  "mass": 2.343,
   "diagonal_size": 0.58,
   "moment_inertia": [0.045, 0.045, 0.08],
   "refSpd": 15.0,

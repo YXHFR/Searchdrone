@@ -39,7 +39,8 @@ __all__ = ["CAMERA", "RIG_MODEL", "StillRig", "boxes_by_class", "render", "shot_
 RIG_MODEL = "sd_still_rig"
 RIG_WORLD = "sd_lake_forest"
 RIG_TEMPLATE = "objects/sd_still_rig.sdf.jinja"
-# The stills camera in CI: 1280 x 720, 66 degrees across (the real camera's field of view).
+# The detector's test fixtures: 1280 x 720, 66 degrees across (the real camera's field of
+# view, a quarter of its 4608 px, so the pictures in the repository stay small).
 CAMERA = {"width": 1280, "height": 720, "hfov_deg": 66.0}
 DEFAULT_OUT = paths.REPO / "software" / "detector" / "tests" / "testdata" / "stills"
 DEFAULT_SEED = 11

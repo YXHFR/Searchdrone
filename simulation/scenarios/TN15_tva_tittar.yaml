@@ -1,0 +1,9 @@
+# TN15: a second look while one is open is refused (INSPECT_BUSY).
+scenario: TN15
+title: "Två tittar: den andra nekas med INSPECT_BUSY"
+mode: exercise
+laser: none
+start_alt_m: 40
+target: { at_enu: [0, 100], jitter_m: 10, visible_m: 0.2, score: 0.45 }
+map: { scan_year: 2019 }
+seeds: [1, 2, 3]

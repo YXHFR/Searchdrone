@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -26,7 +27,8 @@ from sd_schemas.search import CandidateRevision, CandidateState
 
 __all__ = ["CandidateRepo", "CandidateWriteError", "Decided", "Written"]
 
-# A candidate in these states takes no revision from the search service.
+# A candidate in these states takes no revision from the search service, but for a
+# confirmed one's sightings (``_write_one``).
 CLOSED = frozenset({"confirmed", "rejected", "merged"})
 
 _LATEST = (
@@ -121,6 +123,25 @@ def _detection(row: RowMapping) -> dict[str, Any]:
     return d
 
 
+def _survivor(cid: str, into: dict[str, str]) -> str:
+    """The candidate a chain of merges from ``cid`` ends in. The write refuses cycles; a
+    cycle all the same ends where it would come round again."""
+    seen = {cid}
+    while cid in into and into[cid] not in seen:
+        cid = into[cid]
+        seen.add(cid)
+    return cid
+
+
+def _metres(value: Any) -> float | None:
+    """A stored ``skipped_m`` as metres: a finite number >= 0, else ``None``."""
+    try:
+        m = float(value)
+    except (TypeError, ValueError):
+        return None
+    return m if math.isfinite(m) and m >= 0 else None
+
+
 class CandidateRepo:
     def __init__(self, engine: AsyncEngine) -> None:
         self.engine = engine
@@ -196,6 +217,97 @@ class CandidateRepo:
         )
         return [dict(_json(r["payload"])) for r in rows]
 
+    async def blocked_candidates(self, mission_id: str, source: str, source_id: str) -> list[str]:
+        """The mission's candidate a cylinder was made of: a ``candidate`` cylinder's own,
+        a ``detection`` cylinder's (the drone's own, of one detection) the candidate that
+        detection joined; a merged one's the candidate the chain of merges ends in, as in
+        ``survey_blocks``."""
+        if source == "candidate":
+            sql = (
+                "SELECT DISTINCT ON (candidate_id) candidate_id::text AS c "
+                "FROM candidates WHERE mission_id = :m "
+                "AND candidate_id = CAST(:s AS uuid) ORDER BY candidate_id, rev DESC"
+            )
+        elif source == "detection":
+            sql = (
+                "SELECT DISTINCT ON (c.candidate_id) c.candidate_id::text AS c "
+                "FROM candidate_observations o "
+                "JOIN candidates c ON c.candidate_id = o.candidate_id "
+                "WHERE c.mission_id = :m AND o.detection_id = CAST(:s AS uuid) "
+                "ORDER BY c.candidate_id, c.rev DESC"
+            )
+        else:
+            return []
+        rows = await self._all(sql, m=mission_id, s=source_id)
+        if not rows:
+            return []
+        into = await self._merged_into(mission_id)
+        return list(dict.fromkeys(_survivor(str(r["c"]), into) for r in rows))
+
+    async def survey_blocks(self, mission_id: str) -> dict[str, float]:
+        """The candidates whose cylinder a search went around (``candidate.blocks_survey``
+        events), with the most metres of search it left out there. A merged candidate's
+        blocking moves to the candidate it was merged into (down a chain of merges), where
+        the larger of the two counts: its cylinder is now the survivor's. A stored value
+        that is not a finite number of metres >= 0 is left out, so an old or damaged row
+        cannot break the cards.
+
+        A drone's own cylinder named by a detection no candidate held yet when the search
+        went around it (``candidate.blocks_survey_pending``) blocks through the candidate
+        that detection has joined since, so its card is first from its very first
+        version."""
+        rows = await self._all(
+            "SELECT payload->>'candidate_id' AS c, payload->>'skipped_m' AS m "
+            "FROM events WHERE mission_id = :m AND type = 'candidate.blocks_survey' "
+            "UNION ALL "
+            "SELECT DISTINCT o.candidate_id::text AS c, e.payload->>'skipped_m' AS m "
+            "FROM events e "
+            "JOIN candidate_observations o ON o.detection_id::text = e.payload->>'detection_id' "
+            "JOIN candidates c ON c.candidate_id = o.candidate_id AND c.mission_id = :m "
+            "WHERE e.mission_id = :m AND e.type = 'candidate.blocks_survey_pending'",
+            m=mission_id,
+        )
+        raw: dict[str, float] = {}
+        for r in rows:
+            m = _metres(r["m"])
+            if r["c"] is not None and m is not None:
+                raw[str(r["c"])] = max(m, raw.get(str(r["c"]), m))
+        if not raw:
+            return {}
+        into = await self._merged_into(mission_id)
+        out: dict[str, float] = {}
+        for cid, m in raw.items():
+            end = _survivor(cid, into)
+            out[end] = max(m, out.get(end, m))
+        return out
+
+    async def pending_blocks(self, mission_id: str) -> dict[str, float]:
+        """The detections whose cylinder a search went around before any candidate held
+        them (``candidate.blocks_survey_pending``), with the most metres left out there.
+        A row that is not a finite number of metres >= 0 is left out."""
+        rows = await self._all(
+            "SELECT payload->>'detection_id' AS d, payload->>'skipped_m' AS m "
+            "FROM events WHERE mission_id = :m AND type = 'candidate.blocks_survey_pending'",
+            m=mission_id,
+        )
+        out: dict[str, float] = {}
+        for r in rows:
+            m = _metres(r["m"])
+            if r["d"] is not None and m is not None:
+                out[str(r["d"])] = max(m, out.get(str(r["d"]), m))
+        return out
+
+    async def _merged_into(self, mission_id: str) -> dict[str, str]:
+        """Each merged candidate of the mission and the one it was merged into."""
+        rows = await self._all(
+            "SELECT candidate_id, merged_into FROM (SELECT DISTINCT ON (candidate_id) "
+            "candidate_id::text AS candidate_id, merged_into::text AS merged_into "
+            "FROM candidates WHERE mission_id = :m ORDER BY candidate_id, rev DESC) newest "
+            "WHERE merged_into IS NOT NULL",
+            m=mission_id,
+        )
+        return {str(r["candidate_id"]): str(r["merged_into"]) for r in rows}
+
     # --- the search service's writes -------------------------------------------------
 
     async def write(
@@ -246,9 +358,34 @@ class CandidateRepo:
                 raise CandidateWriteError(
                     "REV_CONFLICT", "Kandidaten har ändrats sedan den lästes."
                 )
-            if prev["state"] in CLOSED:
+            # A confirmed find takes the detections that joined it as observations (the
+            # same person seen again: no new card next to it), and nothing else: its
+            # state, position, radius, scores and priority stay as the person confirmed
+            # them, and its assessment as it was.
+            found = (
+                prev["state"] == CandidateState.CONFIRMED.value
+                and r.state is None
+                and r.merged_into is None
+                and r.assessment is None
+                and bool(r.observations)
+            )
+            if prev["state"] in CLOSED and not found:
                 raise CandidateWriteError(
                     "CANDIDATE_CLOSED", "Kandidaten är avgjord eller sammanslagen."
+                )
+            if found:
+                r = r.model_copy(
+                    update={
+                        "lat": prev["lat"],
+                        "lon": prev["lon"],
+                        "sigma95_m": prev["sigma95_m"],
+                        "n_seen": max(int(prev["n_seen"]), r.n_seen),
+                        "best_detector_score": prev["best_detector_score"],
+                        "refined_person_score": prev["refined_person_score"],
+                        "priority": prev["priority"],
+                        "first_seen_utc": prev["first_seen_utc"],
+                        "last_seen_utc": max(prev["last_seen_utc"], r.last_seen_utc),
+                    }
                 )
             held = prev["state"] == CandidateState.INSPECTING.value
             if r.state is not None and held:
@@ -354,6 +491,23 @@ class CandidateRepo:
         )
 
     @staticmethod
+    async def _only_sightings_since(
+        conn: AsyncConnection, candidate_id: str, subject_rev: int
+    ) -> bool:
+        """Whether the person saw a find at ``subject_rev`` and every revision since only
+        added sightings to it. Confirmed follows confirmed only that way (``_write_one``;
+        a decision writes a revision only when the state changes), so what the person
+        decided on still stands: the same find, in the same place."""
+        res = await conn.execute(  # no such revision: NULL, so False
+            text(
+                "SELECT bool_and(state = 'confirmed') FROM candidates "
+                "WHERE candidate_id = :c AND rev >= :r"
+            ),
+            {"c": candidate_id, "r": subject_rev},
+        )
+        return bool(res.scalar_one())
+
+    @staticmethod
     async def _decided(conn: AsyncConnection, candidate_id: str) -> bool:
         res = await conn.execute(
             text("SELECT 1 FROM candidate_decisions WHERE candidate_id = :c LIMIT 1"),
@@ -381,12 +535,24 @@ class CandidateRepo:
         return out
 
     async def thumbs(self, mission_id: str) -> dict[str, str]:
-        """Per candidate: the observed detection with a crop and the largest px_size."""
+        """Per candidate: the observed detection with a crop and the largest px_size. A
+        find keeps the picture it had when the person confirmed it: a sighting it took
+        after that (``_write_one``) is on its card but never becomes its thumbnail. Ids
+        are ``uuidv7()`` from the database clock, and the sighting is written under the
+        mission's lock after the confirmation's transaction, so its id is the later."""
         rows = await self._all(
+            "WITH found AS (SELECT DISTINCT ON (candidate_id) candidate_id, state "
+            "FROM candidates WHERE mission_id = :m ORDER BY candidate_id, rev DESC), "
+            "confirmed_at AS (SELECT DISTINCT ON (x.candidate_id) x.candidate_id, x.id "
+            "FROM candidate_decisions x JOIN found f ON f.candidate_id = x.candidate_id "
+            "WHERE f.state = 'confirmed' AND x.decision = 'confirm' "
+            "ORDER BY x.candidate_id, x.id DESC) "
             "SELECT DISTINCT ON (o.candidate_id) o.candidate_id::text AS c, "
             "d.detection_id::text AS d FROM candidate_observations o "
             "JOIN detections d ON d.detection_id = o.detection_id "
+            "LEFT JOIN confirmed_at k ON k.candidate_id = o.candidate_id "
             "WHERE d.mission_id = :m AND d.crop_path IS NOT NULL "
+            "AND (k.id IS NULL OR o.id < k.id) "
             "ORDER BY o.candidate_id, d.px_size DESC, d.seq",
             m=mission_id,
         )
@@ -436,7 +602,8 @@ class CandidateRepo:
         """A decision row and, when the state changes, the candidate's next revision, in
         one transaction under the mission's lock. ``next_state`` gets the state in force
         and returns the new one (``None``: unchanged) or raises ``CandidateWriteError``.
-        The rev the person saw must still be in force (``SUPERSEDED`` otherwise). A
+        The rev the person saw must still be in force (``SUPERSEDED`` otherwise), but for
+        a find that has only taken sightings since (``_only_sightings_since``). A
         confirmation sets ``missions.found_candidate_id``; undoing it clears it again."""
         mission_id = await self.candidate_mission(candidate_id)
         if mission_id is None:
@@ -449,13 +616,19 @@ class CandidateRepo:
             prev = await self._latest_one(conn, candidate_id)
             if prev is None:
                 raise CandidateWriteError("CANDIDATE_NOT_FOUND", "Kandidaten finns inte.")
-            if int(prev["rev"]) != subject_rev:
+            newest = int(prev["rev"])
+            # A rev above the newest is no card the person saw (a number that may not even
+            # fit the column): stale, never asked of the database.
+            if subject_rev != newest and (
+                subject_rev > newest
+                or not await self._only_sightings_since(conn, candidate_id, subject_rev)
+            ):
                 raise CandidateWriteError(
                     "SUPERSEDED", "Kandidaten har ändrats sedan du såg den. Titta igen."
                 )
             before = str(prev["state"])
             after = next_state(before)
-            rev = int(prev["rev"])
+            rev = newest
             if after is not None:
                 rev += 1
                 await conn.execute(

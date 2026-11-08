@@ -5,14 +5,16 @@ executor checks the rest of the running order's route against every cylinder in 
 Nothing changes when it stays clear. A search mission (``survey_sector``, ``follow_path``
 and ``resume``: a ``SurveyRun``) is planned again around the cylinders, through the same
 ``SurveyRun.plan`` as a new order, and checked once more: the whole new route must stay
-clear of every cylinder and inside the charter. When the drone is outside every cylinder
-and the route enters one within the stop distance (:func:`stop_m`), it cannot turn away
-at its speed: it stops in LOITER first, and the rest is planned again from where it
-stopped, the same way. Anything else, or a search with no way around, hovers
-(``KEEPOUT_VIOLATION``). A drone inside a cylinder whose leg already leads out of it
-flies on; one whose leg leads deeper first leaves straight away from the centre
-(``sd_safety.keepout.reroute``). The link-loss find move never ends in a hover inside a
-cylinder while a way out exists (:func:`way_out`).
+clear of every cylinder and inside the charter. Under a charter that allows overflight a
+search's route may fly straight through the cylinders of unconfirmed persons
+(``sd_safety.keepout.Passage``): only a cylinder it may not pass that way changes it
+(:func:`problem_m`). When the drone is outside every cylinder and the route enters one
+within the stop distance (:func:`stop_m`), it cannot turn away at its speed: it stops in
+LOITER first, and the rest is planned again from where it stopped, the same way. Anything
+else, or a search with no way around, hovers (``KEEPOUT_VIOLATION``). A drone inside a
+cylinder whose leg already leads out of it flies on; one whose leg leads deeper first
+leaves straight away from the centre (``sd_safety.keepout.reroute``). The link-loss find
+move never ends in a hover inside a cylinder while a way out exists (:func:`way_out`).
 
 A handler that flies one straight leg at a time (``Replans``: ``inspect_detection``) is
 checked from where the drone is on every tick while it flies, every cylinder counted
@@ -22,8 +24,13 @@ cylinder over a person with no such leg (the gate refuses every way out), it cli
 straight up to above the cylinder (:func:`climb_alt`) within the charter's height, then
 hovers; when it cannot climb it hovers where it is. Either way the operator is alarmed.
 Any other order that would hover inside a cylinder (a search with no way out, a goto
-held there) climbs the same way, as an internal goto (``INTERNAL_KEEPOUT_CLIMB``) that
-replaces the order.
+held there) never climbs and hovers over the person (owner decision 2026-11-03): it
+leaves by the shortest way out (:func:`exit_point`, through unconfirmed cylinders if need
+be, never into a confirmed one) as an internal goto (``INTERNAL_KEEPOUT_EXIT``) that
+replaces the order and ends in the keep-out hover outside; with no way out it flies home.
+A drone that still moves first brakes and holds where it stops. A cylinder that comes
+while it leaves is checked against the rest of the way out: when that now enters a
+confirmed cylinder or ends inside any, the drone brakes and the way out is planned again.
 
 Local cylinders (from the drone's own detections) give way once a ground install at
 least ``LOCAL_KEEPOUT_HANDOVER_MS`` later holds a cylinder that covers them; until then,
@@ -36,21 +43,36 @@ moving order in a hover.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from itertools import pairwise
 from typing import Final, Protocol, runtime_checkable
+from uuid import UUID
 
+# The climb over a person lives with the handlers: the look straight over a target
+# climbs out of a cylinder that comes around it on its own (``skills.inspect_steps``).
+from sd_onboard.skills._common import KEEPOUT_CLIMB_MARGIN_M, climb_alt, over_a_person
 from sd_onboard.skills.base import PlanContext, SkillHandler, SkillPlan
 from sd_onboard.skills.goto import GotoHandler
 from sd_onboard.skills.survey_sector import SurveyRun
-from sd_safety.keepout import Circle, circles, reroute, xy_route_violation
+from sd_safety.keepout import (
+    Circle,
+    Passage,
+    circles,
+    escape,
+    passes,
+    reroute,
+    route_violation,
+    spent_for,
+    split,
+    xy_route_violation,
+)
 from sd_safety.targets import Plane, Polygon, Xy, point_segment_distance, polygon_from_geojson
-from sd_schemas.base import LatLonAlt, new_id
+from sd_schemas.base import LatLon, LatLonAlt, new_id
 from sd_schemas.charter import MissionCharter
 from sd_schemas.keepout import KEEPOUT_RADIUS_MAX_M, Keepout, leg_enters
 
 __all__ = [
-    "INTERNAL_KEEPOUT_CLIMB",
+    "INTERNAL_KEEPOUT_EXIT",
     "KEEPOUT_CLIMB_MARGIN_M",
     "LOCAL_KEEPOUTS_MAX",
     "LOCAL_KEEPOUT_HANDOVER_MS",
@@ -61,9 +83,12 @@ __all__ = [
     "climb_alt",
     "contained",
     "entry_m",
+    "exit_point",
     "leg_entry_m",
     "merge_local",
     "over_a_person",
+    "path_clear",
+    "problem_m",
     "remaining",
     "route_clear",
     "stop_m",
@@ -75,13 +100,17 @@ __all__ = [
 # ring is the order itself: a ring a cylinder now crosses is held, not bent.
 REROUTABLE: Final = frozenset({"survey_sector", "follow_path", "resume"})
 LOCAL_KEEPOUT_HANDOVER_MS: Final = 60_000  # a ground install this much later replaces it
+# A candidate the pilot rejected in its look: the ground's cylinder around it
+# (``source = "candidate"``) is not in force onboard while the ground releases it, at most
+# this long while no install without it has come; after that it is in force again (and the
+# flight under way is checked against it) until one does. The ground reads its cylinders
+# every 2 s and a list may be delivered up to 10 s late (sd_ground.services.link_loss
+# KEEPOUT_POLL_S, KEEPOUT_TTL_MS): its install without the candidate is here by then.
+REJECTED_RELEASE_WAIT_MS: Final = 12_000
 LOCAL_KEEPOUTS_MAX: Final = 100
-# A cylinder has no height of its own; over a person with no safe way out the drone
-# takes its top as its radius above home (as far up as out) and climbs this much above.
-KEEPOUT_CLIMB_MARGIN_M: Final = 10.0
-# The climb of any other order (not ``Replans``): an internal goto straight up, then the
-# keep-out hover.
-INTERNAL_KEEPOUT_CLIMB: Final = "internal_keepout_climb"
+# The way out of any other order (not ``Replans``) boxed in over a person: an internal goto
+# along the shortest way out at its height (``exit_point``), then the keep-out hover.
+INTERNAL_KEEPOUT_EXIT: Final = "internal_keepout_exit"
 _NOTHING_LEFT_M: Final = 2.0  # closer to the end than this: hovering, not flying
 _STOP_MARGIN_M: Final = 5.0  # an order is held this far (plus its stop) short of a cylinder
 _STOP_REACT_S: Final = 1.5  # the reflex's tick, the link to the flight controller, LOITER
@@ -164,6 +193,62 @@ def route_clear(
     return all(area.leg_outside_by(a, b) <= 0.0 for a, b in pairwise(route))
 
 
+def path_clear(
+    path: list[LatLonAlt],
+    keepouts: tuple[Keepout, ...],
+    plane: Plane,
+    charter: MissionCharter,
+    passage: Passage | None,
+    inside_s: Mapping[UUID, float] | None = None,
+) -> bool:
+    """No leg enters a cylinder (a search route with a ``passage`` may pass straight
+    through unconfirmed ones, never going down, the pass the drone is on counting the time
+    ``inside_s`` it spent inside already: ``sd_safety.keepout.route_violation``, the gate's
+    own check) and every leg lies inside the charter's area."""
+    if route_violation(path, keepouts, plane, passage, inside_s) is not None:
+        return False
+    area = polygon_from_geojson(charter.area, plane)
+    route = [plane.xy(p.lat, p.lon) for p in path]
+    return all(area.leg_outside_by(a, b) <= 0.0 for a, b in pairwise(route))
+
+
+def problem_m(
+    route: list[Xy],
+    keepouts: tuple[Keepout, ...],
+    plane: Plane,
+    passage: Passage | None,
+    inside_s: Mapping[UUID, float] | None = None,
+) -> float | None:
+    """How far along ``route`` (from its first point) the first cylinder lies that it may
+    not fly into (:func:`entry_m`), or None. With a ``passage`` an unconfirmed cylinder
+    the route passes (``sd_safety.keepout.passes``, the pass the drone is on counting the
+    time ``inside_s`` it spent inside already) is no problem; one it does not pass counts
+    as a confirmed one."""
+    if passage is None:
+        return entry_m(route, circles(keepouts, plane))
+    hard, soft = split(keepouts)
+    cyl = circles(hard, plane)
+    spent = spent_for(soft, passage, inside_s)
+    for (c, r), s in zip(circles(soft, plane), spent, strict=True):
+        if not passes(route, c, r, passage, spent_m=s):
+            cyl.append((c, r))
+    return entry_m(route, cyl)
+
+
+def exit_point(
+    here: Xy, keepouts: tuple[Keepout, ...], plane: Plane, area: Polygon
+) -> LatLon | None:
+    """Where a drone boxed in over a person leaves to: the shortest straight way out of
+    every cylinder that enters no confirmed one (``sd_safety.keepout.escape``: unconfirmed
+    ones may be crossed); None when it is in none or there is no such way."""
+    hard, soft = split(keepouts)
+    out = escape(here, circles(hard, plane), circles(soft, plane), area)
+    if out is None:
+        return None
+    lat, lon = plane.latlon(*out)
+    return LatLon(lat=lat, lon=lon)
+
+
 def blocks_find_move(here: Xy, point: Xy, others: list[Circle]) -> bool:
     """Whether the link-loss find's move from ``here`` to its hover ``point`` would enter
     one of ``others`` (every cylinder in force but the find's own) or end inside one."""
@@ -228,26 +313,6 @@ def _leg_entry(a: Xy, b: Xy, c: Xy, r: float) -> float:
     return max(0.0, (-half - math.sqrt(disc)) / seg2)
 
 
-def climb_alt(here: Xy, cyl: Sequence[Circle], alt_m: float, alt_max_m: float) -> float | None:
-    """How high (above home) a drone at ``here``, ``alt_m`` up, climbs over the cylinders
-    it is inside: their top (the largest radius) plus ``KEEPOUT_CLIMB_MARGIN_M``, at most
-    ``alt_max_m``; where it is when it is that high already; None when it is inside none,
-    or lower than that and cannot climb (``alt_max_m`` is no higher than it is)."""
-    over = [r for c, r in cyl if over_a_person(here, [(c, r)])]
-    if not over:
-        return None
-    want = max(over) + KEEPOUT_CLIMB_MARGIN_M
-    if alt_m >= want:
-        return alt_m
-    top = min(want, alt_max_m)
-    return top if top > alt_m else None
-
-
-def over_a_person(here: Xy, cyl: Sequence[Circle]) -> bool:
-    """Whether ``here`` lies inside any of the cylinders (over a person)."""
-    return any(math.dist(here, c) < r for c, r in cyl)
-
-
 def stop_m(speed_ms: float) -> float:
     """How far short of a cylinder a moving order must be held to stop outside it."""
     v = max(0.0, speed_ms)
@@ -256,8 +321,10 @@ def stop_m(speed_ms: float) -> float:
 
 def way_out(here: Xy, cyl: list[Circle], area: Polygon) -> Xy | None:
     """The point just outside every cylinder ``here`` lies in, along a straight leg that
-    goes deeper into none of them and enters no other, inside ``area``
-    (``sd_safety.keepout.reroute``); None when ``here`` is in none or no such leg exists."""
+    goes deeper into none of them and enters no other, with ``_EXIT_EDGE_M``
+    (``sd_safety.keepout``) of room along the leg past its end, all of it clear of the
+    cylinders and inside ``area`` (``sd_safety.keepout.reroute``); None when ``here`` is in
+    none or no such leg exists."""
     way = reroute([here], cyl, area=area)
     return None if way is None or len(way) < 2 else way[1]
 

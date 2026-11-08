@@ -1,0 +1,10 @@
+# TN06: SD-link lost on the lowest step: straight up to the start height, then the
+# usual rule (hold at 23 s, home at 53 s).
+scenario: TN06
+title: "Länkavbrott på lägsta steget: rakt upp, sedan vanliga regeln"
+mode: exercise
+laser: none
+start_alt_m: 50
+target: { at_enu: [40, 0], jitter_m: 5, visible_m: 0.2, score: 0.45 }
+map: { scan_year: 2019 }
+seeds: [1, 2, 3]

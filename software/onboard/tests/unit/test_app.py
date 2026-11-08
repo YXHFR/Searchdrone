@@ -80,6 +80,15 @@ class _DyingPerception:
     async def capture(self, command_id: Any) -> None:
         return None
 
+    async def capture_round(self, command_id: Any, inspect_step: int) -> list[Any]:
+        return []
+
+    def capture_limit_s(self) -> float:
+        return 10.0
+
+    def round_limit_s(self) -> float:
+        return 20.0
+
     async def run(self, stop: asyncio.Event) -> None:
         type(self).ran = True
         raise RuntimeError("detector crashed")

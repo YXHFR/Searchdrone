@@ -399,6 +399,7 @@ def _search_examples() -> list[BaseModel]:
         s.KeepoutInstall(install_seq=3, keepouts=[keepout]),
         s.InspectOutcome(command_id=COMMAND, outcome="rejected"),
         s.InspectLower(command_id=COMMAND),
+        s.InspectStay(command_id=COMMAND),
         s.InspectProgress(
             command_id=COMMAND,
             candidate_id=OTHER,
@@ -425,6 +426,28 @@ def _search_examples() -> list[BaseModel]:
         s.InspectLaserLost(command_id=COMMAND, above_ground_m=18.0),
         s.PermitChanged(
             changed_by="operator:demo", has_specific_category_ref=True, allow_overflight_live=True
+        ),
+        s.Permit(specific_category_ref="TS-0001", allow_overflight_live=True),
+        s.Inspection(
+            command_id=COMMAND,
+            candidate_id=OTHER,
+            mission_id=MISSION,
+            seq=3,
+            started_at=T,
+            started_by="operator:demo",
+            operation_mode="exercise",
+            overflight=True,
+            phase="await",
+            done=s.InspectDone(
+                command_id=COMMAND,
+                candidate_id=OTHER,
+                end="clear",
+                steps=2,
+                lowest_above_ground_m=24.0,
+                still_ids=[STILL],
+                clear=True,
+            ),
+            await_until=T + timedelta(seconds=120),
         ),
         garment,
         s.Item(kind="backpack", colors=[s.ColorName.BLUE], certainty="likely"),
@@ -852,6 +875,15 @@ def examples() -> dict[type[BaseModel], BaseModel]:
         _approval(),
         s.ApprovalDecisionRequest(
             decision="approve", subject_version=1, confirmations=["clear_around_drone"]
+        ),
+        s.FloorPackChoice(floor_pack_id="example-area", floor_pack_sha256="ab" * 32),
+        s.FloorPackInfo(
+            floor_pack_id="example-area",
+            floor_pack_sha256="ab" * 32,
+            attribution="Lantmäteriet, Laserdata Skog (CC0)",
+            origin=s.LatLon(lat=HOME_LAT, lon=HOME_LON),
+            size_east_m=2000,
+            size_north_m=1500,
         ),
         _command(),
         s.OperatorCommandRequest(

@@ -21,6 +21,7 @@ one class: person.
 | Name | Network | From | Licence |
 |---|---|---|---|
 | `person_yolox_s` | YOLOX-s | Megvii's COCO weights (YOLOX 0.1.1rc0) | Apache-2.0 |
+| `person_yolox_m` | YOLOX-m (about 2.8 times the arithmetic of YOLOX-s) | Megvii's COCO weights (YOLOX 0.1.1rc0) | Apache-2.0 |
 | `person_damoyolo_s` | DAMO-YOLO-S (TinyNAS L25) | Alibaba's COCO weights | Apache-2.0 |
 | `coco_yolox_s` | YOLOX-s, not retrained | Megvii's published ONNX file, COCO class "person" | Apache-2.0 |
 
@@ -33,8 +34,15 @@ one class: person.
   CC BY 3.0, and KIOS, CC BY 4.0), mixed. The split is by site: no site has pictures in
   two parts. Two training-only sets can be added with `sets=`: KIOS car/person (a
   parking lot, CC BY 4.0, every tenth video frame) and SeaDronesSee (swimmers in open
-  water, CC0 1.0). They are never measured on: a model trained with them is judged on
-  HERIDAL's and KIOS's land test part like any other.
+  water, CC0 1.0), and UIT-Drone4 (pedestrians in city traffic in Vietnam, CC BY 4.0,
+  every tenth video frame; tiles with a motorcycle, whose riders are not boxed, are left
+  out). They are never measured on: a model trained with them is judged on HERIDAL's
+  and KIOS's land test part like any other.
+  - With `scales=` each training picture is also resampled so its people are as many
+    pixels as our wide camera (about 30-35 px) or tele camera (about 100 px) sees them
+    at 30-60 m. A picture's scale is HERIDAL's stated 2 cm per pixel, or for the other
+    sets read off its person boxes. A picture is enlarged at most twice (`max_up=`).
+    The val and test parts are never resampled.
   - Each picture is cut into 640 px tiles with 15 % overlap.
   - A person is kept in a tile when at least half of their box is in it.
   - Every tile with a person is kept, plus a quarter of the empty tiles.
@@ -49,7 +57,7 @@ one class: person.
   - Mixed precision on the graphics card, and an EMA of the weights.
   - Flips, 90° turns and brightness changes (seen from above, every way up is a way a
     person lies).
-  - Defaults: 20 epochs, batch 8, which fits in 8 GB.
+  - Defaults: 20 epochs, batch 8 (YOLOX-m: 4), which fits in 8 GB.
 - **Kept epoch.** The one whose lowest dataset AP50 on the `val` tiles is highest, so a
   gain on KIOS never makes up for a loss on HERIDAL (each set's AP50 is printed and kept
   in the manifest).
@@ -107,6 +115,7 @@ targets, to be revisited after the first measurement, are recall ≥ 0.85 over 3
 | KIOS Small Object Aerial Person Detection | CC BY 4.0 | Makrigiorgis, Kyrkou and Kolios, KIOS CoE, University of Cyprus, Zenodo record 7740081 (2023) |
 | KIOS Aerial Dataset for Car and Person Detection (training only, when `sets=` names it) | CC BY 4.0 | Vasileiadis, Savva and Kyrkou, KIOS CoE, University of Cyprus, Zenodo record 21216709 (2026) |
 | SeaDronesSee Object Detection v2 (training only, when `sets=` names it) | CC0 1.0 | Varga, Kiefer, Messmer and Zell, "SeaDronesSee: A Maritime Benchmark for Detecting Humans in Open Water", WACV 2022, University of Tübingen |
+| UIT-Drone4 (training only, when `sets=` names it) | CC BY 4.0 | University of Information Technology, Vietnam National University Ho Chi Minh City, Zenodo record 14862652 (2025) |
 | WiSARD (measuring only) | MIT for the software; the data licence is not confirmed | Broyles, Hayner and Leung, IROS 2022, University of Washington |
 | COCO, which the starting weights were trained on | CC BY 4.0 (annotations) | Lin et al., "Microsoft COCO", ECCV 2014 |
 

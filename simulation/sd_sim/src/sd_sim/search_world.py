@@ -14,7 +14,10 @@ own and never leaves it:
   them up to that far, and turns them).
 * ``decoys``: things that are not persons (rocks, backpacks); ``count`` of them at
   random in ``area`` (an area name) or one ``at_enu``. ``lure`` is the chance that the
-  detector takes one for a person in a still it is in.
+  detector takes one for a person in a still it is in. A decoy drawn in an area lies at
+  least ``DECOY_CLEAR_M`` from every person, so the truth at a card (the nearest thing)
+  is the thing the card was made from; one ``at_enu`` lies where it is put, nearer a
+  person if the scenario wants that (SK10).
 * ``limit_s``: the time the nightly requirement allows to the confirmed find.
 * ``trail``: a path through the area (``[[east, north], ...]``), the map's terrain; a
   person with ``near_trail_m: [lo, hi]`` lies that far from a random point of it.
@@ -41,6 +44,8 @@ from sd_schemas.geo import plane_offset
 from sd_sim import paths
 
 __all__ = [
+    "CARD_ERR_MAX_M",
+    "DECOY_CLEAR_M",
     "SCENARIOS",
     "Thing",
     "World",
@@ -56,6 +61,22 @@ MAX_SEEDS = 200
 Pose = Literal["lying", "sitting", "standing"]
 POSES: tuple[Pose, ...] = ("lying", "sitting", "standing")
 DECOY_KINDS = ("rock", "backpack", "log", "tarp")
+# How far a card lies from the thing it was made from, at most. The oracle detector's
+# position errs by its receiver (``POS_SIGMA_M``, 1.2 m per axis) and its attitude
+# (``ATT_SIGMA_DEG``, 0.7 deg per axis). The attitude's share is largest at the picture's
+# corner (about 37 deg off nadir with the 66 deg stills camera): there a tilt moves the
+# point by h / cos^2 and a turn by h tan, about 0.95 m and 0.45 m at 50 m, the highest any
+# SK script flies. That is about 1.6 m per axis in all (test_oracle_detector pins it to
+# the scripts' altitudes and the camera). The distance from the thing combines both axes:
+# with 1.6 m per axis it exceeds 7 m with a chance of exp(-7^2 / (2 * 1.6^2)), under
+# 1 in 10 000 per sighting. A card's position is a weighted mean of its sightings, so it
+# lies within this of its thing too.
+CARD_ERR_MAX_M = 7.0
+# A thing this far from every person is never the nearest thing to a person's card: a
+# card lies at most CARD_ERR_MAX_M from its person, so at least as far from the thing. A
+# decoy drawn in an area keeps this clearance; one placed ``at_enu`` may lie nearer, and
+# the rig then knows a card's thing from its picture's source (chain_rig).
+DECOY_CLEAR_M = 2.0 * CARD_ERR_MAX_M
 _TOP = {"scenario", "title", "home", "pilot", "pins", "areas", "charters", "search"}
 _SEARCH = {"limit_s", "survey", "profile", "last_seen_enu", "people", "decoys", "trail",
            "sector_order"}  # fmt: skip
@@ -133,6 +154,21 @@ class World:
         if best is None or math.hypot(best.east - east, best.north - north) > within_m:
             return None
         return best
+
+    def picture_truth(
+        self, thing_id: str | None, east: float, north: float
+    ) -> tuple[str | None, bool]:
+        """The thing a card is, from what its picture was drawn from (``thing_id``,
+        ``None`` for plain ground) and where the card lies: that thing and whether it is
+        the missing person, or nothing when the card lies farther than ``CARD_ERR_MAX_M``
+        from it. A card with the person's picture far from the person (misplaced, or
+        merged with another thing's card) is not a find of the person."""
+        if thing_id is None:
+            return None, False
+        t = next(t for t in self.things if t.thing_id == thing_id)
+        if math.hypot(t.east - east, t.north - north) > CARD_ERR_MAX_M:
+            return None, False
+        return t.thing_id, t.target
 
     def terrain(self) -> list[dict[str, Any]]:
         """The trail as the map's terrain layer (GeoJSON features, WGS84 lon/lat)."""
@@ -229,6 +265,16 @@ def _inside(poly: Polygon, rng: random.Random) -> tuple[float, float]:
     raise WorldError("hittar ingen punkt i ytan")
 
 
+def _clear_of(poly: Polygon, people: Sequence[Thing], rng: random.Random) -> tuple[float, float]:
+    """A point in ``poly`` at least ``DECOY_CLEAR_M`` from every person (the first draw
+    when that one is clear, so a world without a decoy near a person stays the same)."""
+    for _ in range(1000):
+        p = _inside(poly, rng)
+        if all(math.hypot(p[0] - q.east, p[1] - q.north) >= DECOY_CLEAR_M for q in people):
+            return p
+    raise WorldError(f"ingen punkt i ytan {DECOY_CLEAR_M:.0f} m från alla personer")
+
+
 def _jittered(
     at: Sequence[float], jitter_m: float, keep: Polygon, rng: random.Random
 ) -> tuple[float, float]:
@@ -323,6 +369,7 @@ def load(scenario: str | Path, seed: int) -> World:
                 occlusion_pct=float(p.get("occlusion_pct", 0.0)),
             )
         )
+    people = list(things)
     for i, d in enumerate(search.get("decoys") or []):
         what = f"{path.name}: decoys[{i}]"
         _keys(d, _DECOY, what)
@@ -331,7 +378,7 @@ def load(scenario: str | Path, seed: int) -> World:
             raise WorldError(f"{what}: kind ska vara en av {DECOY_KINDS}")
         for j in range(int(d.get("count", 1))):
             if "area" in d:
-                east, north = _inside(area(d["area"]), rng)
+                east, north = _clear_of(area(d["area"]), people, rng)
             else:
                 east, north = (float(x) for x in d["at_enu"])
             things.append(

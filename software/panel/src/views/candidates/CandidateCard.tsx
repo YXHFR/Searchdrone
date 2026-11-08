@@ -3,6 +3,7 @@
 import { useTranslation } from "react-i18next";
 import { paths } from "../../api/paths";
 import type { CandidateCard as Card } from "../../api/types";
+import { useOpenLookOn } from "../../state/inspectStore";
 import { ageMinutes, fieldLabel } from "./queue";
 
 interface Props {
@@ -30,6 +31,7 @@ export function CandidateCard({
   const age = ageMinutes(card, now);
   const flagged = (card.flags ?? []).length > 0;
   const profile = card.assessed_profile_version;
+  const look = useOpenLookOn(card.candidate_id);
   return (
     <li
       className="cand-card"
@@ -84,6 +86,16 @@ export function CandidateCard({
                   </span>
                 );
               })}
+            </span>
+          ) : null}
+          {look ? (
+            <span className="cand-line inspect-line" data-testid="card-inspect">
+              {t(`inspect.card.${look.phase}`)}
+            </span>
+          ) : null}
+          {card.blocks_survey_m != null ? (
+            <span className="cand-line warn" data-testid="card-blocks">
+              {t("candidates.blocksSurvey", { m: Math.round(card.blocks_survey_m) })}
             </span>
           ) : null}
           {flagged ? (

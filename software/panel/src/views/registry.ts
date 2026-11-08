@@ -3,7 +3,7 @@ import { type ComponentType, lazy } from "react";
 // with MapLibre, and the other views load on demand.
 import { ChatView } from "./chat/ChatView";
 
-export type ViewId = "chat" | "map" | "video" | "candidates" | "status" | "manual";
+export type ViewId = "chat" | "map" | "video" | "candidates" | "status" | "manual" | "settings";
 
 export interface ViewProps {
   vehicleId: string;
@@ -18,4 +18,5 @@ export const VIEW_REGISTRY: Record<ViewId, ComponentType<ViewProps>> = {
   candidates: lazy(() => import("./candidates/CandidatesView")),
   status: lazy(() => import("./status/StatusView")),
   manual: lazy(() => import("./manual/ManualView")),
+  settings: lazy(() => import("./settings/SettingsView")),
 };

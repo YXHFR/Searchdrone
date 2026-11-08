@@ -94,6 +94,12 @@ def test_situation_text_has_no_coordinates_and_quotes_labels() -> None:
     assert "Högsta i uppdraget: 120 m" in lowered
     surv = situation_text(situation("airborne_survey.json"), NOW)
     assert "Aktiv: survey_sector A" in surv and "A 52 %" in surv
+    # A search the drone flies on after a closer look: its order's row is superseded.
+    s = situation("airborne_survey.json")
+    assert s.active_command is not None
+    ac = s.active_command.model_copy(update={"status": "superseded"})
+    flown_on = situation_text(s.model_copy(update={"active_command": ac}), NOW)
+    assert "Aktiv: survey_sector A, flygs vidare efter en titt" in flown_on
 
 
 def _turn(**kw) -> TurnInput:

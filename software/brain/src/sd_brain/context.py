@@ -148,14 +148,22 @@ def situation_text(s: Situation, now: dt.datetime) -> str:
     ac = s.active_command
     if ac is not None:
         target = ac.params.get("sector_id") or ""
-        lines.append(f"Aktiv: {ac.skill} {target}, status {ac.status}".replace("  ", " "))
+        # A superseded active order is a search the drone flies on after a look (its own
+        # row ended when the look began); its end comes as this order's event.
+        state = "flygs vidare efter en titt" if ac.status == "superseded" else f"status {ac.status}"
+        lines.append(f"Aktiv: {ac.skill} {target}, {state}".replace("  ", " "))
     else:
         lines.append("Aktiv: inget")
     if s.sectors:
         parts = []
         for sec in s.sectors:
             pct = round(100 * float(sec.get("progress") or 0))
-            parts.append(f"{sec.get('sector_id')} {pct} %")
+            text = f"{sec.get('sector_id')} {pct} %"
+            gap = sec.get("unsearched_m2")
+            if isinstance(gap, int | float) and gap > 0:
+                share = float(sec.get("unsearched_pct") or 0)
+                text += f" (klar men ca {round(gap, -2):.0f} m² ej sökt, {share:.0f} %)"
+            parts.append(text)
         lines.append("Sektorer: " + ", ".join(parts))
     elif s.charter is not None and s.charter.sectors:
         lines.append("Sektorer: " + ", ".join(f"{x.sector_id} 0 %" for x in s.charter.sectors))

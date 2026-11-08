@@ -14,7 +14,7 @@ import pytest
 
 from sd_sim import paths, testrun, util
 
-NO_SEARCH = " and not search and not search_nightly and not e2e_search"
+NO_SEARCH = " and not search and not search_nightly and not e2e_search and not inspect"
 PR_MARKS = "sitl and not gz and not llm and not nightly and not e2e" + NO_SEARCH
 
 
@@ -164,7 +164,7 @@ def test_summary_lists_new_results(tmp_path: Path) -> None:
 def test_e2e_selection_and_split() -> None:
     assert testrun.selection("e2e", "builtin") == (
         "sitl and e2e and not gz and not llm and not nightly and not search_nightly"
-        " and not e2e_search and not panel"
+        " and not e2e_search and not inspect and not panel"
     )
     (demo, demo_env), (rest, rest_env) = testrun.commands({"mode": "e2e", "workers": "4"})
     assert demo[demo.index("-k") + 1] == "test_demo_flight" and "-n" not in demo
@@ -216,6 +216,7 @@ def test_run_dirs_in_the_same_second_differ(tmp_path: Path) -> None:
             "sitl and search_nightly and not gz and not llm and not nightly and not e2e",
         ),
         ("e2e-search", "sitl and e2e_search and not gz and not llm and not nightly and not e2e"),
+        ("inspect", "sitl and inspect and not gz and not llm and not nightly and not e2e"),
     ],
 )
 def test_search_modes(mode: str, marks: str) -> None:

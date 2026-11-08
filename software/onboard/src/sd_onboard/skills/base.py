@@ -11,7 +11,7 @@ not changed without a new minor version.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal, Protocol
 from uuid import UUID
@@ -22,16 +22,20 @@ from sd_mav.mission import MissionItem
 from sd_mav.modes import CopterMode
 from sd_mav.vehicle import MavResult
 from sd_obs.clock import Clock
+from sd_safety.floor import FloorPack
 from sd_safety.targets import Plane
 from sd_schemas.base import Id, LatLonAlt, SdModel
 from sd_schemas.charter import MissionCharter
 from sd_schemas.executor import ExecutorState, ResumePoint
 from sd_schemas.keepout import Keepout
+from sd_schemas.link import GeoDetectionMsg
+from sd_schemas.rangefinder import LaserState
 from sd_schemas.skills import SkillParams
 from sd_schemas.vehicle import VehicleState
 
 __all__ = [
     "ExecutorIO",
+    "InspectShot",
     "MavAction",
     "PlanContext",
     "PlanError",
@@ -76,6 +80,11 @@ class PlanContext:
     resume_point: ResumePoint | None
     clock: Clock
     keepouts: tuple[Keepout, ...] = field(default=())  # every cylinder in force
+    # How long the drone has been inside each unconfirmed cylinder it is in now (seconds,
+    # by keepout_id): a search route planned mid-passage counts it (``sd_safety.keepout``).
+    keepout_inside_s: Mapping[Id, float] = field(default_factory=dict)
+    # The height floor's map pack (``sd_safety.floor``); None: none, nothing comes down.
+    floor_pack: FloorPack | None = None
 
     def alt_amsl(self, alt_rel_home_m: float) -> float:
         return self.charter.home.alt_amsl_m + alt_rel_home_m
@@ -84,6 +93,17 @@ class PlanContext:
         v = self.vehicle
         alt = v.alt_rel_home_m if alt_rel_home_m is None else alt_rel_home_m
         return LatLonAlt(lat=v.lat, lon=v.lon, alt_amsl_m=self.alt_amsl(alt))
+
+
+@dataclass(frozen=True, slots=True)
+class InspectShot:
+    """One still of a closer look's round, as perception reported it (its report carries
+    the order's ``command_id`` and the step): which camera took it ("main", "tele") and its
+    target detections (people), placed on the map."""
+
+    still_id: UUID
+    camera: str
+    detections: tuple[GeoDetectionMsg, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +173,14 @@ class ExecutorIO(Protocol):
     # One still now, through perception as usual (its report carries ``command_id``);
     # the still's id, or None when the camera gave none.
     async def capture_still(self, command_id: Id) -> UUID | None: ...
+    # One round of a closer look: a still from every camera (main, then tele), each through
+    # perception with ``command_id`` and ``inspect_step`` on its report; [] when none came.
+    async def capture_round(self, command_id: Id, inspect_step: int) -> list[InspectShot]: ...
+    # The downward laser now; None when none is fitted (the floor is the map's alone).
+    def laser_state(self) -> LaserState | None: ...
+    # The height floor's map pack of the charter; None: none, the drone does not come down.
+    @property
+    def floor_pack(self) -> FloorPack | None: ...
     # Every cylinder in force now (read only).
     @property
     def keepouts(self) -> tuple[Keepout, ...]: ...

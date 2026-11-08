@@ -12,7 +12,7 @@ from sd_schemas.candidate_ai import (
     named_seqs,
     queue_counts,
 )
-from sd_schemas.search import CandidateCard, priority_class
+from sd_schemas.search import CandidateCard, priority_class, queue_order
 
 T = dt.datetime(2026, 10, 17, 12, 0, tzinfo=dt.UTC)
 
@@ -73,6 +73,20 @@ def test_queue_counts_and_the_line_leave_out_decided_and_merged() -> None:
     assert candidates_line([card(1, 0.7)], {}, drone) == (
         "Kandidater: K1 HÖG (1/2 bilder) 40 m N | att granska 1, låg 0"
     )
+
+
+def test_a_candidate_that_blocks_the_search_leads_the_line_with_its_reason() -> None:
+    """The AI sees it first, even behind three better ones (``LINE_CANDIDATES_MAX``), with
+    the metres of search its cylinder left out; it counts as one to review."""
+    blocks = card(9, 0.12, priority_class="high", blocks_survey_m=71.4)
+    cards = [card(1, 0.9), card(2, 0.8), card(3, 0.7), blocks]
+    assert [c.seq for c in sorted(cards, key=queue_order)] == [9, 1, 2, 3]
+    assert queue_counts(cards) == {"review": 4, "low": 0, "confirmed": 0, "rejected": 0}
+    assert candidates_line(cards, {}, None) == (
+        "Kandidater: K9 HÖG (1/2 bilder; blockerar sökningen, 71 m bana hoppad) | "
+        "K1 HÖG (1/2 bilder) | K2 HÖG (1/2 bilder) | att granska 4, låg 0"
+    )
+    assert candidate_event_body(blocks.model_dump(mode="json")) is not None  # wakes the AI
 
 
 def test_a_text_names_the_candidates_it_writes_as_k_and_a_number() -> None:

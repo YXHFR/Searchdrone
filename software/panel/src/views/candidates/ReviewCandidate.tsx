@@ -11,13 +11,21 @@ import type {
   CandidateDecision,
   CandidateDetail,
   CandidateView,
+  CommandResult,
   StoredAssessment,
 } from "../../api/types";
 import { decimalText, dmsText, swerefText } from "../../lib/coords";
+import { uuidv7 } from "../../lib/uuidv7";
 import { useCandidateStore } from "../../state/candidateStore";
+import { useOpenLook } from "../../state/inspectStore";
+import { useLiveStore } from "../../state/liveStore";
+import { activeCharter, useMissionStore } from "../../state/missionStore";
 import { useIsPilot, useSessionStore } from "../../state/sessionStore";
+import { useUiStore } from "../../state/uiStore";
 import { Dialog } from "../../ui/Dialog";
 import { HoldButton } from "../../ui/HoldButton";
+import { AwaitBox, InspectStrip, LowerOffer } from "./InspectLook";
+import { inspectBlock, lookKind, operationMode } from "./inspect";
 import { crops, fieldLabel, isOpen } from "./queue";
 
 const pct = new Intl.NumberFormat("sv-SE", { style: "percent", maximumFractionDigits: 0 });
@@ -43,9 +51,18 @@ export function ReviewCandidate({
   const [large, setLarge] = useState<{ viewId: string; time: string } | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [note, setNote] = useState("");
-  const [asking, setAsking] = useState<"confirm" | "undo" | null>(null);
+  const [asking, setAsking] = useState<"confirm" | "undo" | "inspect" | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [refused, setRefused] = useState<string | null>(null);
+  const anyLook = useOpenLook();
+  const look = anyLook?.candidate_id === card.candidate_id ? anyLook : null;
+  const airborne = useLiveStore((s) => s.vehicle?.airborne ?? false);
+  const sdlink = useLiveStore((s) => s.vehicle?.link?.sdlink ?? null);
+  const activeId = useLiveStore((s) => s.mission?.active_charter_id ?? null);
+  const missionId = useLiveStore((s) => s.mission?.id ?? null);
+  const charter = useMissionStore((s) => activeCharter(s, activeId))?.body ?? null;
+  const block = inspectBlock({ isPilot, card, look: anyLook, airborne, sdlink });
   const back = (): void => useCandidateStore.getState().open(null);
 
   const load = useCallback(async (): Promise<void> => {
@@ -88,8 +105,13 @@ export function ReviewCandidate({
       setDetail(d);
       setNote("");
       setAsking(null);
-      if (decision === "reject" || decision === "unsure") back();
+      if (decision === "reject" || decision === "unsure" || decision === "resume") back();
     } catch (e) {
+      // The gate said no to the look: say why in the question, which stays open.
+      if (decision === "inspect" && e instanceof HttpError && e.code === "INSPECT_REFUSED") {
+        setRefused(e.message);
+        return;
+      }
       setAsking(null);
       if (e instanceof HttpError && e.code === "SUPERSEDED") {
         setMsg(t("candidates.review.superseded"));
@@ -102,11 +124,134 @@ export function ReviewCandidate({
     }
   };
 
-  const pictures = detail ? crops(detail.observations) : [];
+  /** "Ta fler bilder" while the drone hovers for the decision (capture_stills from HOLD). */
+  const morePictures = async (): Promise<void> => {
+    if (!missionId) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await api<CommandResult>(paths.missionCommands(missionId), {
+        method: "POST",
+        body: { client_command_id: uuidv7(), skill: "capture_stills", params: {} },
+      });
+      useMissionStore.getState().upsertCommand(r.command);
+      useUiStore
+        .getState()
+        .toast(
+          r.gate.decision === "REJECT"
+            ? t("orders.rejected", { reason: r.gate.message_sv })
+            : t("inspect.morePicturesSent"),
+        );
+    } catch (e) {
+      setMsg(t("candidates.review.error", { msg: e instanceof Error ? e.message : "" }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const ai = detail ? latest(detail.assessments) : null;
   const open = isOpen(card);
   // The server takes confirm and reject only once the search service has made it ready.
   const ready = card.state !== "new";
+  const inspecting = card.state === "inspecting" || look !== null;
+  // During a look the close-ups come first, as they arrive.
+  const oldestFirst = detail ? crops(detail.observations) : [];
+  const pictures = inspecting ? [...oldestFirst].reverse() : oldestFirst;
+  const mode = operationMode(charter);
+
+  const decideSection = open ? (
+    <section className="cand-decide" aria-label={t("candidates.label")}>
+      <label className="cand-note">
+        {t("candidates.review.note")}
+        <textarea
+          value={note}
+          maxLength={NOTE_MAX}
+          rows={2}
+          data-testid="cand-note"
+          onChange={(e) => setNote(e.target.value)}
+        />
+      </label>
+      {inspecting && !isPilot ? <p className="muted">{t("inspect.observerNote")}</p> : null}
+      <div className="cand-buttons">
+        <HoldButton
+          onDone={() => setAsking("confirm")}
+          disabled={!viewed || busy || !ready}
+          hint={
+            !ready
+              ? t("candidates.review.notReady")
+              : viewed
+                ? t("candidates.review.confirmHint")
+                : t("candidates.review.confirmLocked")
+          }
+          testId="cand-confirm"
+        >
+          {t("candidates.review.confirm")}
+        </HoldButton>
+        <button
+          type="button"
+          className="btn cand-reject"
+          disabled={busy || !ready}
+          data-testid="cand-reject"
+          onClick={() => void decide("reject")}
+        >
+          {t("candidates.review.reject")}
+        </button>
+        {inspecting ? null : (
+          <button
+            type="button"
+            className="btn btn-quiet"
+            disabled={busy || block !== null}
+            title={block ? t(`inspect.block.${block}`) : undefined}
+            aria-describedby={block ? "cand-inspect-why" : undefined}
+            data-testid="cand-inspect"
+            onClick={() => {
+              setRefused(null);
+              setAsking("inspect");
+            }}
+          >
+            {t("candidates.review.inspect")}
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn btn-quiet"
+          disabled={busy}
+          data-testid="cand-unsure"
+          onClick={() => void decide("unsure")}
+        >
+          {t("candidates.review.unsure")}
+        </button>
+        {inspecting && isPilot ? (
+          <button
+            type="button"
+            className="btn btn-quiet"
+            disabled={busy}
+            data-testid="cand-resume"
+            onClick={() => void decide("resume")}
+          >
+            {t("inspect.resume")}
+          </button>
+        ) : null}
+        {look?.phase === "await" && isPilot ? (
+          <button
+            type="button"
+            className="btn btn-quiet"
+            disabled={busy}
+            data-testid="cand-more"
+            onClick={() => void morePictures()}
+          >
+            {t("inspect.morePictures")}
+          </button>
+        ) : null}
+      </div>
+      {!inspecting && block ? (
+        <p id="cand-inspect-why" className="muted" data-testid="cand-inspect-why">
+          {t(`inspect.block.${block}`)}
+        </p>
+      ) : null}
+    </section>
+  ) : null;
+  const awaiting = look?.phase === "await";
 
   return (
     <div className="view-body cand-review" data-testid="cand-review" data-seq={card.seq}>
@@ -120,6 +265,10 @@ export function ReviewCandidate({
         <span className="tag">{t(`candidates.state.${card.state}`)}</span>
       </header>
       <p className="muted">{t("views.candidates.onlyYou")}</p>
+      {look ? <InspectStrip look={look} /> : null}
+      {look ? <LowerOffer look={look} /> : null}
+      {look ? <AwaitBox look={look} /> : null}
+      {awaiting ? decideSection : null}
       {failed ? <p className="warn">{t("candidates.review.failed")}</p> : null}
       {!detail && !failed ? <p className="muted">{t("candidates.review.loading")}</p> : null}
 
@@ -128,7 +277,9 @@ export function ReviewCandidate({
       ) : null}
 
       <section aria-labelledby="cand-pics">
-        <h3 id="cand-pics">{t("candidates.review.pictures")}</h3>
+        <h3 id="cand-pics">
+          {t(inspecting ? "candidates.review.picturesNewest" : "candidates.review.pictures")}
+        </h3>
         {detail && pictures.length === 0 ? (
           <p className="muted">{t("candidates.review.noPictures")}</p>
         ) : null}
@@ -177,63 +328,7 @@ export function ReviewCandidate({
         {viewed && aiOpen ? <Assessment ai={ai} /> : null}
       </section>
 
-      {open ? (
-        <section className="cand-decide" aria-label={t("candidates.label")}>
-          <label className="cand-note">
-            {t("candidates.review.note")}
-            <textarea
-              value={note}
-              maxLength={NOTE_MAX}
-              rows={2}
-              data-testid="cand-note"
-              onChange={(e) => setNote(e.target.value)}
-            />
-          </label>
-          <div className="cand-buttons">
-            <HoldButton
-              onDone={() => setAsking("confirm")}
-              disabled={!viewed || busy || !ready}
-              hint={
-                !ready
-                  ? t("candidates.review.notReady")
-                  : viewed
-                    ? t("candidates.review.confirmHint")
-                    : t("candidates.review.confirmLocked")
-              }
-              testId="cand-confirm"
-            >
-              {t("candidates.review.confirm")}
-            </HoldButton>
-            <button
-              type="button"
-              className="btn cand-reject"
-              disabled={busy || !ready}
-              data-testid="cand-reject"
-              onClick={() => void decide("reject")}
-            >
-              {t("candidates.review.reject")}
-            </button>
-            <button
-              type="button"
-              className="btn btn-quiet"
-              disabled
-              title={t("candidates.review.inspectLater")}
-              data-testid="cand-inspect"
-            >
-              {t("candidates.review.inspect")}
-            </button>
-            <button
-              type="button"
-              className="btn btn-quiet"
-              disabled={busy}
-              data-testid="cand-unsure"
-              onClick={() => void decide("unsure")}
-            >
-              {t("candidates.review.unsure")}
-            </button>
-          </div>
-        </section>
-      ) : null}
+      {awaiting ? null : decideSection}
       {card.state === "rejected" && isPilot ? (
         <button
           type="button"
@@ -282,6 +377,43 @@ export function ReviewCandidate({
               onClick={() => void decide("confirm")}
             >
               {t("candidates.dialog.yes")}
+            </button>
+          </div>
+        </Dialog>
+      ) : null}
+      {asking === "inspect" ? (
+        <Dialog
+          title={t("inspect.dialog.title", { seq: card.seq })}
+          onClose={() => setAsking(null)}
+          testId="cand-inspect-dialog"
+        >
+          <p>
+            {lookKind(charter) === "over"
+              ? t("inspect.dialog.over", { mode: t(`inspect.mode.${mode ?? "live"}`) })
+              : t("inspect.dialog.side")}
+          </p>
+          {charter && !charter.floor_pack_id ? (
+            <p className="muted" data-testid="cand-inspect-nomap">
+              {t("inspect.dialog.noMap")}
+            </p>
+          ) : null}
+          {refused ? (
+            <p className="warn" role="alert" data-testid="cand-inspect-refused">
+              {t("inspect.dialog.refused", { why: refused })}
+            </p>
+          ) : null}
+          <div className="dialog-actions">
+            <button type="button" className="btn" onClick={() => setAsking(null)}>
+              {t("inspect.dialog.cancel")}
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy || block !== null}
+              data-testid="cand-inspect-yes"
+              onClick={() => void decide("inspect")}
+            >
+              {t("inspect.dialog.yes")}
             </button>
           </div>
         </Dialog>

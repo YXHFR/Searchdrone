@@ -46,6 +46,9 @@ class Trigger(StrEnum):
     FC_SILENT = "fc_silent"
     LANDED_DISARMED = "landed_disarmed"
     LANDED_TIMEOUT_5S = "landed_timeout_5s"
+    # A closer look climbs straight up in an internal order: the link lost, the laser lost
+    # below the map's floor, or first up before flying back to where the search broke off.
+    INSPECT_CLIMB = "inspect_climb"
 
 
 TriggerKey = Trigger | str  # str = "skill:<name>" for an accepted skill order
@@ -60,8 +63,10 @@ class Transition(NamedTuple):
     guard: str  # the name of a function in executor/guards.py
 
 
-AIRBORNE_CONTROLLED: Final = frozenset({S.TAKEOFF, S.TRANSIT, S.SURVEY, S.HOLD, S.RTL})
-MOVING: Final = frozenset({S.TAKEOFF, S.TRANSIT, S.SURVEY, S.HOLD})  # limit monitors run here
+# INSPECT (a closer look flying) is wherever TRANSIT is (spec "Titta närmare" §11.1).
+AIRBORNE_CONTROLLED: Final = frozenset({S.TAKEOFF, S.TRANSIT, S.SURVEY, S.INSPECT, S.HOLD, S.RTL})
+# The limit monitors run here.
+MOVING: Final = frozenset({S.TAKEOFF, S.TRANSIT, S.SURVEY, S.INSPECT, S.HOLD})
 ON_GROUND: Final = frozenset({S.IDLE, S.PREFLIGHT, S.LANDED})
 # Every state we steer in must answer these (test_safety_triggers_cover_all_states).
 SAFETY_TRIGGERS: Final = (
@@ -73,8 +78,10 @@ SAFETY_TRIGGERS: Final = (
 )
 
 _TAKEN_OVER: Final = frozenset({S.HELD, S.FAILSAFE})
+# Orders from INSPECT: return home only (T10, the registry's ``allowed_from``); a test
+# keeps the table and the registry the same.
 _STEERING: Final = frozenset({S.HOLD, S.TRANSIT, S.SURVEY})
-_LIMITED: Final = frozenset({S.TAKEOFF, S.TRANSIT, S.SURVEY, S.HOLD})
+_LIMITED: Final = frozenset({S.TAKEOFF, S.TRANSIT, S.SURVEY, S.INSPECT, S.HOLD})
 _RELEASE_TARGETS: Final = frozenset({S.HOLD, S.RTL, S.LANDED, S.PREFLIGHT})
 
 
@@ -105,7 +112,7 @@ def _rows() -> dict[tuple[ExecutorState, TriggerKey], Transition]:
     add(_STEERING, skill_key("follow_path"), {S.TRANSIT}, "always")  # T7b: a drawn path
     add(_STEERING, skill_key("hold"), {S.HOLD}, "always")  # T8
     add(_STEERING, skill_key("orbit"), {S.TRANSIT}, "always")  # T8b: a ring of waypoints
-    add(_STEERING, skill_key("inspect_detection"), {S.TRANSIT}, "always")  # T8c: a closer look
+    add(_STEERING, skill_key("inspect_detection"), {S.INSPECT}, "always")  # T8c: a closer look
     add({S.HOLD}, skill_key("capture_stills"), {S.HOLD}, "always")  # T8d: stills, no move
     add({S.HOLD}, skill_key("resume"), {S.TRANSIT, S.SURVEY}, "resume_target")  # T9
     add(_LIMITED, skill_key("return_home"), {S.RTL}, "always")  # T10
@@ -113,6 +120,11 @@ def _rows() -> dict[tuple[ExecutorState, TriggerKey], Transition]:
     add({S.TRANSIT, S.SURVEY}, tc.SKILL_DONE, {S.HOLD}, "always")  # T12
     for key in (tc.SKILL_FAILED, tc.ORDER_CANCEL):  # T13
         add({S.TRANSIT, S.SURVEY}, key, {S.HOLD}, "always")
+    # T29: a closer look's steps are over (it hovers for the pilot's decision, hold_reason
+    # "inspect_await"), its internal climb is done, or it failed or was cancelled.
+    for key in (tc.SKILL_DONE, tc.SKILL_FAILED, tc.ORDER_CANCEL):
+        add({S.INSPECT}, key, {S.HOLD}, "always")
+    add({S.INSPECT, S.HOLD}, tc.INSPECT_CLIMB, {S.INSPECT}, "always")  # T30: straight up
     add(_LIMITED, tc.LIMIT_HOLD, {S.HOLD}, "always")  # T14
     add(_LIMITED, tc.LIMIT_RTL, {S.RTL}, "always")  # T15
     add(_LIMITED, tc.LIMIT_ALT, {S.TRANSIT}, "always")  # T16

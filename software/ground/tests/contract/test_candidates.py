@@ -21,13 +21,17 @@ import httpx
 import pytest
 from PIL import Image, ImageDraw
 from sqlalchemy import text
+from structlog.testing import capture_logs
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "helpers"))
 
 from flow_rig import BRAIN, SEARCH, VID, H, Rig, rig  # pyright: ignore[reportMissingImports]
 
 from sd_ground.app import commander_asgi, create_commander_app
+from sd_ground.db.candidates import _survivor  # pyright: ignore[reportPrivateUsage]
+from sd_ground.services import candidates as candidates_service
 from sd_schemas.base import LatLon, new_id
+from sd_schemas.candidate_ai import candidate_event_body, candidates_line
 from sd_schemas.link import (
     BBox,
     CropData,
@@ -37,7 +41,7 @@ from sd_schemas.link import (
     PerceptionReport,
     Pose,
 )
-from sd_schemas.search import SearchProfile
+from sd_schemas.search import CandidateCard, SearchProfile
 from sd_search.app import SearchService
 from sd_search.client import GroundClient
 from sd_search.profile import GroundProfileSource
@@ -330,6 +334,99 @@ async def test_e1_the_search_token_never_decides(r: Rig) -> None:
     assert (near["near_seq"], near["near_state"]) == (1, "rejected")
 
 
+async def _decide_in_db(r: Rig, cid: str, state: str, decision: str) -> None:
+    """A person's decision, written as the decision route would."""
+    async with r.flow.repo.engine.begin() as conn:
+        await conn.execute(text(
+            "INSERT INTO candidates (candidate_id, rev, mission_id, seq, state, geom, sigma95_m, "
+            "n_seen, n_in_view, best_detector_score, priority, first_seen_utc, last_seen_utc) "
+            "SELECT candidate_id, rev + 1, mission_id, seq, :s, geom, sigma95_m, n_seen, "
+            "n_in_view, best_detector_score, priority, first_seen_utc, last_seen_utc "
+            "FROM candidates WHERE candidate_id = :c ORDER BY rev DESC LIMIT 1"
+        ), {"c": cid, "s": state})  # fmt: skip
+        await conn.execute(text(
+            "INSERT INTO candidate_decisions (candidate_id, decision, subject_rev, operator_ref, "
+            "session_id) VALUES (:c, :d, 1, 'operator:demo', 's')"
+        ), {"c": cid, "d": decision})  # fmt: skip
+
+
+async def test_a_detection_next_to_a_find_joins_it_and_one_next_to_a_rejected_does_not(
+    r: Rig,
+) -> None:
+    mid = await r.open_mission()
+    service, client = search_service(r, red_profile(r))
+    try:
+        await send(r, person(r, 0, 100))
+        await send(r, person(r, 60, 100))
+        assert await service.step() == 2
+        found, gone = sorted((await queue(r, mid))["items"], key=lambda c: c["seq"])
+        await _decide_in_db(r, found["candidate_id"], "confirmed", "confirm")
+        await _decide_in_db(r, gone["candidate_id"], "rejected", "reject")
+
+        # The same person seen again 3 m off; someone 3 m from the rejected one.
+        again, near = person(r, 3, 100), person(r, 63, 100)
+        await send(r, again, near)
+        await service.step()  # the stale fusion: 409, read back
+        await service.step()
+        items = {c["candidate_id"]: c for c in (await queue(r, mid, state="confirmed"))["items"]}
+        after = items[found["candidate_id"]]
+        assert after["state"] == "confirmed" and after["n_seen"] == 2
+        assert after["rev"] == found["rev"] + 2  # the decision, then the observation
+        for k in ("lat", "lon", "sigma95_m", "priority", "best_detector_score"):
+            assert after[k] == found[k], k  # unmoved, unscored: as the person confirmed it
+        decided = ("confirmed", "rejected")
+        new = [c for c in (await queue(r, mid))["items"] if c["state"] not in decided]
+        assert len(new) == 1
+        assert (new[0]["near_seq"], new[0]["near_state"]) == (gone["seq"], "rejected")
+        async with r.flow.repo.engine.begin() as conn:
+            seen = (await conn.execute(text(
+                "SELECT candidate_id::text AS c, detection_id::text AS d "
+                "FROM candidate_observations"
+            ))).all()  # fmt: skip
+        assert (found["candidate_id"], str(again.detection_id)) in seen
+        assert (new[0]["candidate_id"], str(near.detection_id)) in seen
+    finally:
+        await client.aclose()
+
+    # The search token may add observations to a find and nothing else.
+    extra = person(r, 2, 100)
+    await send(r, extra)
+    obs = [{"detection_id": str(extra.detection_id), "distance_m": 2.0}]
+    base = revision(r) | {
+        "candidate_id": found["candidate_id"],
+        "base_rev": after["rev"],
+        "state": None,
+        "observations": obs,
+    }
+    assessment = {
+        "candidate_id": found["candidate_id"],
+        "profile_version": 1,
+        "engine": "code",
+        "model_id": "sd_search:code",
+        "person": "no",
+        "person_p": 0.1,
+        "overall": 0.1,
+        "explanation_sv": "",
+        "latency_ms": 0,
+    }
+    for bad in (
+        base | {"state": "ready"},
+        base | {"observations": []},
+        base | {"assessment": assessment},  # no engine re-judges a find
+        base | {"state": "merged", "merged_into": new[0]["candidate_id"]},
+        base | {"candidate_id": gone["candidate_id"], "base_rev": gone["rev"] + 1},
+    ):
+        res = await post(r, mid, bad)
+        assert res.status_code == 409 and res.json()["code"] == "CANDIDATE_CLOSED", bad
+    lat, lon = r.at(9, 109)
+    moved = base | {"lat": lat, "lon": lon, "sigma95_m": 40.0, "priority": 0.99, "n_seen": 3}
+    assert (await post(r, mid, moved)).status_code == 200
+    (last,) = (await queue(r, mid, state="confirmed"))["items"]
+    for k in ("lat", "lon", "sigma95_m", "priority"):
+        assert last[k] == found[k], k
+    assert last["n_seen"] == 3 and last["state"] == "confirmed"
+
+
 async def test_one_observation_per_detection_and_batches_are_atomic(r: Rig) -> None:
     mid = await r.open_mission()
     det = person(r, 0, 100)
@@ -557,3 +654,323 @@ async def test_a_closer_looks_stills_and_its_end_reach_the_search_service(r: Rig
         ]
     finally:
         await client.aclose()
+
+
+async def test_a_candidate_whose_cylinder_the_search_goes_around_is_first(r: Rig) -> None:
+    """``executor.survey_blocked``: the search went around the cylinder of a low candidate
+    nobody has looked at (SK01 seed 3: the target, seen once at a lane's end). Its card is
+    first in the queue and high, with the metres left out, its priority as the search
+    service gave it; the AI is woken for it. Decided, it blocks nothing."""
+    mid = await r.open_mission()
+    medium, low = revision(r, priority=0.5, state="ready"), revision(r, priority=0.1, state="ready")
+    other = revision(r, priority=0.45, state="ready")
+    assert (await post(r, mid, medium, low, other)).status_code == 200
+    first = (await queue(r, mid))["items"][0]
+    assert first["candidate_id"] == medium["candidate_id"]
+    data = {
+        "command_id": str(new_id()),
+        "skill": "survey_sector",
+        "blocked": [
+            {"keepout_id": str(new_id()), "source": "candidate",
+             "source_id": low["candidate_id"], "skipped_m": 71.4},
+            # a detection no candidate has (yet): nothing to mark
+            {"keepout_id": str(new_id()), "source": "detection",
+             "source_id": str(new_id()), "skipped_m": 20.0},
+        ],
+    }  # fmt: skip
+    await r.onboard.session.send(
+        OnboardEvent(type="executor.survey_blocked", severity="info", data=data), ttl_ms=30_000
+    )
+    end = asyncio.get_running_loop().time() + 10
+    while (await queue(r, mid))["items"][0]["candidate_id"] != low["candidate_id"]:
+        assert asyncio.get_running_loop().time() < end, "the blocking candidate never rose"
+        await asyncio.sleep(0.05)
+    body = await queue(r, mid)
+    top = body["items"][0]
+    assert (top["priority"], top["priority_class"], top["blocks_survey_m"]) == (0.1, "high", 71.4)
+    assert [c["blocks_survey_m"] for c in body["items"][1:]] == [None, None]
+    assert body["counts"]["review"] == 3 and body["counts"]["low"] == 0
+    assert candidate_event_body(top) is not None  # the AI hears of it
+
+    def updated() -> list[str]:
+        return [
+            e.data["candidate_id"]
+            for e in r.g.bus.replay(r.g.bus.server_epoch, 0) or []
+            if e.topic == "candidates" and e.type == "candidate.updated"
+        ]
+
+    # The mark's row is in the queue before the card goes out: the handler reads the
+    # cards (``card_list``) between the two, so the bus may not have it yet.
+    while not updated():
+        assert asyncio.get_running_loop().time() < end, "the blocking card never went out"
+        await asyncio.sleep(0.05)
+    assert updated() == [low["candidate_id"]]
+    assert candidates_line([CandidateCard.model_validate(top)], {}, None) == (
+        "Kandidater: K2 HÖG (1/1 bilder; blockerar sökningen, 71 m bana hoppad) | "
+        "att granska 1, låg 0"
+    )
+
+    res = await r.panel.post(
+        f"/api/v1/candidates/{low['candidate_id']}/decision",
+        json={"decision": "reject", "note": "", "subject_rev": top["rev"]},
+        headers=H,
+    )
+    assert res.status_code == 200, res.text
+    body = await queue(r, mid, state="rejected")
+    assert [(c["priority_class"], c["blocks_survey_m"]) for c in body["items"]] == [("low", None)]
+    assert (await queue(r, mid))["items"][0]["candidate_id"] == medium["candidate_id"]
+
+
+async def test_a_drones_own_cylinder_blocks_through_its_detections_candidate(r: Rig) -> None:
+    """The drone's own cylinder names a detection: the candidate it joined is marked."""
+    mid = await r.open_mission()
+    service, client = search_service(r, red_profile(r))
+    try:
+        seen = person(r, 0, 100)
+        await send(r, seen, person(r, 80, 100))
+        assert await service.step() == 2
+        data = {
+            "command_id": str(new_id()),
+            "skill": "resume",
+            "blocked": [{"keepout_id": str(new_id()), "source": "detection",
+                         "source_id": str(seen.detection_id), "skipped_m": 33.0}],
+        }  # fmt: skip
+        await r.onboard.session.send(
+            OnboardEvent(type="executor.survey_blocked", severity="info", data=data),
+            ttl_ms=30_000,
+        )
+        end = asyncio.get_running_loop().time() + 10
+        while (await queue(r, mid))["items"][0]["blocks_survey_m"] is None:
+            assert asyncio.get_running_loop().time() < end, "the detection's candidate never rose"
+            await asyncio.sleep(0.05)
+        top = (await queue(r, mid))["items"][0]
+        detail = (await r.panel.get(f"/api/v1/candidates/{top['candidate_id']}")).json()
+        assert [o["detection_id"] for o in detail["observations"]] == [str(seen.detection_id)]
+        assert top["blocks_survey_m"] == 33.0 and top["priority_class"] == "high"
+    finally:
+        await client.aclose()
+
+
+async def test_a_cylinder_gone_around_before_its_detection_has_a_candidate_blocks_it(
+    r: Rig,
+) -> None:
+    """The drone's own cylinder is made the moment it sees a person; the search can go
+    around it before the search service has put that detection in a candidate (SK09
+    seed 2: 370 ms between the two). The event is not sent again, so the block is kept by
+    its detection: the candidate it joins is first in the queue and high from its very
+    first card, ahead of a candidate with a higher priority. The same block again keeps
+    no second row; a larger one does; a block of a detection id no detection can have is
+    left out."""
+    mid = await r.open_mission()
+    other = revision(r, priority=0.5, state="ready")
+    assert (await post(r, mid, other)).status_code == 200
+    service, client = search_service(r, red_profile(r))
+    try:
+        seen = person(r, 0, 100)
+        await send(r, seen)
+        did = str(seen.detection_id)
+
+        def blocked(m: float, source_id: str = did) -> dict[str, Any]:
+            return {
+                "command_id": str(new_id()),
+                "skill": "resume",
+                "blocked": [{"keepout_id": str(new_id()), "source": "detection",
+                             "source_id": source_id, "skipped_m": m}],
+            }  # fmt: skip
+
+        await candidates_service.on_survey_blocked(r.flow, mid, VID, blocked(74.6))
+        await candidates_service.on_survey_blocked(r.flow, mid, VID, blocked(74.6))
+        await candidates_service.on_survey_blocked(r.flow, mid, VID, blocked(60.0))
+        await candidates_service.on_survey_blocked(r.flow, mid, VID, blocked(80.0, "not-a-uuid"))
+        assert await candidates_service.repo(r.flow).pending_blocks(mid) == {did: 74.6}
+        assert (await queue(r, mid))["items"][0]["candidate_id"] == other["candidate_id"]
+
+        assert await service.step() == 1
+        top = (await queue(r, mid))["items"][0]
+        detail = (await r.panel.get(f"/api/v1/candidates/{top['candidate_id']}")).json()
+        assert [o["detection_id"] for o in detail["observations"]] == [did]
+        assert (top["blocks_survey_m"], top["priority_class"]) == (74.6, "high")
+        new = [
+            e.data
+            for e in r.g.bus.replay(r.g.bus.server_epoch, 0) or []
+            if e.topic == "candidates"
+            and e.type == "candidate.new"
+            and e.data["candidate_id"] == top["candidate_id"]
+        ]
+        assert [d["blocks_survey_m"] for d in new] == [74.6]  # the first card says so
+
+        await candidates_service.on_survey_blocked(r.flow, mid, VID, blocked(90.0))
+        assert (await queue(r, mid))["items"][0]["blocks_survey_m"] == 90.0
+        assert await _marks(r, mid) == [(top["candidate_id"], 90.0)]
+    finally:
+        await client.aclose()
+
+
+# --- executor.survey_blocked: merges, bad numbers, the same news again (review of #215) --
+
+
+def _blocked(*items: tuple[str, object]) -> dict[str, Any]:
+    """An ``executor.survey_blocked`` body: (candidate_id, skipped_m) per cylinder."""
+    return {
+        "command_id": str(new_id()),
+        "skill": "survey_sector",
+        "blocked": [
+            {"keepout_id": str(new_id()), "source": "candidate", "source_id": c, "skipped_m": m}
+            for c, m in items
+        ],
+    }
+
+
+def _updated(r: Rig) -> list[str]:
+    return [
+        str(e.data["candidate_id"])
+        for e in r.g.bus.replay(r.g.bus.server_epoch, 0) or []
+        if e.topic == "candidates" and e.type == "candidate.updated"
+    ]
+
+
+async def _marks(r: Rig, mid: str) -> list[tuple[str, float]]:
+    async with r.flow.repo.engine.connect() as conn:
+        rows = await conn.execute(
+            text(
+                "SELECT payload->>'candidate_id', (payload->>'skipped_m')::float FROM events "
+                "WHERE mission_id = :m AND type = 'candidate.blocks_survey' ORDER BY id"
+            ),
+            {"m": mid},
+        )
+        return [(str(c), float(m)) for c, m in rows.all()]
+
+
+async def test_a_merge_carries_the_blocking_to_the_candidate_it_joined(r: Rig) -> None:
+    """The search service merges a blocking candidate into another: the survivor now
+    holds the cylinder, so it blocks the search with the larger of the two, and its card
+    goes out again at once though the batch did not touch it."""
+    mid = await r.open_mission()
+    gone = revision(r, priority=0.2, state="ready")
+    survivor = revision(r, priority=0.1, state="ready")
+    top = revision(r, priority=0.9, state="ready")
+    assert (await post(r, mid, gone, survivor, top)).status_code == 200
+    await candidates_service.on_survey_blocked(
+        r.flow, mid, VID, _blocked((gone["candidate_id"], 40.0), (survivor["candidate_id"], 12.0))
+    )
+    before = len(_updated(r))
+    merge = gone | {"base_rev": 1, "state": "merged", "merged_into": survivor["candidate_id"]}
+    assert (await post(r, mid, merge)).status_code == 200
+    first = (await queue(r, mid))["items"][0]
+    assert first["candidate_id"] == survivor["candidate_id"]
+    assert (first["blocks_survey_m"], first["priority_class"]) == (40.0, "high")
+    assert _updated(r)[before:] == [gone["candidate_id"], survivor["candidate_id"]]
+    merged = (await queue(r, mid, state="merged"))["items"]
+    assert [c["blocks_survey_m"] for c in merged] == [None]
+    # The same cylinder reported again under the merged candidate's id: nothing new.
+    await candidates_service.on_survey_blocked(
+        r.flow, mid, VID, _blocked((gone["candidate_id"], 40.0))
+    )
+    assert len(await _marks(r, mid)) == 2
+
+
+@pytest.mark.parametrize(
+    "bad", [float("nan"), float("inf"), float("-inf"), -1.0, "NaN", True, False]
+)
+async def test_a_skipped_length_that_is_not_metres_is_left_out(r: Rig, bad: object) -> None:
+    mid = await r.open_mission()
+    low = revision(r, priority=0.1, state="ready")
+    other = revision(r, priority=0.2, state="ready")
+    assert (await post(r, mid, low, other)).status_code == 200
+    with capture_logs() as logs:
+        await candidates_service.on_survey_blocked(
+            r.flow, mid, VID, _blocked((low["candidate_id"], bad), (other["candidate_id"], 8.0))
+        )
+    assert [e["event"] for e in logs if e["log_level"] == "warning"] == [
+        "candidate.survey_blocked_invalid"
+    ]
+    assert await _marks(r, mid) == [(other["candidate_id"], 8.0)]  # the good one counts
+    assert _updated(r) == [other["candidate_id"]]
+    cards = {c["candidate_id"]: c for c in (await queue(r, mid))["items"]}
+    assert cards[low["candidate_id"]]["blocks_survey_m"] is None
+
+
+async def test_the_same_or_less_left_out_again_wakes_nobody(r: Rig) -> None:
+    """Each plan of the same way around reports it again: only more metres left out is
+    news (a new mark, the card out again, the AI woken); the same or less is not."""
+    mid = await r.open_mission()
+    low = revision(r, priority=0.1, state="ready")
+    assert (await post(r, mid, low)).status_code == 200
+    cid = low["candidate_id"]
+    for m in (30.0, 30.0, 12.5, 45.0, 45.0):
+        await candidates_service.on_survey_blocked(r.flow, mid, VID, _blocked((cid, m)))
+    assert await _marks(r, mid) == [(cid, 30.0), (cid, 45.0)]
+    assert _updated(r) == [cid, cid]
+    assert (await queue(r, mid))["items"][0]["blocks_survey_m"] == 45.0
+    # One report naming the same candidate twice: one mark, the larger.
+    await candidates_service.on_survey_blocked(r.flow, mid, VID, _blocked((cid, 50.0), (cid, 48.0)))
+    assert (await _marks(r, mid))[2:] == [(cid, 50.0)] and _updated(r) == [cid] * 3
+
+
+async def test_a_chain_of_merges_carries_the_blocking_to_its_end(r: Rig) -> None:
+    """A merged into B, B into C: a cylinder still named by A blocks as C, and the same
+    news again under A is nothing new (no second mark, no card out again)."""
+    mid = await r.open_mission()
+    a, b, c = (revision(r, priority=p, state="ready") for p in (0.3, 0.2, 0.1))
+    assert (await post(r, mid, a, b, c)).status_code == 200
+    a_into_b = a | {"base_rev": 1, "state": "merged", "merged_into": b["candidate_id"]}
+    assert (await post(r, mid, a_into_b)).status_code == 200
+    b_into_c = b | {"base_rev": 1, "state": "merged", "merged_into": c["candidate_id"]}
+    assert (await post(r, mid, b_into_c)).status_code == 200
+    before = len(_updated(r))
+    by_a = _blocked((a["candidate_id"], 30.0))
+    await candidates_service.on_survey_blocked(r.flow, mid, VID, by_a)
+    assert await _marks(r, mid) == [(c["candidate_id"], 30.0)]
+    assert _updated(r)[before:] == [c["candidate_id"]]
+    first = (await queue(r, mid))["items"][0]
+    assert (first["candidate_id"], first["blocks_survey_m"]) == (c["candidate_id"], 30.0)
+    await candidates_service.on_survey_blocked(r.flow, mid, VID, by_a)
+    assert len(await _marks(r, mid)) == 1 and len(_updated(r)) == before + 1
+
+
+def test_a_cycle_of_merges_ends_where_it_would_come_round() -> None:
+    """The write refuses a cycle; were one stored all the same, following it stops."""
+    assert _survivor("a", {"a": "b", "b": "c"}) == "c"
+    assert _survivor("a", {"a": "b", "b": "a"}) == "b"
+    assert _survivor("a", {"a": "a"}) == "a"
+    assert _survivor("x", {"a": "b"}) == "x"
+
+
+@pytest.mark.parametrize("stored", ["NaN", "Infinity", "-Infinity", -3.0, "abc", None, {}])
+async def test_a_stored_mark_that_is_not_metres_does_not_break_the_cards(
+    r: Rig, stored: object
+) -> None:
+    """Old or damaged ``candidate.blocks_survey`` rows are left out when read; the
+    mission's other marks still count and the queue still lists every card."""
+    mid = await r.open_mission()
+    bad, good = revision(r, priority=0.2, state="ready"), revision(r, priority=0.1, state="ready")
+    assert (await post(r, mid, bad, good)).status_code == 200
+    for cid, m in ((bad["candidate_id"], stored), (good["candidate_id"], 9.5)):
+        await r.flow.repo.add_event(
+            "candidate.blocks_survey",
+            now=r.flow.now(),
+            mission_id=mid,
+            vehicle_id=VID,
+            payload={"candidate_id": cid, "skipped_m": m},
+        )
+    cards = {c["candidate_id"]: c for c in (await queue(r, mid))["items"]}
+    assert cards[bad["candidate_id"]]["blocks_survey_m"] is None
+    assert cards[good["candidate_id"]]["blocks_survey_m"] == 9.5
+
+
+async def test_a_merge_that_changes_nothing_sends_no_card(r: Rig) -> None:
+    """The survivor already blocks with more than the candidate merged into it: its
+    blocking stays the same, so its card does not go out again."""
+    mid = await r.open_mission()
+    gone = revision(r, priority=0.2, state="ready")
+    survivor = revision(r, priority=0.1, state="ready")
+    assert (await post(r, mid, gone, survivor)).status_code == 200
+    await candidates_service.on_survey_blocked(
+        r.flow, mid, VID, _blocked((gone["candidate_id"], 12.0), (survivor["candidate_id"], 40.0))
+    )
+    before = len(_updated(r))
+    merge = gone | {"base_rev": 1, "state": "merged", "merged_into": survivor["candidate_id"]}
+    assert (await post(r, mid, merge)).status_code == 200
+    assert _updated(r)[before:] == [gone["candidate_id"]]  # the merged one only
+    first = (await queue(r, mid))["items"][0]
+    assert (first["candidate_id"], first["blocks_survey_m"]) == (survivor["candidate_id"], 40.0)

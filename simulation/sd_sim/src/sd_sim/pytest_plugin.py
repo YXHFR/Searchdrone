@@ -51,6 +51,7 @@ MARKERS = (
     "search: the search chain set of a pull request (just ci-sitl mode=search)",
     "search_nightly: the nightly search campaign over SD_SEARCH_SEEDS (mode=search-nightly)",
     "e2e_search: the end-to-end search demo of just e2e-search",
+    "inspect: the closer look's scenarios TN01-TN19 (just ci-sitl mode=inspect)",
 )
 MAX_INSTANCE = 7
 # A shard's estimated work per worker must fit in this many seconds, and no single

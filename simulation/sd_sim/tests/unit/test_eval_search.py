@@ -50,6 +50,15 @@ def test_the_report_is_swedish_labelled_and_has_no_profile_text(tmp_path: Path) 
     assert data["found"] is True and data["label"] == LABEL
 
 
+def test_the_report_shows_the_cards_judged_by_picture_and_the_dropped_sources(
+    tmp_path: Path,
+) -> None:
+    body = write_run(tmp_path, run("SK10", 1, cards_by_picture=7, sources_dropped=2)).read_text(
+        encoding="utf-8"
+    )
+    assert "| Kort efter bild / källor oraklet glömde | 7 / 2 |" in body
+
+
 def _by(reqs: list, scenario: str) -> list:
     return [r for r in reqs if r.scenario == scenario]
 
@@ -87,13 +96,21 @@ def _sk04(tops: list[list[str]]) -> list:
 
 
 def test_sk04_counts_the_hikers_verdicts_that_saw_the_top() -> None:
-    # 8 conflict and 2 match among the verdicts that saw the top; not_visible is left out.
+    # 8 conflict and 2 match among the runs that saw the top; not_visible is left out.
     tops = [["conflict", "not_visible"]] * 8 + [["match"], ["match", "not_visible"]]
     first, hiker = _sk04(tops)
     assert first.ok and hiker.ok and not hiker.too_few
     assert hiker.value == "8/10 = 0.80 (19 kort)"
+    # One verdict per run: a run's many cards of the hiker are one draw, not many.
+    first, hiker = _sk04([["conflict"] * 5] * 7 + [["match"]] * 3)
+    assert not hiker.ok and hiker.value == "7/10 = 0.70 (38 kort)"
     first, hiker = _sk04([["conflict"]] * 7 + [["match"]] * 3)
     assert not hiker.ok and not hiker.too_few  # 0.70
+    # A run with both counts against the requirement (as a match), whichever came first,
+    # and the mixed runs are reported.
+    first, hiker = _sk04([["conflict", "match"]] * 3 + [["conflict"]] * 7)
+    assert not hiker.ok  # 0.70; counted as conflicts they would have passed at 1.00
+    assert hiker.value == "7/10 = 0.70 (13 kort, 3 blandade körningar räknade som match)"
 
 
 def test_sk04_with_too_few_sightings_says_so_and_never_passes(tmp_path: Path) -> None:
@@ -145,6 +162,13 @@ def test_the_cli_writes_the_requirements_and_fails_on_a_miss(tmp_path: Path) -> 
         write_run(tmp_path / "runs" / f"r{s}", run("SK03", s, has_target=False))
     assert main(["aggregate", str(tmp_path / "runs"), str(tmp_path / "out")]) == 0
     assert "SK03" in (tmp_path / "out" / "search_requirements.md").read_text(encoding="utf-8")
+    write_run(tmp_path / "runs" / "r5", run("SK03", 5, has_target=False, sources_dropped=3))
+    write_run(tmp_path / "runs" / "r6", run("SK03", 6, has_target=False, sources_dropped=1))
+    assert main(["aggregate", str(tmp_path / "runs"), str(tmp_path / "out")]) == 0
+    md = (tmp_path / "out" / "search_requirements.md").read_text(encoding="utf-8")
+    assert "Källor som oraklet glömde (kortet bedömt efter läge): 4." in md
+    out = json.loads((tmp_path / "out" / "search_requirements.json").read_text(encoding="utf-8"))
+    assert out["sources_dropped"] == 4
     write_run(tmp_path / "runs" / "r9", run("SK03", 9, has_target=False, false_confirms=1))
     assert main(["aggregate", str(tmp_path / "runs"), str(tmp_path / "out")]) == 1
     assert main(["aggregate", str(tmp_path / "empty"), str(tmp_path / "out")]) == 1

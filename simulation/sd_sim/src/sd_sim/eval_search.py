@@ -35,6 +35,7 @@ __all__ = [
     "RunMetrics",
     "aggregate",
     "main",
+    "sources_dropped",
     "wilson_lower",
     "write_run",
 ]
@@ -45,7 +46,7 @@ REPORT = "search_report.md"
 Z95_ONE_SIDED: Final = 1.6448536
 Z95_TWO_SIDED: Final = 1.959964
 LATENCY_P50_MAX_MS: Final = 3000.0
-SK04_MIN_SIGHTINGS: Final = 10  # verdicts that saw the hiker's top, over all runs
+SK04_MIN_SIGHTINGS: Final = 10  # runs whose verdict saw the hiker's top
 SK06_FACTOR: Final = 0.9
 TOO_FEW: Final = "för få data"
 
@@ -65,7 +66,7 @@ class RunMetrics:
     time_to_confirmed_s: float | None = None  # take-off -> the target's confirmation
     found: bool = False  # confirmed within limit_s
     false_confirms: int = 0
-    geo_error_m: float | None = None
+    geo_error_m: float | None = None  # the confirmed card -> the person (with a target)
     queue_rank_target: int | None = None  # its place when it was first ready (1 = top)
     target_ever_low: bool = False
     pos_end: float | None = None  # sum of POA x mean POD over the sectors at the end
@@ -89,6 +90,12 @@ class RunMetrics:
     queue_end: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     flight_s: float | None = None
     invariants_broken: list[str] = field(default_factory=list[str])
+    # Cards judged by what their picture was drawn from, and per thing those of its
+    # picture lying farther than a card's error from it (no find of it). The rest were
+    # judged by position, among them those whose source the oracle forgot (dropped).
+    cards_by_picture: int = 0
+    misplaced_by_thing: dict[str, int] = field(default_factory=dict[str, int])
+    sources_dropped: int = 0
 
     def finish(self) -> RunMetrics:
         """The derived measures (``found``, POS per battery percent)."""
@@ -148,6 +155,7 @@ def report_md(m: RunMetrics) -> str:
         f"| Cylindrar / minsta avstånd till kant | {m.keepouts} / "
         f"{_fmt(m.keepout_min_distance_m, ' m', 1)} |",
         f"| Motorer | {', '.join(m.engines) or '-'} |",
+        f"| Kort efter bild / källor oraklet glömde | {m.cards_by_picture} / {m.sources_dropped} |",
         f"| Molnkostnad | {_fmt(m.cloud_cost_sek, ' kr', 2)} |",
         "",
         "## Kön vid slutet",
@@ -263,12 +271,22 @@ def _sk04(runs: list[dict[str, Any]]) -> list[Requirement]:
     first = _share(
         runs, lambda r: r.get("confirmed_thing") == "target" and r["false_confirms"] == 0
     )
-    tops = [v for r in runs for v in (r.get("upper_by_thing") or {}).get("green-jacket", [])]
-    seen = [v for v in tops if v in ("conflict", "match")]
+    by_run = [(r.get("upper_by_thing") or {}).get("green-jacket", []) for r in runs]
+    tops = [v for vs in by_run for v in vs]
+    # One verdict per run: the oracle draws a thing's field once per run (keyed by seed,
+    # thing and field), so its cards in one run say the same and are not separate draws.
+    # A run with both did not hold the hiker apart: it counts against the requirement
+    # (as a match, never as a conflict), and how many there were is reported.
+    seen = [
+        "match" if "match" in vs else "conflict"
+        for vs in by_run
+        if any(v in ("conflict", "match") for v in vs)
+    ]
+    mixed = sum("conflict" in vs and "match" in vs for vs in by_run)
     conflict = sum(v == "conflict" for v in seen)
     text = (
-        f"vandraren: conflict / (conflict + match) på överdel ≥ 0,80, "
-        f"minst {SK04_MIN_SIGHTINGS} sedda"
+        f"vandraren: conflict / (conflict + match) på överdel ≥ 0,80, en bedömning per "
+        f"körning, minst {SK04_MIN_SIGHTINGS} körningar"
     )
     if len(seen) < SK04_MIN_SIGHTINGS:
         hiker = Requirement(
@@ -279,7 +297,8 @@ def _sk04(runs: list[dict[str, Any]]) -> list[Requirement]:
         hiker = _req(
             "SK04",
             text,
-            f"{conflict}/{len(seen)} = {share:.2f} ({len(tops)} kort)",
+            f"{conflict}/{len(seen)} = {share:.2f} ({len(tops)} kort"
+            + (f", {mixed} blandade körningar räknade som match)" if mixed else ")"),
             share >= 0.80,
             n,
         )
@@ -349,12 +368,19 @@ def aggregate(runs: Iterable[Mapping[str, Any]]) -> list[Requirement]:
     return out + _all(every)
 
 
-def requirements_md(reqs: Sequence[Requirement], n_runs: int) -> str:
+def sources_dropped(runs: Iterable[Mapping[str, Any]]) -> int:
+    """How many detections' sources the detector oracle forgot over the runs: their cards
+    were judged by position instead of by picture."""
+    return sum(int(r.get("sources_dropped") or 0) for r in runs)
+
+
+def requirements_md(reqs: Sequence[Requirement], n_runs: int, dropped: int = 0) -> str:
     lines = [
         "# Sökkedjan, nattliga krav",
         "",
         f"*{LABEL}: detektorn och bildmodellen är orakel med modellerade startprofiler. "
-        f"{n_runs} körningar.*",
+        f"{n_runs} körningar. Källor som oraklet glömde (kortet bedömt efter läge): "
+        f"{dropped}.*",
         "",
         "| Scenario | Krav | Värde | Körningar | Resultat |",
         "|---|---|---|---|---|",
@@ -377,12 +403,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         sys.stderr.write(f"inga {METRICS} under {args.runs}\n")
         return 1
     reqs = aggregate(runs)
+    dropped = sources_dropped(runs)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "search_requirements.md").write_text(
-        requirements_md(reqs, len(runs)), encoding="utf-8"
+        requirements_md(reqs, len(runs), dropped), encoding="utf-8"
     )
     (args.out / "search_requirements.json").write_text(
-        json.dumps({"label": LABEL, "runs": len(runs),
+        json.dumps({"label": LABEL, "runs": len(runs), "sources_dropped": dropped,
                     "requirements": [asdict(r) for r in reqs]}, indent=2, ensure_ascii=False)
         + "\n",
         encoding="utf-8",

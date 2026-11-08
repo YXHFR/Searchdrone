@@ -34,6 +34,7 @@ from sd_schemas.safety import MIN_ALT_AGL_M
 
 __all__ = [
     "AI_SCHEMA_MIN_ALT_M",
+    "CANDIDATE_NUMBER_PATTERN",
     "FORBIDDEN_SKILL_NAMES",
     "PATH_MAX_LENGTH_M",
     "SKILL_REGISTRY",
@@ -48,6 +49,7 @@ __all__ = [
     "GotoAiParams",
     "GotoParams",
     "HoldParams",
+    "InspectDetectionAiParams",
     "InspectDetectionParams",
     "LandAtParams",
     "MarkLocationAiParams",
@@ -98,6 +100,8 @@ FORBIDDEN_SKILL_NAMES: frozenset[str] = frozenset(
 )
 
 _PIN = r"^P[0-9]{1,3}$"
+# A candidate's display number (K3): the ground translates it to the candidate.
+CANDIDATE_NUMBER_PATTERN: Final = r"^K[1-9][0-9]{0,4}$"
 _PATH = r"^pa-[0-9]{1,3}$"  # a drawn path (the annotation's label)
 
 # The longest path follow_path flies (the gate's PATH_TOO_LONG). The battery rule usually
@@ -417,7 +421,10 @@ class InspectDetectionParams(SkillParams):
     ``geometry`` is the look from the side (``sd_schemas.keepout.inspect_geometry``): a
     point outside the cylinder from which the main camera sees the target nearly straight
     down, at most at the charter's ceiling. It is the whole look in ``live`` without the
-    overflight permit."""
+    overflight permit. With the charter's ``overflight_allowed`` (sim, exercise, live with
+    the permit) the order goes straight over the candidate, without a height: the drone
+    keeps its own above the height floor (``sd_safety.floor``) and the gate checks that
+    floor instead (R-FLOOR, R-FLOOR-CEIL)."""
 
     candidate_id: Id
     # Filled in by the ground from its own records:
@@ -455,6 +462,13 @@ class InspectDetectionParams(SkillParams):
         return LatLon(lat=g.lat, lon=g.lon), g.alt_m, g.yaw_deg, speed
 
     def gate_targets(self, ctx: TargetContext) -> GateTargets:
+        charter, here = ctx.charter, _here(ctx)
+        if charter is not None and charter.overflight_allowed:
+            if here is None or self.lat is None or self.lon is None:
+                return UNRESOLVED
+            target = LatLon(lat=self.lat, lon=self.lon)
+            speed = min(INSPECT_SPEED_MS, charter.max_speed_ms)
+            return GateTargets(points=[target], path=[here, target], speed_ms=speed)
         found = self.geometry(ctx)
         if found is None:
             return UNRESOLVED
@@ -557,6 +571,16 @@ class FollowPathAiParams(SdModel):
     path: str = Field(pattern=_PATH)  # a path the pilot drew, e.g. "pa-1"
     alt_m: float | None = _AiAlt
     speed_ms: float | None = _AiSpeed
+
+
+class InspectDetectionAiParams(SdModel):
+    """The AI names the card only, by its display number; the ground translates it to the
+    candidate and fills in the rest. The AI's look is always a proposal for the pilot."""
+
+    candidate_id: str = Field(
+        pattern=CANDIDATE_NUMBER_PATTERN,
+        description="The candidate's number as listed under Kandidater in LÄGE, e.g. K3.",
+    )
 
 
 class MarkLocationAiParams(SdModel):
@@ -775,7 +799,9 @@ _SPECS: tuple[SkillSpec, ...] = (
         name="return_home",
         stage=1,
         status="implemented",
-        allowed_from=frozenset({ExecutorState.TAKEOFF, *_MOVING_FROM, ExecutorState.RTL}),
+        allowed_from=frozenset(
+            {ExecutorState.TAKEOFF, *_MOVING_FROM, ExecutorState.INSPECT, ExecutorState.RTL}
+        ),
         runs_on="onboard",
         params_model=ReturnHomeParams,
         ends_flight=True,
@@ -905,6 +931,7 @@ _SPECS: tuple[SkillSpec, ...] = (
         allowed_from=_MOVING_FROM,
         runs_on="onboard",
         params_model=InspectDetectionParams,
+        ai_params_model=InspectDetectionAiParams,
         requires_approval_in_b=True,  # the AI only proposes: the pilot always clicks
         moves_vehicle=True,
         allowed_when="airborne",

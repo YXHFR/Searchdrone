@@ -33,6 +33,7 @@ from pydantic import ValidationError
 from sd_ground.logging import get_logger
 from sd_ground.services import annotations as annotations_service
 from sd_ground.services import charters as charter_rules
+from sd_ground.services import inspections as inspections_service
 from sd_ground.services.missions import FlowError
 from sd_safety import evaluate
 from sd_safety.constants import APPROVAL_TIMEOUT_S, PERSON_KEEPOUT_M
@@ -164,7 +165,17 @@ async def set_status(
     cmd = await flow.repo.command(command_id)
     if cmd is not None:
         _publish(flow, cmd)
+        if cmd.skill == _INSPECT:
+            await inspections_service.on_order_end(flow, cmd, status, reason)
+        elif status in _IN_FORCE and cmd.skill not in _GROUND_SKILLS:
+            # The drone took another order: it ends a look (not when the order is only
+            # sent, or the link or the drone refuses it).
+            await inspections_service.replaced(flow, cmd)
     return cmd
+
+
+# The drone's answers that say an order is in force onboard.
+_IN_FORCE: Final = frozenset({"accepted", "running", "done"})
 
 
 # --- submit ----------------------------------------------------------------------------
@@ -258,7 +269,12 @@ async def submit(
         if str(old.mission_id) != mission_id or old.skill != skill:
             raise FlowError(409, "ID_CONFLICT", "Orderns id används redan.")
         return Submitted(old, await _last_gate(flow, old), created=False)
+    vehicle_id = (await flow.mission(mission_id)).vehicle_id
+    # Before the lock, so a wait holds up no other order or click; again under it (at
+    # once, unless a Resume came in between).
+    await flow.released_onboard(vehicle_id)
     async with flow._lock:  # one order at a time: the gate's picture must not race
+        await flow.released_onboard(vehicle_id)
         mission = await flow.open_mission_of(mission_id)
         if skill == "propose_charter_change":
             return await _propose(
@@ -285,8 +301,9 @@ async def submit(
                 else StateRef(state_epoch=snapshot.state_epoch, state_seq=snapshot.state_seq)
             )
         ctx = await flow.gate_context(mission)
-        if skill == "inspect_detection":
+        if skill == _INSPECT:
             params = await _inspect_params(flow, mission_id, params)
+            ctx = await inspections_service.gate_facts(flow, mission, ctx, params)
         req = _gate_request(
             mission,
             command_id=command_id,
@@ -299,6 +316,11 @@ async def submit(
             phase="submit",
         )
         gate = _explained(skill, params, ctx, evaluate(req, ctx))
+        if skill == _INSPECT:
+            gate = inspections_service.refuse_revoked(flow, ctx, gate)
+        gate = await inspections_service.refuse_during_look(
+            flow, str(mission.id), skill, issuer_kind, gate
+        )
         if issuer_kind == "brain" and skill == "follow_path" and gate.decision != "REJECT":
             gate = await _drawn_path_check(flow, mission_id, params) or gate
         now = flow.now()
@@ -337,7 +359,9 @@ async def submit(
                 "kind": "command",
                 "subject_id": command_id,
                 "subject_version": 1,
-                "summary_sv": _summary(skill, params),
+                "summary_sv": await inspections_service.summary(flow, mission, params)
+                if skill == _INSPECT
+                else _summary(skill, params),
                 "required_confirmations": list(gate.required_confirmations),
                 "gate": gate.model_dump(mode="json"),
                 "requested_by": issuer_ref,
@@ -428,15 +452,19 @@ async def _inspect_params(
     flow: MissionFlow, mission_id: str, params: dict[str, Any]
 ) -> dict[str, Any]:
     """``inspect_detection`` with its target filled in by the ground: where the candidate
-    lies, its uncertainty and its keep-out radius. A candidate's id is its first
-    detection's, so the lookup goes through that detection (and a detection no card
-    holds yet is looked at where it lies). For now an order that names a
-    ``detection_id`` (version 1) is read as the candidate holding it. An unknown
-    candidate stays without a target, and the gate refuses it."""
+    lies, its uncertainty and its keep-out radius. The AI names the candidate by its
+    number ("K3"), translated here. A candidate's id is its first detection's, so the
+    lookup goes through that detection. For now an order that names a ``detection_id``
+    (version 1) is read as the candidate holding it. An unknown candidate stays without a
+    target, and the gate refuses it; so does one that is not open (R-INSPECT-TARGET), a
+    detection no card holds yet included."""
     # The target is never the caller's.
     given = {k: v for k, v in params.items() if k not in _INSPECT_TARGET}
     if "detection_id" in given and "candidate_id" not in given:
         given["candidate_id"] = given.pop("detection_id")
+    given["candidate_id"] = await inspections_service.candidate_ref(
+        flow, mission_id, given.get("candidate_id")
+    )
     try:
         asked = InspectDetectionParams.model_validate(given)
     except ValidationError:
@@ -456,6 +484,7 @@ async def _inspect_params(
 
 
 _INSPECT_TARGET: Final = ("lat", "lon", "sigma95_m", "target_radius_m")
+_INSPECT: Final = "inspect_detection"
 
 
 def _explained(
@@ -628,10 +657,12 @@ async def estimate(
     charter_version: int | None,
 ) -> EstimateResult:
     """The gate in phase ``estimate`` (no order is created) plus a rough time and battery."""
+    await flow.released_onboard((await flow.mission(mission_id)).vehicle_id)
     mission = await flow.open_mission_of(mission_id)
     ctx = await flow.gate_context(mission)
-    if skill == "inspect_detection":
+    if skill == _INSPECT:
         params = await _inspect_params(flow, mission_id, params)
+        ctx = await inspections_service.gate_facts(flow, mission, ctx, params)
     req = _gate_request(
         mission,
         command_id=str(new_id()),
@@ -644,6 +675,9 @@ async def estimate(
         phase="estimate",
     )
     gate = _explained(skill, params, ctx, evaluate(req, ctx))
+    if skill == _INSPECT:
+        gate = inspections_service.refuse_revoked(flow, ctx, gate)
+    gate = await inspections_service.refuse_during_look(flow, str(mission.id), skill, "brain", gate)
     duration = None
     v = ctx.vehicle
     lat, lon = params.get("lat"), params.get("lon")
@@ -709,6 +743,16 @@ async def _dispatch(
     if params is None:
         await set_status(flow, str(cmd.id), "rejected_by_gate", "SCHEMA_INVALID")
         return
+    if cmd.skill == _INSPECT:
+        if inspections_service.overflight_revoked(flow, row.body):
+            # The permit was revoked after the gate said yes: the look does not go.
+            await set_status(flow, str(cmd.id), "rejected_by_gate", "OVERFLIGHT_NOT_ALLOWED")
+            return
+        # The look starts now: the pilot's click, or the click on the AI's card.
+        by = cmd.issuer_ref if approval is None else str(approval.decided_by)
+        if not await inspections_service.started(flow, mission, cmd, by=by):
+            await set_status(flow, str(cmd.id), "rejected_by_gate", "INSPECT_TARGET_CLOSED")
+            return
     spec = flow.registry.get(cmd.skill)
     ref = None
     if approval is not None and spec is not None:
@@ -790,7 +834,9 @@ async def decide(
                     409, "CLEARANCE_REQUIRED", "Bekräfta att det är fritt runt drönaren först."
                 )
             confirmations.append("clear_around_drone")
+    await flow.released_onboard(mission.vehicle_id)  # as in ``submit``: before the lock
     async with flow._lock:
+        await flow.released_onboard(mission.vehicle_id)
         now = flow.now()
         fresh = await flow.repo.approval(str(card.id))
         if fresh is None or str(fresh.status) != "pending":
@@ -800,6 +846,8 @@ async def decide(
         mission = await flow.open_mission_of(str(mission.id))
         row = await flow.active_charter_row(mission)
         ctx = await flow.gate_context(mission)
+        if cmd.skill == _INSPECT:
+            ctx = await inspections_service.gate_facts(flow, mission, ctx, cmd.params)
         gate = evaluate(
             _gate_request(
                 mission,
@@ -817,6 +865,8 @@ async def decide(
             ),
             ctx,
         )
+        if cmd.skill == _INSPECT:
+            gate = inspections_service.refuse_revoked(flow, ctx, gate)
         cmd_row = {
             "id": str(cmd.id),
             "mission_id": str(mission.id),
@@ -897,6 +947,14 @@ async def cancel(
             )
         updated = await set_status(flow, command_id, "cancelled", "CANCELLED")
         return updated or cmd
+    if (
+        brain_only
+        and cmd.skill != "capture_stills"
+        and await inspections_service.busy_look(flow, str(cmd.mission_id)) is not None
+    ):
+        # Owner decision: during a look only the pilot moves the drone (R-INSPECT-PILOT).
+        # The AI's cancel onboard would end the look (INSPECT -> HOLD) or move the drone.
+        raise FlowError(409, "INSPECT_BUSY", inspections_service.PILOT_ONLY_SV)
     if flow.link is not None:
         await flow.link.send_message(
             cmd.vehicle_id, CommandCancel(command_id=cmd.id), mission_id=str(cmd.mission_id)
@@ -992,11 +1050,22 @@ async def on_expired(flow: MissionFlow, vehicle_id: str, expired: Expired) -> No
     await set_status(flow, command_id, "expired", expired.reason, only_from=("dispatched",))
 
 
+def _flown_on(flow: MissionFlow, mission: Mission, snap: StateSnapshot) -> str | None:
+    """The search order the drone's own resume after a look flies on, when the snapshot's
+    running order is that resume (``inspections.search_flown_on``)."""
+    active = None if snap.active_command_id is None else str(snap.active_command_id)
+    return inspections_service.search_flown_on(flow, str(mission.id), active, snap.active_skill)
+
+
 async def on_snapshot(flow: MissionFlow, mission: Mission, snap: StateSnapshot) -> None:
-    """A survey's progress moves its sector."""
-    if snap.active_command_id is None or snap.progress_pct is None:
+    """A survey's progress moves its sector (also a search flown on after a look)."""
+    if snap.progress_pct is None:
         return
-    row = await flow.repo.command_row(str(snap.active_command_id))
+    row = None
+    if snap.active_command_id is not None:
+        row = await flow.repo.command_row(str(snap.active_command_id))
+    if row is None and (search := _flown_on(flow, mission, snap)) is not None:
+        row = await flow.repo.command_row(search)
     if row is None or row["skill"] != "survey_sector":
         return
     sector = row["params"].get("sector_id")
@@ -1007,7 +1076,15 @@ async def on_snapshot(flow: MissionFlow, mission: Mission, snap: StateSnapshot) 
 
 
 async def active_command(flow: MissionFlow, mission: Mission) -> Command | None:
+    """The order the drone flies now. While its own resume after a look flies a search on,
+    that search's order (``superseded`` on the ground: the look replaced it, and a terminal
+    row is never revived; ``inspections`` says how its run ends)."""
     snap, _ = flow.snapshot(mission.vehicle_id)
-    if snap is None or snap.active_command_id is None:
+    if snap is None:
         return None
-    return await flow.repo.command(str(snap.active_command_id))
+    cmd = None
+    if snap.active_command_id is not None:
+        cmd = await flow.repo.command(str(snap.active_command_id))
+    if cmd is None and (search := _flown_on(flow, mission, snap)) is not None:
+        return await flow.repo.command(search)
+    return cmd

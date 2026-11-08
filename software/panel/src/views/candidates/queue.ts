@@ -21,11 +21,15 @@ export interface Queue {
   rejected: CandidateCard[];
 }
 
-const byPriority = (a: CandidateCard, b: CandidateCard): number =>
-  b.priority - a.priority || a.seq - b.seq;
+const blocks = (c: CandidateCard): number => (c.blocks_survey_m == null ? 1 : 0);
 
-/** Open cards by priority (the low class apart), decided ones newest first. Merged cards
- * are left out: they live on in the candidate they were merged into. */
+/** The ground's queue order (``sd_schemas.search.queue_order``): the candidates that block
+ * the search first, then by priority, then by number. */
+const byPriority = (a: CandidateCard, b: CandidateCard): number =>
+  blocks(a) - blocks(b) || b.priority - a.priority || a.seq - b.seq;
+
+/** Open cards in the queue's order (the low class apart), decided ones newest first.
+ * Merged cards are left out: they live on in the candidate they were merged into. */
 export function groupQueue(cards: CandidateCard[]): Queue {
   const q: Queue = { review: [], low: [], confirmed: [], rejected: [] };
   for (const c of cards) {

@@ -16,6 +16,7 @@ AGENTS.local.md
 # Under config/ only example files and the generic MediaMTX config are committed.
 /config/*
 !/config/*.example.toml
+!/config/*.example.geojson
 !/config/mediamtx.yml
 *.local.*
 *.local.txt
@@ -38,6 +39,11 @@ cloudflared/
 /build/
 /logs/
 /terrain/
+
+# --- Height maps of a closer look (Lantmäteriet's data, made with the owner's login) ---
+# Written to ${SD_DATA_DIR}/floor/, outside the repository; this is a second guard.
+floor/
+*.copc.laz
 
 # --- AI model files (none are downloaded any more; kept out of git) ---
 /models/

@@ -1,4 +1,4 @@
-"""SK01, SK03, SK04 and SK09: the search chain end to end on ArduCopter SITL (PR CI).
+"""SK01, SK03, SK04, SK09 and SK10: the search chain end to end on ArduCopter SITL (PR CI).
 
 The rig is ``chain_rig``: synthetic stills of the scenario's world, the detector and
 image-model oracles, the product's perception, keep-out cylinders, ``sd-search``,
@@ -13,6 +13,9 @@ break no invariant (the flight invariants and E1, E2, E8):
   shows the top in conflict when the code scored it.
 * SK09: the operator rejects the person in red without a backpack in sector A; the right
   person in sector B is confirmed after that.
+* SK10: a grey backpack lies 4 m from the person. The person is confirmed by the card's
+  picture (what its detection was drawn from, not the nearest thing), and the find lies
+  within a card's error of the person.
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ from scenario_rig import (  # pyright: ignore[reportMissingImports]
 from test_onboard_sitl import Sim  # pyright: ignore[reportMissingImports]
 
 from sd_sim import search_world
+from sd_sim.search_world import CARD_ERR_MAX_M
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow, pytest.mark.brain, pytest.mark.search]
 __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
@@ -83,6 +87,9 @@ async def test_sk04_chain_right_person(
     m = await _run(sim, migrated_db, tmp_path, "SK04", seed)
     assert m.confirmed_thing == "target"
     hiker = m.fields_by_thing.get("green-jacket")
+    # The oracle draws the hiker's top once per seed (keyed by seed, thing and field) and a
+    # match is its designed false match (p = 0.15): seeds 1-3 happen to draw conflict. The
+    # share over many seeds is the nightly requirement's (eval_search, SK04).
     if hiker is not None and hiker.get("garment:0") not in (None, "not_visible"):
         assert hiker["garment:0"] == "conflict", hiker
 
@@ -98,3 +105,19 @@ async def test_sk09_chain_wrong_person_first(
     assert wrong and all(d["decision"] == "reject" for d in wrong), m.decisions
     confirm = next(d for d in m.decisions if d["decision"] == "confirm")
     assert wrong[0]["t_s"] <= confirm["t_s"], m.decisions
+
+
+@pytest.mark.budget_s(720)
+@pytest.mark.parametrize("seed", SEEDS)
+async def test_sk10_chain_decoy_near_the_person(
+    sim: Sim, migrated_db: Any, tmp_path: Path, seed: int
+) -> None:
+    m = await _run(sim, migrated_db, tmp_path, "SK10", seed)
+    assert m.confirmed_thing == "target", m.decisions
+    # The confirmation went by the card's picture: with the backpack 4 m away, the
+    # nearest thing would not tell the person from it (the fallback by position would).
+    confirm = next(d for d in m.decisions if d["decision"] == "confirm")
+    assert confirm["by"] == "picture", m.decisions
+    # And the find lies where the person is, measured from the world, not the truth the
+    # operator used.
+    assert m.geo_error_m is not None and m.geo_error_m <= CARD_ERR_MAX_M, m.geo_error_m

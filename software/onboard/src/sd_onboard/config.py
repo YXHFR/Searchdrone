@@ -79,15 +79,20 @@ class TeleConfig(BaseModel):
 
 
 class PerceptionConfig(BaseModel):
-    """Stills, detector sources and reports to the ground (off unless a camera exists)."""
+    """Stills, detector sources and reports to the ground (off unless a camera exists).
+
+    The camera is a Raspberry Pi Camera Module 3 (Sony IMX708) taking stills at its full
+    4608 x 2592 behind its standard 66-degree lens: about 71 px per metre at 50 m, a person
+    30-35 px across (at 1280 x 720 about 10 px). A still of another size with the same
+    shape is placed with the same field of view (``sd_geo.PinholeCamera.scaled``)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     enabled: bool = False
     # A folder a camera process writes stills to (<name>.ppm + <name>.json).
     still_dir: str = ""
-    width_px: int = Field(default=1280, ge=16, le=8192)
-    height_px: int = Field(default=720, ge=16, le=8192)
+    width_px: int = Field(default=4608, ge=16, le=8192)
+    height_px: int = Field(default=2592, ge=16, le=8192)
     hfov_deg: float = Field(default=66.0, gt=0, lt=180)
     period_s: float = Field(default=0.5, ge=0.05, le=10)
     keep_stills: bool = False  # save stills with detections in the state folder

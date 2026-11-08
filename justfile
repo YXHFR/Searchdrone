@@ -535,6 +535,20 @@ train-detector *args:
 export-detector *args:
     @just _train export_onnx.py "$@"
 
+# Train and export the person detector on a rented Modal GPU, billed per second: uploads
+# only the train and val pictures of sets that may be trained on, shows the cost and asks
+# first (keys: gpu, yes, hours, max_hours, name and train-detector's; see tools/train/README.md)
+train-detector-cloud *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    data=$(PYTHONPATH=tools uv run --no-sync python -m bench.datadir "$@")
+    rest=()
+    for arg in "$@"; do [[ "$arg" == data=* ]] || rest+=("$arg"); done
+    cd tools/train
+    # the Modal client only; --inexact keeps a PyTorch already installed for train-detector
+    uv sync --frozen --quiet --inexact --group cloud
+    PYTHONPATH="$PWD/..:$PWD" uv run --no-sync python cloud.py "data=$data" ${rest[@]+"${rest[@]}"}
+
 # The detector training's tests, on the CPU with a small synthetic bank (no data, no weights)
 test-train:
     cd tools/train && uv sync --frozen --quiet --extra cpu
@@ -586,6 +600,18 @@ ground-pictures-fetch:
 # only on this computer, never committed, uploaded or fetched in CI (keys: site; needs gdal-bin)
 ortho-fetch *args:
     uv run --no-sync python tools/terrain/fetch_ortho.py "$@"
+
+# The height map of a closer look (a floor pack): tree heights from Lantmäteriet's forest
+# laser scan and ground model with your own Geotorget login, power lines from
+# OpenStreetMap, to ${SD_DATA_DIR}/floor/<name>/ (keys: area, name, out, keep_cache, lines).
+# Never committed; laspy and tifffile are added only for this run
+floor-fetch *args:
+    uv run --no-sync --with 'laspy[lazrs]==2.7.0' --with 'lazrs==0.8.2' --with 'tifffile==2026.10.15' python tools/terrain/fetch_floor_map.py "$@"
+
+# Copy a floor pack, after checking it, to <dir>/floor/<name>/ on the onboard computer
+# (keys: name, host, dir, out)
+floor-push *args:
+    uv run --no-sync python tools/terrain/fetch_floor_map.py push "$@"
 
 # The simulator in photo mode: the orthophoto on the open ground, the real trees on it and
 # global illumination for the camera (keys: site, gi, and those of just sim)

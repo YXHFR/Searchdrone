@@ -20,6 +20,7 @@ from typing import Any, Literal, Protocol, cast
 
 import httpx
 
+from sd_brain.ground_http import ground_limits
 from sd_brain.runtime.base import ModelError
 from sd_schemas.cloud_budget import (
     BudgetCommit,
@@ -102,6 +103,9 @@ class HttpBudgetClient:
             timeout=timeout_s,
             trust_env=False,  # loopback only: never through a proxy
             transport=transport,
+            # Idle connections dropped before the ground's server drops them: a reserve
+            # on a stale one fails with no answer (``sd_brain.ground_http``).
+            limits=ground_limits(),
         )
 
     async def aclose(self) -> None:

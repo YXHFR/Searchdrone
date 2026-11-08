@@ -455,3 +455,68 @@ async def test_scripted_at_here_without_a_position_refuses(tmp_path: Path) -> No
     turn = turn.model_copy(update={"situation": s.model_copy(update={"vehicle": vehicle})})
     with pytest.raises(ScriptError):
         await b.decide(turn, _NoTools())
+
+
+async def test_scripted_when_reads_a_closed_looks_details(tmp_path: Path) -> None:
+    """A closed look's outcome and next are in its details; the search flown on after it
+    ends with its sector at the top of the event."""
+    path = tmp_path / "s.yaml"
+    path.write_text(
+        "scenario: SCX\nturns:\n  - on: skill_event\n"
+        "    when: {skill: inspect_detection, status: closed, outcome: [rejected, unsure],"
+        " next: [hold, null]}\n"
+        "    action: {skill: survey_sector, params: {sector_id: B}}\n"
+        "  - on: skill_event\n"
+        "    when: {skill: survey_sector, status: done, sector_id: B}\n"
+        "    action: {skill: return_home}\n"
+    )
+    b = ScriptedBackend.from_file(path)
+    details: dict[str, Any] = {"outcome": "confirmed", "next": "hold"}
+    body = {"skill": "inspect_detection", "status": "closed", "details": details}
+    ev = [{"type": "event.skill", "body": body}]
+    assert (
+        await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
+    ).action is None
+    details |= {"outcome": "rejected", "next": "resume"}
+    assert (
+        await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
+    ).action is None
+    details["next"] = None  # the drone did not say (the ground closed it after a while)
+    out = await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
+    assert out.action is not None and out.action.params == {"sector_id": "B"}
+    done = {"skill": "survey_sector", "status": "done", "sector_id": "A", "details": {}}
+    ev = [{"type": "event.skill", "body": done}]
+    assert (
+        await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
+    ).action is None
+    done["sector_id"] = "B"
+    out = await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
+    assert out.action is not None and out.action.skill == "return_home"
+
+
+SK10 = Path(__file__).resolve().parents[4] / "simulation/scenarios/scripts/SK10.yaml"
+
+
+async def test_sk10_orders_the_search_again_only_after_a_look_that_left_the_drone_standing() -> (
+    None
+):
+    """SK10's script follows the real AI's rule for a closed look (system_v1.md): the
+    search is ordered again on next "hold" unless the person was confirmed, never on
+    "done", "failed" or "resume", and with no next the AI asks instead."""
+    b = ScriptedBackend.from_file(SK10)
+
+    async def answer(status: str, **details: Any) -> Any:
+        body = {"skill": "inspect_detection", "status": status, "details": details}
+        ev = [{"type": "event.skill", "body": body}]
+        return await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
+
+    for status in ("done", "failed"):  # the look is still open: the ground refuses moves
+        assert (await answer(status)).action is None
+    assert (await answer("closed", outcome="rejected", next="resume")).action is None
+    assert (await answer("closed", outcome="confirmed", next="hold")).action is None
+    for outcome in ("failed", "rejected", "timeout"):  # SK10[2]: a failed look in HOLD
+        out = await answer("closed", outcome=outcome, next="hold")
+        assert out.action is not None and out.action.skill == "survey_sector", outcome
+        assert out.action.params["sector_id"] == "A"
+    out = await answer("closed", outcome="rejected", next=None)
+    assert out.action is None and out.messages[0].text.endswith("?")

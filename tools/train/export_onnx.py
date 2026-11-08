@@ -1,6 +1,6 @@
 """Make the ONNX file from the best training epoch: ``just export-detector model=yolox_s``.
 
-Keys: ``model`` (yolox_s, damoyolo_s), ``data``, ``train`` (the training folder,
+Keys: ``model`` (yolox_s, yolox_m, damoyolo_s), ``data``, ``train`` (the training folder,
 default ``<data>/train/<model>``), ``name`` (default ``person_<model>``), ``out``
 (default ``<data>/models/detector``).
 

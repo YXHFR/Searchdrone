@@ -15,7 +15,9 @@ panel``, started by ``just test-panel-sitl``). The search chain has three sets, 
 a CI job of its own and in no other mode: ``mode=search`` (``sitl and search``, the pull
 request set), ``mode=search-nightly`` (``sitl and search_nightly``, the nightly oracle
 campaign) and ``mode=e2e-search`` (``sitl and e2e_search``, the search demo of ``just
-e2e-search``). A search test that also carries ``e2e`` runs in ``mode=e2e`` only.
+e2e-search``). A search test that also carries ``e2e`` runs in ``mode=e2e`` only. The
+closer look's scenarios (TN01-TN19, ``sitl and inspect``) are a set of their own the same
+way: ``mode=inspect``, in a CI job with its own shards.
 ``brain=`` picks the AI commander the scenarios fly
 with: ``scripted`` (default, the script per scenario), ``grammar`` (the fixed command
 mode), ``cloud`` (the cloud model with the owner's key, the command mode without it; adds the
@@ -76,9 +78,14 @@ PYTEST_NO_TESTS = 5
 # pass them already.
 FUTURE_KEYS = ("video", "link_profile", "private_db", "instance")
 BRAINS = ("scripted", "grammar", "cloud", "none")
-MODES = ("pr", "e2e", "nightly", "panel", "search", "search-nightly", "e2e-search")
+MODES = ("pr", "e2e", "nightly", "panel", "search", "search-nightly", "e2e-search", "inspect")
 # The search chain's sets: mode -> marker. Each runs in its own mode only.
-SEARCH_SETS = {"search": "search", "search-nightly": "search_nightly", "e2e-search": "e2e_search"}
+SEARCH_SETS = {
+    "search": "search",
+    "search-nightly": "search_nightly",
+    "e2e-search": "e2e_search",
+    "inspect": "inspect",  # the closer look's scenarios (TN01-TN19)
+}
 SEEDS_ENV = "SD_SEARCH_SEEDS"
 SK06_SEEDS_ENV = "SD_SK06_SEEDS"
 
@@ -93,7 +100,7 @@ def selection(mode: str, physics: str, brain: str = "scripted") -> str:
     if mode == "panel":
         return "sitl and panel"
     gz = "" if physics == "gz" else " and not gz"
-    no_search = " and not search_nightly and not e2e_search"
+    no_search = " and not search_nightly and not e2e_search and not inspect"
     if mode in SEARCH_SETS:
         base = f"sitl and {SEARCH_SETS[mode]}{gz} and not llm and not nightly and not e2e"
     elif mode == "nightly":

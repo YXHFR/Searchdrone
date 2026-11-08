@@ -345,15 +345,89 @@ def test_reroute_from_inside() -> None:
     assert reroute([(0.0, -200.0)], cyl) == [(0.0, -200.0)]
 
 
+def test_the_way_out_keeps_room_past_its_end() -> None:
+    """A way out ends at least ``_EXIT_EDGE_M`` short of the charter's edge along its
+    leg, and a caller's reserve (``inspect_detection``'s ``EXIT_CLEAR_M``) is room past
+    it clear of cylinders and inside the charter: a direction without it is not taken."""
+    cyl = [((0.0, 0.0), 40.0)]
+    exit_r = 40.0 + KEEPOUT_ARC_MARGIN_M + keepout._EXIT_EPS_M  # pyright: ignore[reportPrivateUsage]
+    edge = Polygon(
+        ((-400.0, -400.0), (exit_r + 1.0, -400.0), (exit_r + 1.0, 400.0), (-400.0, 400.0))
+    )
+    here = (10.0, 0.0)  # straight out from the centre is east, 1 m short of the edge
+    assert reroute([here], cyl, area=BOX) == [here, (exit_r, 0.0)]
+    way = reroute([here], cyl, area=edge)
+    assert way is not None and len(way) == 2 and way[1][0] < exit_r - 1.0  # turned
+    room = 12.0
+    other = [((0.0, 0.0), 40.0), ((exit_r + 10.0, 0.0), 5.0)]  # 5 m of room east
+    way = reroute([here], other, area=BOX)
+    assert way is not None and math.isclose(way[1][1], 0.0, abs_tol=1e-9)
+    way = reroute([here], other, area=BOX, exit_reserve_m=room)
+    assert way is not None and abs(way[1][1]) > 1.0  # not east: too little room there
+    u = (
+        (way[1][0] - here[0]) / math.dist(here, way[1]),
+        (way[1][1] - here[1]) / math.dist(here, way[1]),
+    )
+    far = (way[1][0] + room * u[0], way[1][1] + room * u[1])
+    assert not any(leg_enters(here, far, c, r) for c, r in other)
+
+
+def test_no_way_out_that_ends_short_of_the_edge_gives_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With a charter that hugs the cylinder 1.9 m past every way out, no way out keeps
+    ``_EXIT_EDGE_M`` (2 m) of room along its leg before the edge, so there is none: the
+    2 m, not just the edge itself, decides. With 3 m of room, or ``_EXIT_EDGE_M`` lowered
+    to 1.6 m, there is."""
+    cyl = [((0.0, 0.0), 40.0)]
+    exit_r = 40.0 + KEEPOUT_ARC_MARGIN_M + keepout._EXIT_EPS_M  # pyright: ignore[reportPrivateUsage]
+
+    def ring(r: float) -> Polygon:
+        n = 72
+        return Polygon(
+            tuple((r * math.cos(2 * math.pi * k / n), r * math.sin(2 * math.pi * k / n))
+                  for k in range(n))
+        )  # fmt: skip
+
+    here = (10.0, 0.0)
+    assert reroute([here], cyl, area=ring(exit_r + 1.9)) is None
+    way = reroute([here], cyl, area=ring(exit_r + 3.0))
+    assert way is not None and len(way) == 2
+    monkeypatch.setattr(keepout, "_EXIT_EDGE_M", 1.6)
+    way = reroute([here], cyl, area=ring(exit_r + 1.9))
+    assert way is not None and len(way) == 2
+
+
+def test_reroute_tries_the_next_way_out_when_the_rest_finds_no_way(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first way out can leave the rest of the route with no way around; a later one
+    may not (``_EXIT_TRIES``)."""
+    cyl = [((0.0, 0.0), 40.0), ((-67.5, 38.4), 28.4), ((-17.3, 76.8), 28.7)]
+    area = Polygon(((-150.0, -150.0), (150.0, -150.0), (150.0, 150.0), (-150.0, 150.0)))
+    route: list[Xy] = [(-10.3, 27.3), (47.1, -110.4)]
+    out = reroute(route, cyl, area=area)
+    assert out is not None and out[0] == route[0] and out[-1] == route[1]
+    assert xy_route_violation(out[1:], cyl) is None
+    assert all(area.leg_outside_by(a, b) == 0.0 for a, b in pairwise(out))
+    monkeypatch.setattr(keepout, "_EXIT_TRIES", 1)
+    assert reroute(route, cyl, area=area) is None  # the first way out alone: none
+
+
 def test_reroute_checks_the_way_out_against_the_area() -> None:
-    """The leg out of a cylinder counts too: out across the area's edge is no route."""
+    """The leg out of a cylinder counts too: it never crosses the area's edge. When the
+    leg flown would, the way out turns; when every way out would, there is no route."""
     cyl = [((0.0, 0.0), 40.0)]
     area = Polygon(((-400.0, -400.0), (400.0, -400.0), (400.0, 30.0), (-400.0, 30.0)))
     # The only corner left lies inside the cylinder: the way out is the whole route.
     route: list[Xy] = [(0.0, 10.0), (0.0, -5.0)]
-    assert reroute(route, cyl, area=area, exit_dir=(0.0, 1.0)) is None
     out = reroute(route, cyl, area=BOX, exit_dir=(0.0, 1.0))
-    assert out is not None and len(out) == 2 and out[1][1] > 40.0
+    assert out is not None and len(out) == 2 and out[1][1] > 40.0  # along the leg flown
+    out = reroute(route, cyl, area=area, exit_dir=(0.0, 1.0))
+    assert out is not None and len(out) == 2 and out[1][1] < 30.0  # not across the edge
+    assert area.leg_outside_by(*out) == 0.0 and math.dist(out[1], (0.0, 0.0)) > 40.0
+    inner = Polygon(((-30.0, -30.0), (30.0, -30.0), (30.0, 30.0), (-30.0, 30.0)))
+    assert reroute(route, cyl, area=inner, exit_dir=(0.0, 1.0)) is None
 
 
 def test_inspect_way_there_keeps_out_of_the_target_without_its_cylinder() -> None:
@@ -385,6 +459,27 @@ def test_reroute_gives_up_on_cylinders_it_cannot_pass() -> None:
     """Overlapping cylinders that wall off the way, in a narrow area: no reroute."""
     wall = [((float(x), 0.0), 40.0) for x in range(-360, 361, 60)]
     assert reroute([(0.0, -200.0), (0.0, 200.0)], wall, area=BOX) is None
+
+
+def test_reroute_from_inside_near_the_charters_edge_turns_back_in() -> None:
+    # SK09: a cylinder appears around the drone 10 m from the charter's east edge; straight
+    # out from the centre leaves the charter, so the way out must turn.
+    area = Polygon(((-60.0, -60.0), (300.0, -60.0), (300.0, 300.0), (-60.0, 300.0)))
+    cyl = [((267.0, 158.0), 35.9)]
+    here = (290.0, 160.0)
+    lanes = [(270.0, 195.0), (150.0, 195.0), (150.0, 240.0)]
+    assert reroute([here, *lanes], cyl) is not None  # without the charter: east, around
+    out = reroute([here, *lanes], cyl, area=area)
+    assert out is not None and out[0] == here and out[-3:] == lanes
+    assert all(area.leg_outside_by(a, b) == 0.0 for a, b in pairwise(out))
+    assert xy_route_violation(out[1:], cyl) is None
+    # Only the position (the reflex's and the link loss's way out): out, inside the charter.
+    way = reroute([here], cyl, area=area)
+    assert way is not None and len(way) == 2
+    assert area.leg_outside_by(*way) == 0.0 and math.dist(way[1], cyl[0][0]) > cyl[0][1]
+    # A drone boxed in by the charter on every side but through the cylinder: no way out.
+    tight = Polygon(((280.0, 150.0), (300.0, 150.0), (300.0, 170.0), (280.0, 170.0)))
+    assert reroute([here], cyl, area=tight) is None
 
 
 @pytest.mark.parametrize("sign", [1, -1])

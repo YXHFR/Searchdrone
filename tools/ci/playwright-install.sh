@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Playwright's browsers and the system packages they need, on a GitHub-hosted runner.
+# Same as `playwright install --with-deps BROWSER...`, but the packages go through
+# tools/ci/apt-install.sh, so a slow apt mirror falls back to archive.ubuntu.com instead
+# of eating the job. Playwright names the packages (`install-deps --dry-run` lists the
+# ones missing); this script only changes how they are fetched.
+#
+#   bash tools/ci/playwright-install.sh chromium firefox webkit
+set -euo pipefail
+
+if [ $# -eq 0 ]; then
+  echo "usage: $0 BROWSER..." >&2
+  exit 2
+fi
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+pw=(pnpm --filter @searchdrone/panel exec playwright)
+
+bash "$here/apt-install.sh" --update-only
+# Exits 1 when packages are missing; anything but its two known answers is an error.
+report="$("${pw[@]}" install-deps --dry-run "$@" 2>&1)" || true
+if ! grep -qE '^(Missing system dependencies|All system dependencies are installed)' <<<"$report"; then
+  echo "$report" >&2
+  echo "playwright install-deps --dry-run gave no package list" >&2
+  exit 1
+fi
+mapfile -t packages < <(sed -n 's/^  \([^ ]\+\)$/\1/p' <<<"$report")
+# Playwright counts the packages it lists; a format change must not drop some silently.
+# A "Missing" header without its count is such a change too, not zero packages.
+want=0
+if grep -q '^Missing system dependencies' <<<"$report"; then
+  want="$(sed -n 's/^Missing system dependencies (\([0-9]\+\)):$/\1/p' <<<"$report")"
+fi
+if [ "$want" != "${#packages[@]}" ]; then
+  echo "$report" >&2
+  echo "playwright listed ${want:-no count of} missing packages, read ${#packages[@]}" >&2
+  exit 1
+fi
+if [ "${#packages[@]}" -gt 0 ]; then
+  # The lists were updated just above, so the first try skips its update.
+  bash "$here/apt-install.sh" --fresh "${packages[@]}"
+fi
+"${pw[@]}" install "$@"
