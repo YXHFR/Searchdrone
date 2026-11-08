@@ -483,6 +483,45 @@ async def test_a_find_that_took_sightings_keeps_its_picture_and_can_be_undone(r:
     assert list(rows) == [seen] and found is None  # the rev the pilot saw, on record
 
 
+async def test_a_card_from_before_an_undo_is_stale_though_the_find_is_back(r: Rig) -> None:
+    """A decision from an older rev stands only when every revision since is the same
+    find (``_only_sightings_since``): the first and the last both ``confirmed`` is not
+    enough. Confirmed at rev s, undone, confirmed again: an undo from rev s is stale."""
+    mid = await r.open_mission()
+    cid, det = await candidate(r, mid)
+    async with person(r, "pilot", "kalle") as pilot:
+        await view(pilot, det)
+        assert (await decide(pilot, cid, "confirm")).status_code == 200
+        s = await rev_of(pilot, cid)
+        assert (await decide(pilot, cid, "reopen", "fel person", rev=s)).status_code == 200
+        assert (await decide(pilot, cid, "confirm")).status_code == 200
+        again = await rev_of(pilot, cid)
+        assert again == s + 2
+        old = await decide(pilot, cid, "reopen", "fel person", rev=s)
+        assert old.status_code == 409 and old.json()["code"] == "SUPERSEDED"
+        card = (await pilot.get(f"/api/v1/candidates/{cid}")).json()["card"]
+        assert card["state"] == "confirmed" and card["rev"] == again
+
+
+@pytest.mark.parametrize("state", ["ready", "confirmed"])
+@pytest.mark.parametrize("ahead", [1, 2**31, 2**62])
+async def test_a_rev_from_the_future_is_stale_not_an_error(r: Rig, state: str, ahead: int) -> None:
+    """A ``subject_rev`` above the candidate's newest rev (a forged or corrupt card) is
+    409 ``SUPERSEDED``, however large: never a 500 from a number the database cannot
+    hold. On a find too, where an older rev may still stand."""
+    mid = await r.open_mission()
+    cid, det = await candidate(r, mid)
+    async with person(r, "pilot", "kalle") as pilot:
+        await view(pilot, det)
+        if state == "confirmed":
+            assert (await decide(pilot, cid, "confirm")).status_code == 200
+        now = await rev_of(pilot, cid)
+        decision = "reopen" if state == "confirmed" else "unsure"
+        res = await decide(pilot, cid, decision, "fel person", rev=now + ahead)
+        assert res.status_code == 409 and res.json()["code"] == "SUPERSEDED", res.text
+        assert await rev_of(pilot, cid) == now
+
+
 async def test_gpx_export(r: Rig) -> None:
     mid = await r.open_mission()
     cid, det = await candidate(r, mid)
