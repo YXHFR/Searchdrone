@@ -126,6 +126,7 @@ class FakeGround:
                     prev is not None
                     and prev[-1].state is CandidateState.CONFIRMED
                     and r.state is None
+                    and r.merged_into is None
                     and r.assessment is None
                     and bool(r.observations)
                 )
@@ -140,8 +141,12 @@ class FakeGround:
                             "lat": p.lat,
                             "lon": p.lon,
                             "sigma95_m": p.sigma95_m,
-                            "priority": p.priority,
                             "n_seen": max(p.n_seen, r.n_seen),
+                            "best_detector_score": p.best_detector_score,
+                            "refined_person_score": p.refined_person_score,
+                            "priority": p.priority,
+                            "first_seen_utc": p.first_seen_utc,
+                            "last_seen_utc": max(p.last_seen_utc, r.last_seen_utc),
                         }
                     )
                 if r.state is not None and prev[-1].state is CandidateState.INSPECTING:
