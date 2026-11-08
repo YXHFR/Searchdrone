@@ -43,7 +43,11 @@ def test_example_config_is_valid() -> None:
     cfg.cloud.provider.follow_ground("sim")
     assert cfg.cloud.extra_body() == {
         "reasoning": {"effort": "low", "exclude": True},
-        "provider": {"data_collection": "deny", "require_parameters": True},
+        "provider": {
+            "data_collection": "deny",
+            "require_parameters": True,
+            "order": ["deepinfra", "fireworks", "together"],
+        },
     }
     assert cfg.decide.stop_check_timeout_s == 0.5
 
@@ -115,6 +119,7 @@ def test_example_config_in_field_sends_zdr() -> None:
         "data_collection": "deny",
         "require_parameters": True,
         "zdr": True,
+        "order": ["deepinfra", "fireworks", "together"],
     }
 
 
