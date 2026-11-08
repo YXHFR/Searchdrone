@@ -421,7 +421,9 @@ class CandidateRevision(SdModel):
     """A new candidate (``base_rev`` 0) or the next revision of one, from the search
     service. It may set ``new``, ``assessing``, ``ready`` or ``merged``; ``state`` None keeps
     the state in force (a candidate a person or the pilot holds). Confirmed and rejected
-    are a person's and are refused here (E1)."""
+    are a person's and are refused here (E1). A confirmed candidate takes only new
+    observations (``state`` None, no assessment): the ground keeps its position, radius,
+    scores and priority."""
 
     candidate_id: Id
     base_rev: int = Field(ge=0)  # the rev this one follows; 0 = a new candidate

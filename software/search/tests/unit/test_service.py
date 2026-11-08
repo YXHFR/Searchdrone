@@ -111,6 +111,28 @@ async def test_a_persons_decision_makes_the_service_read_back() -> None:
     assert g.latest(cid).state is CandidateState.REJECTED and g.latest(new).seq == 2
 
 
+async def test_a_detection_next_to_a_find_is_written_on_it_unmoved() -> None:
+    g = FakeGround(MISSION)
+    s = service(g)
+    detect(g, 0, 0, 0)
+    await s.step()
+    (cid,) = g.revs
+    found = g.latest(cid)
+    g.decide(cid, CandidateState.CONFIRMED)
+    detect(g, 3, 0, 1)  # the same person seen again, 3 m off
+    await s.step()  # 409 (the stale fusion still had it open), read back
+    await s.step()
+    assert list(g.revs) == [cid]  # no new card next to the find
+    c = g.latest(cid)
+    assert c.state is CandidateState.CONFIRMED and c.n_seen == 2
+    assert (c.lat, c.lon, c.sigma95_m) == (found.lat, found.lon, found.sigma95_m)
+    assert sum(1 for k in g.observed.values() if k == cid) == 2
+    detect(g, 4, 0, 2)  # read back: it joins at once, still unmoved
+    assert await s.step() == 1
+    assert list(g.revs) == [cid] and g.latest(cid).n_seen == 3
+    assert (g.latest(cid).lat, g.latest(cid).lon) == (found.lat, found.lon)
+
+
 async def test_a_held_candidate_keeps_its_state() -> None:
     g = FakeGround(MISSION)
     s = service(g)
