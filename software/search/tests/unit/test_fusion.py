@@ -116,6 +116,19 @@ def test_fusion_a_detection_next_to_a_confirmed_candidate_joins_it_unmoved() -> 
     assert other_class is not None and other_class.created
 
 
+def test_fusion_a_find_with_a_wide_radius_takes_sightings_only_within_twelve_metres() -> None:
+    f = Fusion()
+    a = f.add(sighting(0, 0, sigma=20.0, t=0))  # 4 + 20 m, capped at 12
+    assert a is not None
+    t = f.tracks[a.candidate_id]
+    t.state, t.decided = CandidateState.CONFIRMED, True
+    inside = f.add(sighting(11.5, 0, sigma=3.0, t=1))
+    assert inside is not None and inside.candidate_id == a.candidate_id
+    outside = f.add(sighting(0, 12.5, sigma=3.0, t=2))  # within 4 + 20 m, beyond 12 m
+    assert outside is not None and outside.created
+    assert len(t.sightings) == 2 and t.sigma95_m == 20.0  # unmoved, as confirmed
+
+
 def test_fusion_an_open_candidate_nearer_than_a_find_takes_the_sighting() -> None:
     f = Fusion()
     found = f.add(sighting(0, 0, sigma=3.0, t=0))

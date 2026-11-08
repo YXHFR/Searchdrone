@@ -398,9 +398,22 @@ async def test_a_detection_next_to_a_find_joins_it_and_one_next_to_a_rejected_do
         "state": None,
         "observations": obs,
     }
+    assessment = {
+        "candidate_id": found["candidate_id"],
+        "profile_version": 1,
+        "engine": "code",
+        "model_id": "sd_search:code",
+        "person": "no",
+        "person_p": 0.1,
+        "overall": 0.1,
+        "explanation_sv": "",
+        "latency_ms": 0,
+    }
     for bad in (
         base | {"state": "ready"},
         base | {"observations": []},
+        base | {"assessment": assessment},  # no engine re-judges a find
+        base | {"state": "merged", "merged_into": new[0]["candidate_id"]},
         base | {"candidate_id": gone["candidate_id"], "base_rev": gone["rev"] + 1},
     ):
         res = await post(r, mid, bad)

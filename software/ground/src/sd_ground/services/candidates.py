@@ -596,7 +596,8 @@ async def decide(
 ) -> dict[str, Any]:
     """A person's decision. 403 for anyone but a person (and inspect, resume and reopen
     for anyone but the pilot); 409 ``NOT_VIEWED`` for a confirmation before a large
-    view, ``SUPERSEDED`` when the card is older than the candidate,
+    view, ``SUPERSEDED`` when the card is older than the candidate (but for a find
+    that has only taken sightings since: the person still decides on the same find),
     ``TRANSITION_NOT_ALLOWED`` for a move the table does not have, ``INSPECT_REFUSED``
     when the gate says no to the closer look. Returns the candidate's detail."""
     candidate_id = candidate_id.lower()
