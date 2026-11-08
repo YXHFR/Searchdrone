@@ -616,15 +616,19 @@ class CandidateRepo:
             prev = await self._latest_one(conn, candidate_id)
             if prev is None:
                 raise CandidateWriteError("CANDIDATE_NOT_FOUND", "Kandidaten finns inte.")
-            if int(prev["rev"]) != subject_rev and not await self._only_sightings_since(
-                conn, candidate_id, subject_rev
+            newest = int(prev["rev"])
+            # A rev above the newest is no card the person saw (a number that may not even
+            # fit the column): stale, never asked of the database.
+            if subject_rev != newest and (
+                subject_rev > newest
+                or not await self._only_sightings_since(conn, candidate_id, subject_rev)
             ):
                 raise CandidateWriteError(
                     "SUPERSEDED", "Kandidaten har ändrats sedan du såg den. Titta igen."
                 )
             before = str(prev["state"])
             after = next_state(before)
-            rev = int(prev["rev"])
+            rev = newest
             if after is not None:
                 rev += 1
                 await conn.execute(

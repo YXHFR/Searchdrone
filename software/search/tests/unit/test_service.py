@@ -18,7 +18,7 @@ from search_helpers import (  # pyright: ignore[reportMissingImports]
 
 from sd_schemas.base import new_id
 from sd_schemas.link import BBox
-from sd_schemas.search import CandidateState, SearchProfile
+from sd_schemas.search import CandidateBatch, CandidateRevision, CandidateState, SearchProfile
 from sd_search.app import SearchService
 from sd_search.client import GroundError
 from sd_search.profile import FileProfileSource, GroundProfileSource
@@ -131,6 +131,52 @@ async def test_a_detection_next_to_a_find_is_written_on_it_unmoved() -> None:
     assert await s.step() == 1
     assert list(g.revs) == [cid] and g.latest(cid).n_seen == 3
     assert (g.latest(cid).lat, g.latest(cid).lon) == (found.lat, found.lon)
+
+
+async def test_the_fake_ground_keeps_a_finds_scores_and_times_as_the_ground_does() -> None:
+    """A sighting on a find (#245, #246): the ground keeps the find's scores, priority and
+    first sighting, and takes the later last sighting. The fake must do the same, or the
+    service tests would pass against a ground that does not exist."""
+    g = FakeGround(MISSION)
+    s = service(g)
+    detect(g, 0, 0, 10)
+    await s.step()
+    (cid,) = g.revs
+    g.decide(cid, CandidateState.CONFIRMED)
+    find = g.latest(cid)
+    sighting = detect(g, 3, 0, 20)
+
+    def revision(last_seen: float) -> CandidateRevision:
+        return CandidateRevision.model_validate(
+            find.model_dump(
+                include={"candidate_id", "lat", "lon", "sigma95_m", "n_seen"},
+            )
+            | {
+                "base_rev": g.latest(cid).rev,
+                "state": None,
+                "lat": find.lat + 1e-4,  # moved: the find stays put
+                "best_detector_score": 0.99,
+                "refined_person_score": 0.99,
+                "priority": 0.01,
+                "first_seen_utc": utc(0),
+                "last_seen_utc": utc(last_seen),
+                "observations": [{"detection_id": sighting.detection_id, "distance_m": 3.0}],
+            }
+        )
+
+    await g.write(MISSION, CandidateBatch(revisions=[revision(30)]))
+    c = g.latest(cid)
+    assert c.rev == find.rev + 1 and c.state is CandidateState.CONFIRMED
+    assert c.lat == find.lat
+    assert c.best_detector_score == find.best_detector_score
+    assert c.refined_person_score == find.refined_person_score
+    assert c.priority == find.priority
+    assert c.first_seen_utc == find.first_seen_utc
+    assert c.last_seen_utc == utc(30)
+    # An older last sighting does not move it back.
+    sighting = detect(g, 3, 1, 25)
+    await g.write(MISSION, CandidateBatch(revisions=[revision(5)]))
+    assert g.latest(cid).last_seen_utc == utc(30)
 
 
 async def test_a_held_candidate_keeps_its_state() -> None:

@@ -23,9 +23,8 @@ Its checks run from the repository root: `just test` (all checks: `just check`).
    mission (unless the pilot undoes the find), a second person that close to a find gets
    no card of their own; their pictures are on the find's card, and they are inside its
    keep-out cylinder (30 m plus the radius) all the same. Rejected candidates take no new
-   sightings. Two
-   candidates that drift together are merged (the older stays) unless a person has
-   decided on either.
+   sightings. Two candidates that drift together are merged (the older stays) unless a
+   person has decided on either.
 3. **Scores the colours** in the crops against the approved search profile (`color.py`,
    `score.py`): `match`, `conflict` or `not_visible` per field, from the share of each
    colour among the pixels that differ from the background. Only an approved profile
