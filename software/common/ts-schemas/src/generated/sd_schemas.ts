@@ -662,6 +662,7 @@ export interface CandidateCounts {
 export interface CandidateDecision {
   decision: "confirm" | "reject" | "inspect" | "unsure" | "reopen" | "resume";
   note?: string;
+  reason?: "not_a_person" | null;
   subject_rev: number;
 }
 /**
@@ -725,6 +726,7 @@ export interface StoredDecision {
   id: string;
   note: string;
   operator_ref: string;
+  reason?: "not_a_person" | null;
   subject_rev: number;
 }
 /**
@@ -1968,11 +1970,18 @@ export interface InspectLowerOffer {
  * hovers for it (``hold_reason`` "inspect_await"). The drone flies back to where the
  * search broke off, except after "confirmed": then it hovers over the find.
  *
+ * ``keepout_released`` is true only when the ground releases the candidate's keep-out
+ * cylinder with this decision: "rejected", and the candidate is known not to be a
+ * person (a rejected person keeps its cylinder). Only then may the drone stop keeping
+ * away from it before the ground's next keep-out install comes; false (the default)
+ * waits for the install.
+ *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "InspectOutcome".
  */
 export interface InspectOutcome {
   command_id: string;
+  keepout_released?: boolean;
   outcome: "rejected" | "unsure" | "resume" | "confirmed";
 }
 /**

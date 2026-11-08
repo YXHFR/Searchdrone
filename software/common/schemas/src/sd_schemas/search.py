@@ -47,6 +47,7 @@ __all__ = [
     "Item",
     "LastSeen",
     "PriorityClass",
+    "RejectReason",
     "SearchDetection",
     "SearchHeartbeat",
     "SearchObservation",
@@ -296,12 +297,25 @@ class CandidateAssessment(SdModel):
 DecisionKind = Literal["confirm", "reject", "inspect", "unsure", "reopen", "resume"]
 
 
+# Why a person rejects: "not_a_person" ("Ingen person här": nothing there, a rock, a
+# backpack) releases the candidate's keep-out cylinder. A rejection without a reason
+# ("Fel person / osäker") keeps it when the candidate may be a person (the owner's rule).
+RejectReason = Literal["not_a_person"]
+
+
 class CandidateDecision(SdModel):
     """A person's decision on a candidate. Only a logged-in person's session may send it."""
 
     decision: DecisionKind
     note: str = Field(default="", max_length=300)
     subject_rev: int = Field(ge=1)  # the rev the person saw; an older one is refused
+    reason: RejectReason | None = None  # only with "reject"; none keeps the cylinder
+
+    @model_validator(mode="after")
+    def _reason_only_on_reject(self) -> Self:
+        if self.reason is not None and self.decision != "reject":
+            raise ValueError("reason only goes with decision 'reject'")
+        return self
 
 
 PriorityClass = Literal["high", "medium", "low"]
@@ -522,6 +536,7 @@ class StoredDecision(SdModel):
     decision: DecisionKind
     note: str = Field(max_length=300)
     subject_rev: int = Field(ge=1)
+    reason: RejectReason | None = None
     operator_ref: str = Field(pattern=OPERATOR_REF_PATTERN)
     created_at: AwareDatetime
 

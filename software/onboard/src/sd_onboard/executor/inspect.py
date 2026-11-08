@@ -80,6 +80,7 @@ class InspectSession:
     # The pilot's decision while the drone climbed (back to the map's floor without the
     # laser, or over someone else's cylinder): carried out once the climb is done.
     outcome: InspectOutcomeKind | None = None
+    keepout_released: bool = False  # with ``outcome``: the ground releases the cylinder
 
     def suspends(self, k: Keepout, plane: Plane, *, local: bool) -> bool:
         """Whether ``k`` is the candidate's own cylinder, suspended now: the ground's

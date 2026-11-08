@@ -1755,6 +1755,18 @@
           "maxLength": 300,
           "type": "string"
         },
+        "reason": {
+          "anyOf": [
+            {
+              "const": "not_a_person",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "subject_rev": {
           "minimum": 1,
           "type": "integer"
@@ -5620,12 +5632,16 @@
     },
     "InspectOutcome": {
       "additionalProperties": false,
-      "description": "Ground -> onboard, reliable: the pilot's decision on a closer look while the drone\nhovers for it (``hold_reason`` \"inspect_await\"). The drone flies back to where the\nsearch broke off, except after \"confirmed\": then it hovers over the find.",
+      "description": "Ground -> onboard, reliable: the pilot's decision on a closer look while the drone\nhovers for it (``hold_reason`` \"inspect_await\"). The drone flies back to where the\nsearch broke off, except after \"confirmed\": then it hovers over the find.\n\n``keepout_released`` is true only when the ground releases the candidate's keep-out\ncylinder with this decision: \"rejected\", and the candidate is known not to be a\nperson (a rejected person keeps its cylinder). Only then may the drone stop keeping\naway from it before the ground's next keep-out install comes; false (the default)\nwaits for the install.",
       "properties": {
         "command_id": {
           "format": "uuid",
           "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
+        },
+        "keepout_released": {
+          "default": false,
+          "type": "boolean"
         },
         "outcome": {
           "enum": [
@@ -10363,6 +10379,18 @@
         "operator_ref": {
           "pattern": "^operator:[a-z0-9][a-z0-9_-]{0,31}$",
           "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "const": "not_a_person",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "subject_rev": {
           "minimum": 1,

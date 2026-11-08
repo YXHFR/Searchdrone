@@ -560,8 +560,8 @@ class CandidateRepo:
 
     async def decisions(self, candidate_id: str) -> list[dict[str, Any]]:
         rows = await self._all(
-            "SELECT id::text AS id, decision, note, subject_rev, operator_ref, created_at "
-            "FROM candidate_decisions WHERE candidate_id = :c ORDER BY created_at, id",
+            "SELECT id::text AS id, decision, note, subject_rev, operator_ref, reason, "
+            "created_at FROM candidate_decisions WHERE candidate_id = :c ORDER BY created_at, id",
             c=candidate_id,
         )
         return [dict(r) for r in rows]
@@ -598,6 +598,7 @@ class CandidateRepo:
         session_id: str,
         now: dt.datetime,
         next_state: Callable[[str], str | None],
+        reason: str | None = None,
     ) -> Decided:
         """A decision row and, when the state changes, the candidate's next revision, in
         one transaction under the mission's lock. ``next_state`` gets the state in force
@@ -660,8 +661,8 @@ class CandidateRepo:
             res = await conn.execute(
                 text(
                     "INSERT INTO candidate_decisions (candidate_id, decision, note, subject_rev, "
-                    "operator_ref, session_id, created_at) VALUES (:c, :d, :note, :rev, :op, "
-                    ":sid, :now) RETURNING id::text"
+                    "operator_ref, session_id, reason, created_at) VALUES (:c, :d, :note, :rev, "
+                    ":op, :sid, :reason, :now) RETURNING id::text"
                 ),
                 {
                     "c": candidate_id,
@@ -670,6 +671,7 @@ class CandidateRepo:
                     "rev": subject_rev,
                     "op": operator_ref,
                     "sid": session_id,
+                    "reason": reason,
                     "now": now,
                 },
             )

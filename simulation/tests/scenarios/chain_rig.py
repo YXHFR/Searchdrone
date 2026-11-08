@@ -643,6 +643,7 @@ async def search_run(
             sc.mid,
             truth=lambda lat, lon: holder[0].thing_at(lat, lon),
             card_truth=lambda card: holder[0].card_truth(card),
+            is_person=lambda thing: any(t.person for t in world.things if t.thing_id == thing),
             headers=H,
             seed=world.seed,
             env=SIM_ENV,

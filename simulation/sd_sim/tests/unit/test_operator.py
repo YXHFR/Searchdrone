@@ -201,3 +201,34 @@ def test_reviews_first_a_low_target_that_blocks_the_search_and_confirms_it() -> 
     assert d is not None and (d.candidate_id, d.decision) == ("t", "confirm")
     assert op.confirmed is not None and op.confirmed.thing == "target"
     assert op.target_first_rank == 1
+
+
+def _rejections(panel: Panel) -> dict[str, Any]:
+    return {
+        path.split("/")[2]: body
+        for method, path, body in panel.calls
+        if method == "POST" and path.endswith("/decision")
+    }
+
+
+@pytest.mark.parametrize(
+    ("thing", "reason"),
+    [(None, "not_a_person"), ("rock-0-1", "not_a_person"), ("person-1", None)],
+)
+def test_says_not_a_person_only_for_nothing_or_a_thing_that_is_not_one(
+    thing: str | None, reason: str | None
+) -> None:
+    panel = Panel([card("a", 1, "ready", -1.0)])
+    op = make(panel, is_person=lambda t: t.startswith("person"))
+    op.truth = lambda lat, lon: (thing, False)
+    asyncio.run(op.review_once())
+    body = _rejections(panel)["a"]
+    assert body["decision"] == "reject"
+    assert body.get("reason") == reason
+
+
+def test_without_the_truth_of_persons_every_rejection_is_plain() -> None:
+    panel = Panel([card("a", 1, "ready", -1.0)])
+    op = make(panel)
+    asyncio.run(op.review_once())
+    assert "reason" not in _rejections(panel)["a"]

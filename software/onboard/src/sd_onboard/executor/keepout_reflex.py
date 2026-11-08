@@ -100,7 +100,8 @@ __all__ = [
 # ring is the order itself: a ring a cylinder now crosses is held, not bent.
 REROUTABLE: Final = frozenset({"survey_sector", "follow_path", "resume"})
 LOCAL_KEEPOUT_HANDOVER_MS: Final = 60_000  # a ground install this much later replaces it
-# A candidate the pilot rejected in its look: the ground's cylinder around it
+# A candidate the pilot rejected in its look that the ground releases (not a person,
+# ``InspectOutcome.keepout_released``): the ground's cylinder around it
 # (``source = "candidate"``) is not in force onboard while the ground releases it, at most
 # this long while no install without it has come; after that it is in force again (and the
 # flight under way is checked against it) until one does. The ground reads its cylinders

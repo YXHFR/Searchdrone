@@ -84,11 +84,11 @@ async def event(r: Rig, kind: str, **data: Any) -> None:
     await r.until(handled, 5, kind)
 
 
-async def started(r: Rig, n: int = 1) -> tuple[str, str, Any]:
+async def started(r: Rig, n: int = 1, **kw: Any) -> tuple[str, str, Any]:
     """In the air with ``n`` ready candidates, the pilot looks at the first:
-    (mission, candidate, the order sent onboard)."""
+    (mission, candidate, the order sent onboard). ``kw`` goes into the detections."""
     r.onboard.order_outcome = "running"
-    dets = [seen_at(r, 20 * i, 100) for i in range(n)]
+    dets = [seen_at(r, 20 * i, 100, **kw) for i in range(n)]
     mid, _ = await flying_with(r, *dets, mode="exercise")
     cid = str(dets[0].detection_id)
     async with person(r, "pilot", "kalle") as pilot:
@@ -225,6 +225,35 @@ async def test_the_decision_while_the_drone_waits(
     assert isinstance(told, InspectOutcome) and told.outcome == outcome
     (look,) = await looks(r, mid)
     assert look["phase"] == "ended" and look["outcome"] == outcome
+
+
+@pytest.mark.parametrize(
+    ("decision", "kw", "released"),
+    [
+        ("reject", {}, False),  # a person keeps its cylinder (owner decision 1)
+        ("not_a_person", {}, True),  # "Ingen person här": the pilot says it is none
+        ("reject", {"label": "red_block", "px_size": 24.0}, True),  # not a person
+        ("resume", {"label": "red_block", "px_size": 24.0}, False),  # not rejected
+    ],
+)
+async def test_a_rejection_releases_the_cylinder_only_of_what_is_not_a_person(
+    r: Rig, decision: str, kw: dict[str, Any], released: bool
+) -> None:
+    """The ground tells the drone with the decision whether it releases the candidate's
+    cylinder (``keepout_released``): only for a rejected candidate that is not a person,
+    by its class or by the pilot's "Ingen person här".
+    The drone holds a rejected cylinder out of force before the install only then."""
+    _, cid, sent = await started(r, **kw)
+    await event(r, "inspect.done", **done(sent))
+    async with person(r, "pilot", "kalle") as pilot:
+        if decision == "not_a_person":
+            res = await decide(pilot, cid, "reject", reason="not_a_person")
+        else:
+            res = await decide(pilot, cid, decision)
+        assert res.status_code == 200, res.text
+    await r.until(lambda: r.onboard.looks, 5, "InspectOutcome")
+    (told,) = r.onboard.looks
+    assert isinstance(told, InspectOutcome) and told.keepout_released is released
 
 
 async def test_no_decision_puts_the_candidate_back_in_the_queue(

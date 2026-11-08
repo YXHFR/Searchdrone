@@ -1056,6 +1056,18 @@
             "title": "Note",
             "type": "string"
           },
+          "reason": {
+            "anyOf": [
+              {
+                "const": "not_a_person",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
           "subject_rev": {
             "minimum": 1.0,
             "title": "Subject Rev",
@@ -5812,6 +5824,18 @@
             "pattern": "^operator:[a-z0-9][a-z0-9_-]{0,31}$",
             "title": "Operator Ref",
             "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "const": "not_a_person",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           },
           "subject_rev": {
             "minimum": 1.0,

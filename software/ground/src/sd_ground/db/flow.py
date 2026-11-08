@@ -43,6 +43,23 @@ _COMMAND_COLS = """id, mission_id, vehicle_id, skill, params, issuer_kind, issue
   status, status_reason, approval_id, expires_at, created_at, updated_at, command_hash,
   charter_id, ai_config_hash"""
 OPEN_STATUSES = ("pending_approval", "dispatched", "received", "accepted", "running")
+# The class of a person (the detector's class register, ``sd_detect/classes.toml``). A
+# candidate's class is its detections' label: fusion joins only detections of one label.
+PERSON_LABEL = "person"
+# Whether the candidate ``{c}`` is known not to be a person (binds ``:person``), either:
+# * a person said so: the candidate's newest decision is a rejection with the reason
+#   ``not_a_person`` ("Ingen person här"). A plain rejection ("Fel person / osäker"), or any
+#   later decision, does not say it;
+# * or it has detections, and each has a class that is not ``PERSON_LABEL``. A detection
+#   without a class (a detector without classes) may be a person, and so may a candidate
+#   without detections.
+_NOT_A_PERSON = (
+    "(COALESCE((SELECT pc.reason = 'not_a_person' FROM candidate_decisions pc "
+    "WHERE pc.candidate_id = {c} ORDER BY pc.created_at DESC, pc.id DESC LIMIT 1), false) "
+    "OR COALESCE((SELECT bool_and(pd.label IS NOT NULL AND pd.label <> :person) "
+    "FROM candidate_observations po JOIN detections pd ON pd.detection_id = po.detection_id "
+    "WHERE po.candidate_id = {c}), false))"
+)
 
 
 class MissionExistsError(Exception):
@@ -1257,38 +1274,56 @@ class FlowRepo:
     ) -> list[dict[str, Any]]:
         """The mission's candidates that get a keep-out cylinder, confirmed finds first,
         then by display number: the newest revision is ``confirmed`` (a person confirmed
-        the find and has not reopened it), or it is still open (not rejected or merged)
-        and the detector or the image model is at least ``score_min`` sure."""
+        the find and has not reopened it), or it is not merged, the detector or the image
+        model is at least ``score_min`` sure, and it is either still open or rejected but
+        not known not to be a person (the owner's rule: a rejected candidate that may be a
+        person keeps its cylinder; only one that is not, ``_NOT_A_PERSON``: the person
+        rejected it as "not a person", or its class is not a person, is released)."""
         rows = await self._all(
-            "SELECT candidate_id::text AS candidate_id, seq, state, lat, lon, sigma95_m FROM ("
+            "SELECT candidate_id::text AS candidate_id, seq, state, lat, lon, sigma95_m FROM ("  # noqa: S608 - constants only
             "SELECT DISTINCT ON (candidate_id) candidate_id, seq, state, "
             "ST_Y(geom) AS lat, ST_X(geom) AS lon, sigma95_m, best_detector_score, "
             "refined_person_score FROM candidates "
             "WHERE mission_id = :m ORDER BY candidate_id, rev DESC) newest "
-            "WHERE state = 'confirmed' OR (state NOT IN ('rejected', 'merged') AND "
-            "(best_detector_score >= :s OR refined_person_score >= :s)) "
+            "WHERE state = 'confirmed' OR (state <> 'merged' AND "
+            "(best_detector_score >= :s OR refined_person_score >= :s) AND "
+            f"(state <> 'rejected' OR NOT {_NOT_A_PERSON.format(c='newest.candidate_id')})) "
             "ORDER BY state <> 'confirmed', seq, candidate_id LIMIT :n",
             m=mission_id,
             s=score_min,
             n=limit,
+            person=PERSON_LABEL,
         )
         return [dict(r) for r in rows]
+
+    async def candidate_not_a_person(self, candidate_id: str) -> bool:
+        """Whether the candidate is known not to be a person (``_NOT_A_PERSON``): only then
+        does a rejection release its cylinder (``keepout_candidates``)."""
+        rows = await self._all(
+            f"SELECT {_NOT_A_PERSON.format(c='CAST(:c AS uuid)')} AS not_a_person",
+            c=candidate_id,
+            person=PERSON_LABEL,
+        )
+        return bool(rows[0]["not_a_person"])
 
     async def released_detections(self, mission_id: str, score_min: float, limit: int) -> list[str]:
         """The detections (at least ``score_min`` sure, the ones the drone may have made a
         cylinder of) of the mission's candidates a person rejected (the newest revision is
-        ``rejected``), newest first."""
+        ``rejected``) known not to be a person (``_NOT_A_PERSON``), newest first. A
+        rejected person keeps its cylinders (``keepout_candidates``)."""
         rows = await self._all(
-            "SELECT d.detection_id::text AS detection_id FROM candidate_observations o "
+            "SELECT d.detection_id::text AS detection_id FROM candidate_observations o "  # noqa: S608 - constants only
             "JOIN (SELECT DISTINCT ON (candidate_id) candidate_id, state FROM candidates "
             "WHERE mission_id = :m ORDER BY candidate_id, rev DESC) c "
             "ON c.candidate_id = o.candidate_id "
             "JOIN detections d ON d.detection_id = o.detection_id "
             "WHERE c.state = 'rejected' AND d.score >= :s "
+            f"AND {_NOT_A_PERSON.format(c='c.candidate_id')} "
             "ORDER BY d.seq DESC LIMIT :n",
             m=mission_id,
             s=score_min,
             n=limit,
+            person=PERSON_LABEL,
         )
         return [str(r["detection_id"]) for r in rows]
 

@@ -69,6 +69,9 @@ def test_the_charter_carries_the_mode_and_the_floor_pack() -> None:
 
 def test_the_ground_answers_and_the_drone_reports() -> None:
     assert link.InspectOutcome(command_id=OTHER, outcome="confirmed").outcome == "confirmed"
+    # Without the flag the drone waits for the ground's install (a rejected person).
+    told = link.InspectOutcome.model_validate({"command_id": str(OTHER), "outcome": "rejected"})
+    assert told.keepout_released is False
     with pytest.raises(ValidationError):
         link.InspectOutcome.model_validate({"command_id": str(OTHER), "outcome": "maybe"})
     assert {"InspectOutcome", "InspectLower", "InspectStay"} <= link.RELIABLE_KINDS

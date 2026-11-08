@@ -172,6 +172,7 @@ describe("CandidatesView", () => {
     await screen.findByTestId("cand-large");
     expect((screen.getByTestId("cand-confirm") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByTestId("cand-reject") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("cand-reject-nothing") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByTestId("cand-unsure") as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -199,6 +200,24 @@ describe("CandidatesView", () => {
     expect(screen.getByTestId("cand-coord-sweref").textContent).toBe("N 6576436 E 679958");
     expect(screen.getByTestId("cand-confirmed-by").textContent).toMatch(
       /^Bekräftad av dig \d\d:\d\d$/,
+    );
+  });
+
+  it.each([
+    ["cand-reject", "Inte hen", {}],
+    ["cand-reject-nothing", "Ingen person här", { reason: "not_a_person" }],
+  ])("rejects with %s (%s): only Ingen person här says not a person", async (id, label, extra) => {
+    useCandidateStore.getState().setCards([card()]);
+    useCandidateStore.getState().open("c-1");
+    view();
+    await screen.findByTestId("cand-larger");
+    expect(screen.getByTestId(id).textContent).toBe(label);
+    fireEvent.click(screen.getByTestId(id));
+    await waitFor(() =>
+      expect(posted.at(-1)).toEqual({
+        path: "/api/v1/candidates/c-1/decision",
+        body: { decision: "reject", note: "", subject_rev: 1, ...extra },
+      }),
     );
   });
 });

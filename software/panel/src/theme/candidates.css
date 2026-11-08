@@ -214,7 +214,7 @@
   flex-wrap: wrap;
   gap: var(--sp-2);
 }
-/* Bekräfta and Inte hen weigh the same: same size, same frame. */
+/* Bekräfta, Inte hen and Ingen person här weigh the same: same size, same frame. */
 .cand-decide .btn-hold,
 .cand-reject {
   min-width: 132px;

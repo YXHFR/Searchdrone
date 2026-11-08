@@ -70,6 +70,11 @@ class ScriptedOperator:
     # detection came from), ``None`` where that is unknown: then ``truth`` at the card's
     # position decides.
     card_truth: Callable[[Mapping[str, Any]], tuple[str | None, bool] | None] | None = None
+    # Whether the world's thing with this id is a person (the simulator's truth). With it, a
+    # rejection of nothing or of a thing that is not a person says so ("Ingen person här",
+    # ``reason`` "not_a_person": the cylinder is released); a rejected person, or any
+    # rejection without it, is a plain one ("Inte hen": the cylinder stays).
+    is_person: Callable[[str], bool] | None = None
     seed: int = 0
     delay_s: tuple[float, float] = DELAY_S
     stop_after_confirm: bool = True
@@ -156,6 +161,13 @@ class ScriptedOperator:
         thing, target, _ = self.judge(card)
         return thing, target
 
+    def not_a_person(self, thing: str | None) -> bool:
+        """Whether the operator rejects a card showing ``thing`` as "not a person": only
+        with ``is_person``, for nothing there or a thing that is not a person."""
+        if self.is_person is None:
+            return False
+        return thing is None or not self.is_person(thing)
+
     async def queue(self) -> list[dict[str, Any]]:
         data = await self._json("GET", f"/missions/{self.mission_id}/candidates")
         return list(data["items"])
@@ -196,7 +208,9 @@ class ScriptedOperator:
             if now.get("thumb_detection_id"):
                 await self._json("POST", f"/detections/{now['thumb_detection_id']}/view")
             decision: Literal["confirm", "reject"] = "confirm" if target else "reject"
-            body = {"decision": decision, "subject_rev": now["rev"], "note": ""}
+            body: dict[str, Any] = {"decision": decision, "subject_rev": now["rev"], "note": ""}
+            if decision == "reject" and self.not_a_person(thing):
+                body["reason"] = "not_a_person"
             try:
                 await self._json("POST", f"/candidates/{cid}/decision", json=body)
             except OperatorError as exc:

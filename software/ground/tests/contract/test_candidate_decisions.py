@@ -186,14 +186,18 @@ async def rev_of(c: httpx.AsyncClient, cid: str) -> int:
 
 
 async def decide(
-    c: httpx.AsyncClient, cid: str, decision: str, note: str = "", rev: int | None = None
+    c: httpx.AsyncClient,
+    cid: str,
+    decision: str,
+    note: str = "",
+    rev: int | None = None,
+    reason: str | None = None,
 ) -> httpx.Response:
     subject = await rev_of(c, cid) if rev is None else rev
-    return await c.post(
-        f"/api/v1/candidates/{cid}/decision",
-        json={"decision": decision, "note": note, "subject_rev": subject},
-        headers=H,
-    )
+    body: dict[str, Any] = {"decision": decision, "note": note, "subject_rev": subject}
+    if reason is not None:
+        body["reason"] = reason
+    return await c.post(f"/api/v1/candidates/{cid}/decision", json=body, headers=H)
 
 
 async def view(c: httpx.AsyncClient, det: str) -> str:
@@ -304,6 +308,47 @@ async def test_candidate_transitions(r: Rig) -> None:
     assert found is None  # the confirmation was undone
     events = [e.type for e in r.g.bus.replay(r.g.bus.server_epoch, 0) or []]
     assert events.count("candidate.decided") == 6
+
+
+async def test_two_rejections_only_not_a_person_releases_the_cylinder(r: Rig) -> None:
+    """Owner decision (1), option A: "Ingen person här" (``reason`` "not_a_person")
+    releases a rejected candidate's cylinder although the detector saw a person; "Inte
+    hen" (no reason) keeps it. Only the newest decision counts: reopened and rejected
+    plainly, the cylinder is kept again. A reason goes only with a rejection."""
+    mid = await r.open_mission()
+    plain, plain_det = await candidate(r, mid)
+    nothing, nothing_det = await candidate(r, mid)
+    repo = r.flow.repo
+
+    async def kept() -> set[str]:
+        rows = await repo.keepout_candidates(mid, 0.5, 50)
+        return {str(c["candidate_id"]) for c in rows}
+
+    async with person(r, "pilot", "kalle") as pilot:
+        res = await decide(pilot, nothing, "confirm", reason="not_a_person")
+        assert res.status_code == 422, res.text
+        res = await decide(pilot, plain, "reject")
+        assert res.status_code == 200, res.text
+        res = await decide(pilot, nothing, "reject", reason="not_a_person")
+        assert res.status_code == 200 and res.json()["card"]["state"] == "rejected", res.text
+        d = (await pilot.get(f"/api/v1/candidates/{nothing}")).json()
+        assert [(x["decision"], x["reason"]) for x in d["decisions"]] == [
+            ("reject", "not_a_person")
+        ]
+        assert not await repo.candidate_not_a_person(plain)
+        assert await repo.candidate_not_a_person(nothing)
+        assert await kept() == {plain}
+        assert await repo.released_detections(mid, 0.5, 50) == [nothing_det]
+        assert plain_det not in await repo.released_detections(mid, 0.5, 50)
+
+        # Reopened, it is open again (a cylinder); rejected plainly, it stays.
+        assert (await decide(pilot, nothing, "reopen")).status_code == 200
+        assert not await repo.candidate_not_a_person(nothing)
+        assert await kept() == {plain, nothing}
+        assert (await decide(pilot, nothing, "reject")).status_code == 200
+        assert not await repo.candidate_not_a_person(nothing)
+        assert await kept() == {plain, nothing}
+        assert await repo.released_detections(mid, 0.5, 50) == []
 
 
 async def test_only_humans_decide(migrated_db: Db, tmp_path: Path) -> None:
