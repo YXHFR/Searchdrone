@@ -493,7 +493,13 @@ class SimWorld:
                 and self.t >= self.stop_set_at + sc.stop_hold_s
             ):
                 self.latched, self.stop_released_at = False, self.t
-                return [self._event("event.operator_override", {"active": False})]
+                # The pilot's Fortsätt, told as the ground tells it (``sd_ground.api.commander``).
+                return [
+                    self._event(
+                        "event.operator_override",
+                        {"active": False, "action": "resume", "via": "button"},
+                    )
+                ]
             if self.battery <= self.rtl_pct and not self.battery_rtl:
                 self.battery_rtl = True
                 self.plan = self._home_plan(BATTERY_ID)

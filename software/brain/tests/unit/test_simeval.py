@@ -1003,6 +1003,20 @@ def test_a_stop_on_the_way_home_holds_and_the_button_flies_home_after_its_releas
     assert world.landed and abs(world.east) < 5 and abs(world.north) < 5
 
 
+def test_the_stops_release_is_told_as_the_pilots_resume_like_the_ground_tells_it() -> None:
+    sc = next(s for s in map(make_scenario, range(100)) if s.stop_at_s is not None)
+    assert sc.stop_at_s is not None
+    world = SimWorld(sc)
+    world.t = sc.stop_at_s - 1
+    overrides: list[dict[str, Any]] = []
+    while world.stop_released_at is None and not world.finished():
+        overrides += [e for e in world.advance() if e["type"] == "event.operator_override"]
+    assert [e["body"] for e in overrides] == [
+        {"active": True, "action": "stop", "via": "button"},
+        {"active": False, "action": "resume", "via": "button"},
+    ]
+
+
 @pytest.mark.parametrize(
     ("lo", "hi", "alt"), [(15.0, 120.0, LOOK_ALT_M), (40.0, 120.0, 40.0), (10.0, 20.0, 20.0)]
 )
